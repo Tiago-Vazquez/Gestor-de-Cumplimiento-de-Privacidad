@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Privacy Compliance Manager"
+description = "Panel de cumplimiento de privacidad que monitorea continuamente fuentes de datos, detecta información sensible expuesta, aplica anonimización en entornos de prueba y genera informes de auditoría."
+version = "1.0.0"
+id = "artifacts/privacy-compliance-manager"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22126
+
+[services.development]
+run = "pnpm --filter @workspace/privacy-compliance-manager run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/privacy-compliance-manager", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/privacy-compliance-manager/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22126"
+BASE_PATH = "/"

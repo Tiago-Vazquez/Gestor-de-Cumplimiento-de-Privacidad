@@ -1,6 +1,6 @@
-# [Project name]
+# Privacy Compliance Manager
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Consola de cumplimiento que monitorea fuentes de datos, detecta información sensible expuesta y prepara datos anonimizados para testing.
 
 ## Run & Operate
 
@@ -22,23 +22,33 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/privacy-compliance-manager/src/` — aplicación web y páginas del panel.
+- `artifacts/api-server/src/routes/privacy.ts` — endpoints y datos operativos de demo.
+- `lib/api-spec/openapi.yaml` — contrato de API fuente de verdad.
+- `lib/api-client-react/src/generated/` — hooks React Query generados por Orval.
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- La interfaz consume exclusivamente hooks generados desde OpenAPI para mantener alineados cliente y servidor.
+- El dashboard se actualiza mediante consultas del servidor y las mutaciones invalidan sus listas relacionadas.
+- Los escaneos exponen un flujo `running` → `completed` y agregan actividad para que la consola refleje operaciones en curso.
+- El primer corte usa datos de demostración seguros en memoria; las fuentes reales deben conectarse detrás de la misma API.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Dashboard con puntuación de cumplimiento, hallazgos abiertos, riesgo por severidad y actividad reciente.
+- Hallazgos filtrables con detalle, recomendación y actualización de estado.
+- Fuentes monitoreadas con acción de escaneo manual.
+- Catálogo de reglas de detección, preview de anonimización y generación de informes.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Responder siempre en español.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Después de cambiar `lib/api-spec/openapi.yaml`, ejecutar `pnpm --filter @workspace/api-spec run codegen`.
+- El servicio API corre bajo `/api`; la interfaz usa el prefijo base del artefacto y no URLs localhost.
 
 ## Pointers
 

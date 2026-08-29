@@ -1,0 +1,1 @@
+- [OpenAPI y Zod](openapi-zod-compatibility.md) — prefer números compatibles con Zod 3 para evitar que el generador emita `z.int()`.
