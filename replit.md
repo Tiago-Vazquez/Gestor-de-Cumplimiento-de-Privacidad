@@ -10,6 +10,7 @@ Consola de cumplimiento que monitorea fuentes de datos, detecta información sen
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - Required env: `DATABASE_URL` — Postgres connection string
+- Optional env (API): `CORS_ORIGINS` (comma-separated allowlist; unset in production = same-origin only, in dev defaults to the local Vite ports), `TRUST_PROXY` (default `1`, Replit router hop), `RATE_LIMIT_WINDOW_MS` (default `60000`), `RATE_LIMIT_MAX` (default `100`), `RATE_LIMIT_MUTATIONS_MAX` (default `30`), `JSON_BODY_LIMIT` (default `16kb`)
 
 ## Stack
 

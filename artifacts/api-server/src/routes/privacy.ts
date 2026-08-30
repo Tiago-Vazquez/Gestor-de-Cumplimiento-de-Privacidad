@@ -15,6 +15,7 @@ import {
   UpdateFindingParams,
   UpdateFindingResponse,
 } from "@workspace/api-zod";
+import { notFound } from "../lib/errors";
 
 type Severity = "critical" | "high" | "medium" | "low";
 type FindingStatus = "open" | "in_review" | "resolved";
@@ -204,8 +205,7 @@ router.patch("/findings/:id", (req, res) => {
   const { status } = UpdateFindingBody.parse(req.body);
   const finding = findings.find((item) => item.id === id);
   if (!finding) {
-    res.status(404).json({ error: "Finding not found" });
-    return;
+    throw notFound("Finding not found");
   }
   finding.status = status;
   activity.unshift({
@@ -231,8 +231,7 @@ router.post("/scans", (req, res) => {
   const { sourceId } = StartScanBody.parse(req.body);
   const source = sources.find((item) => item.id === sourceId);
   if (!source) {
-    res.status(404).json({ error: "Source not found" });
-    return;
+    throw notFound("Source not found");
   }
   const startedAt = new Date().toISOString();
   const scan: {
@@ -308,8 +307,7 @@ router.post("/masking/preview", (req, res) => {
   const { sourceId, fields } = PreviewMaskingBody.parse(req.body);
   const source = sources.find((item) => item.id === sourceId);
   if (!source) {
-    res.status(404).json({ error: "Source not found" });
-    return;
+    throw notFound("Source not found");
   }
   const masked = new Set(fields);
   const rows = [

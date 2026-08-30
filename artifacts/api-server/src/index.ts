@@ -1,13 +1,10 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 
-const rawPort = process.env["PORT"];
-
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
-}
+// Replit always provides PORT. Outside Replit (local dev on Windows, macOS or
+// Linux) we fall back to the documented default port so `pnpm run dev` works
+// without extra environment setup.
+const rawPort = process.env["PORT"] ?? "5000";
 
 const port = Number(rawPort);
 
