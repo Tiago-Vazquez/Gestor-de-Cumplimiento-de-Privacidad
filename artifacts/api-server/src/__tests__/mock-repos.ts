@@ -1,0 +1,237 @@
+import type { Activity, Finding, Report, Rule, Scan, Source } from "@workspace/db";
+
+/**
+ * Stub in-memory de la capa de repositorios para los tests HTTP.
+ *
+ * Reproduce el comportamiento de los repositorios reales (incluidas sus
+ * transacciones lógicas) contra arrays controlados, de modo que los tests
+ * de la API nunca necesitan PostgreSQL. Los timestamps son objetos `Date`,
+ * igual que las filas que devuelve Drizzle.
+ *
+ * Nada de esto toca la base de datos real: `vi.mock("../repositories")` en
+ * cada suite sustituye el módulo completo antes de que `app` se cargue, por
+ * lo que `@workspace/db` ni siquiera llega a importarse.
+ */
+
+export type MockState = {
+  findings: Finding[];
+  sources: (Source & { findingsCount: number })[];
+  rules: Rule[];
+  scans: Scan[];
+  activity: Activity[];
+  reports: Report[];
+};
+
+const SOURCE_NAMES: Record<string, string> = {
+  "src-001": "Customer PostgreSQL",
+  "src-002": "Analytics Warehouse",
+  "src-003": "CRM MySQL",
+  "src-004": "Payments PostgreSQL",
+};
+
+export function createMockRepos() {
+  const boot = new Date();
+  const minutesAgo = (minutes: number) => new Date(boot.getTime() - minutes * 60_000);
+
+  let counter = 0;
+  const nextId = (prefix: string) => `${prefix}-mock-${++counter}`;
+
+  const state: MockState = {
+    findings: [
+      { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12) },
+      { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38) },
+      { id: "f-003", title: "Teléfonos visibles en exportación", dataType: "phone", sourceId: "src-003", sourceName: SOURCE_NAMES["src-003"], location: "crm.contacts.phone", severity: "medium", status: "open", records: 2187, detectedAt: minutesAgo(74), regulation: "CCPA §1798.100", recommendation: "Enmascarar últimos cuatro dígitos.", sample: "+54 9 11 •••• 4821", createdAt: minutesAgo(74), updatedAt: minutesAgo(74) },
+      { id: "f-004", title: "Direcciones residenciales detectadas", dataType: "address", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.shipping_addresses.full_address", severity: "low", status: "resolved", records: 864, detectedAt: minutesAgo(120), regulation: "GDPR Art. 5", recommendation: "Mantener solo ciudad y CP.", sample: "Av. del L•••• 120", createdAt: minutesAgo(120), updatedAt: minutesAgo(120) },
+      { id: "f-005", title: "Tarjetas almacenadas en logs", dataType: "credit_card", sourceId: "src-004", sourceName: SOURCE_NAMES["src-004"], location: "logs.checkout.payload", severity: "critical", status: "open", records: 91, detectedAt: minutesAgo(186), regulation: "PCI DSS 3.4", recommendation: "Redactar payloads históricos.", sample: "•••• •••• •••• 4242", createdAt: minutesAgo(186), updatedAt: minutesAgo(186) },
+    ],
+    sources: [
+      { id: "src-001", name: SOURCE_NAMES["src-001"], kind: "postgresql", environment: "production", status: "healthy", lastScanAt: minutesAgo(12), tables: 48, records: 284_210, createdAt: minutesAgo(500), updatedAt: minutesAgo(12), findingsCount: 2 },
+      { id: "src-002", name: SOURCE_NAMES["src-002"], kind: "snowflake", environment: "staging", status: "warning", lastScanAt: minutesAgo(38), tables: 126, records: 1_840_400, createdAt: minutesAgo(500), updatedAt: minutesAgo(38), findingsCount: 1 },
+      { id: "src-003", name: SOURCE_NAMES["src-003"], kind: "mysql", environment: "production", status: "healthy", lastScanAt: minutesAgo(74), tables: 32, records: 98_321, createdAt: minutesAgo(500), updatedAt: minutesAgo(74), findingsCount: 1 },
+      { id: "src-004", name: SOURCE_NAMES["src-004"], kind: "postgresql", environment: "production", status: "healthy", lastScanAt: minutesAgo(186), tables: 17, records: 61_550, createdAt: minutesAgo(500), updatedAt: minutesAgo(186), findingsCount: 1 },
+    ],
+    rules: [
+      { id: "rule-001", name: "Email personal", category: "Identidad", regulation: "GDPR", enabled: true, detections: 12_843, lastTriggered: minutesAgo(12), createdAt: minutesAgo(500), updatedAt: minutesAgo(12) },
+      { id: "rule-002", name: "Documento nacional", category: "Identidad", regulation: "LGPD", enabled: true, detections: 4_521, lastTriggered: minutesAgo(38), createdAt: minutesAgo(500), updatedAt: minutesAgo(38) },
+      { id: "rule-003", name: "Tarjeta de crédito", category: "Finanzas", regulation: "PCI DSS", enabled: true, detections: 91, lastTriggered: minutesAgo(186), createdAt: minutesAgo(500), updatedAt: minutesAgo(186) },
+      { id: "rule-004", name: "Teléfono", category: "Contacto", regulation: "CCPA", enabled: true, detections: 2_187, lastTriggered: minutesAgo(74), createdAt: minutesAgo(500), updatedAt: minutesAgo(74) },
+      { id: "rule-005", name: "Datos de salud", category: "Salud", regulation: "HIPAA", enabled: false, detections: 0, lastTriggered: null, createdAt: minutesAgo(500), updatedAt: minutesAgo(500) },
+    ],
+    scans: [],
+    activity: [
+      { id: "a-001", type: "finding", title: "Nuevo hallazgo crítico", description: "Tarjetas almacenadas en logs de checkout", createdAt: minutesAgo(6), severity: "critical" },
+      { id: "a-002", type: "scan", title: "Escaneo completado", description: "Customer PostgreSQL · 48 tablas revisadas", createdAt: minutesAgo(12), severity: null },
+      { id: "a-003", type: "masking", title: "Datos anonimizados", description: "4.521 registros preparados para staging", createdAt: minutesAgo(32), severity: null },
+      { id: "a-004", type: "report", title: "Informe mensual listo", description: "Auditoría de cumplimiento", createdAt: minutesAgo(86), severity: null },
+      { id: "a-005", type: "system", title: "Regla actualizada", description: "Se activó la detección de documentos nacionales", createdAt: minutesAgo(145), severity: null },
+    ],
+    reports: [
+      { id: "r-001", name: "Auditoría mensual", period: "last_30d", status: "ready", createdAt: minutesAgo(86), findings: 12, complianceScore: 90, format: "pdf" },
+      { id: "r-002", name: "Revisión trimestral", period: "quarter", status: "ready", createdAt: minutesAgo(1820), findings: 40, complianceScore: 88, format: "pdf" },
+    ],
+  };
+
+  const repos = {
+    sources: {
+      async list() {
+        return state.sources.map((source) => ({ ...source }));
+      },
+      async getById(id: string) {
+        return state.sources.find((source) => source.id === id) ?? null;
+      },
+      async touchLastScan({ id, at }: { id: string; at: Date }) {
+        const source = state.sources.find((item) => item.id === id);
+        if (!source) return null;
+        source.lastScanAt = at;
+        source.updatedAt = at;
+        return { ...source };
+      },
+    },
+    findings: {
+      async list(filter: { status?: string; severity?: string } = {}) {
+        return state.findings
+          .filter(
+            (finding) =>
+              (!filter.status || finding.status === filter.status) &&
+              (!filter.severity || finding.severity === filter.severity),
+          )
+          .map((finding) => ({ ...finding }));
+      },
+      async getById(id: string) {
+        return state.findings.find((finding) => finding.id === id) ?? null;
+      },
+      async updateStatus({ id, status, at }: { id: string; status: string; at: Date }) {
+        const finding = state.findings.find((item) => item.id === id);
+        if (!finding) return null;
+        finding.status = status;
+        finding.updatedAt = at;
+        state.activity.unshift({
+          id: nextId("a"),
+          type: "finding",
+          title: status === "resolved" ? "Hallazgo resuelto" : "Hallazgo actualizado",
+          description: finding.title,
+          createdAt: at,
+          severity: finding.severity,
+        });
+        return { ...finding };
+      },
+      async countOpen() {
+        return state.findings.filter((finding) => finding.status !== "resolved").length;
+      },
+    },
+    rules: {
+      async list() {
+        return state.rules.map((rule) => ({ ...rule }));
+      },
+    },
+    scans: {
+      async startScan({ sourceId, startedAt }: { sourceId: string; startedAt: Date }) {
+        const source = state.sources.find((item) => item.id === sourceId);
+        if (!source) return { ok: false, reason: "source_not_found" as const };
+
+        const scan: Scan = {
+          id: nextId("scan"),
+          sourceId: source.id,
+          status: "running",
+          startedAt,
+          completedAt: null,
+          findingsCreated: 0,
+        };
+        state.scans.push(scan);
+        source.lastScanAt = startedAt;
+        source.updatedAt = startedAt;
+        state.activity.unshift({
+          id: nextId("a"),
+          type: "scan",
+          title: "Escaneo iniciado",
+          description: `${source.name} · analizando ${source.tables} tablas`,
+          createdAt: startedAt,
+          severity: null,
+        });
+        return { ok: true, scan: { ...scan }, sourceName: source.name, sourceTables: source.tables };
+      },
+      async completeScan({ scanId, completedAt }: { scanId: string; completedAt: Date }) {
+        const scan = state.scans.find((item) => item.id === scanId);
+        if (!scan) return null;
+        const source = state.sources.find((item) => item.id === scan.sourceId);
+        scan.status = "completed";
+        scan.completedAt = completedAt;
+        scan.findingsCreated = state.findings.filter((f) => f.sourceId === scan.sourceId).length;
+        if (source) {
+          state.activity.unshift({
+            id: nextId("a"),
+            type: "scan",
+            title: "Escaneo completado",
+            description: `${source.name} · ${source.tables} tablas revisadas`,
+            createdAt: completedAt,
+            severity: null,
+          });
+        }
+        return { ...scan };
+      },
+    },
+    activity: {
+      async list() {
+        return state.activity.map((event) => ({ ...event }));
+      },
+      async create(values: { id: string; type: string; title: string; description: string; createdAt: Date; severity: string | null }) {
+        state.activity.unshift({ ...values });
+        return { ...values };
+      },
+    },
+    reports: {
+      async list() {
+        return state.reports.map((report) => ({ ...report }));
+      },
+      async create({ name, period, at }: { name: string; period: string; at: Date }) {
+        const openFindings = state.findings.filter((f) => f.status !== "resolved").length;
+        const report: Report = {
+          id: nextId("r"),
+          name,
+          period,
+          status: "ready",
+          createdAt: at,
+          findings: openFindings,
+          complianceScore: openFindings === 0 ? 100 : 0,
+          format: "pdf",
+        };
+        state.reports.unshift(report);
+        state.activity.unshift({
+          id: nextId("a"),
+          type: "report",
+          title: "Informe generado",
+          description: name,
+          createdAt: at,
+          severity: null,
+        });
+        return { ...report };
+      },
+    },
+    dashboard: {
+      async getDashboardData() {
+        const open = state.findings.filter((finding) => finding.status !== "resolved");
+        const countsBySeverity: { critical: number; high: number; medium: number; low: number } = { critical: 0, high: 0, medium: 0, low: 0 };
+        for (const finding of open) {
+          if (finding.severity in countsBySeverity) {
+            countsBySeverity[finding.severity as keyof typeof countsBySeverity] += 1;
+          }
+        }
+        const lastScanAt = state.sources.reduce<Date | null>(
+          (acc, source) => (source.lastScanAt && (!acc || source.lastScanAt > acc) ? source.lastScanAt : acc),
+          null,
+        );
+        return {
+          countsBySeverity,
+          openFindings: open.length,
+          protectedRecords: state.sources.reduce((sum, source) => sum + source.records, 0),
+          monitoredSources: state.sources.length,
+          lastScanAt,
+          scanStatus: state.scans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
+          complianceScore: open.length === 0 ? 100 : 0,
+        };
+      },
+    },
+  };
+
+  return { repos, state };
+}

@@ -8,6 +8,9 @@
     "./schema": "./src/schema/index.ts"
   },
   "scripts": {
+    "db:generate": "drizzle-kit generate --config ./drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config ./drizzle.config.ts",
+    "db:seed": "tsx ./src/seed.ts",
     "push": "drizzle-kit push --config ./drizzle.config.ts",
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
   },
@@ -20,6 +23,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@types/pg": "^8.20.0",
-    "drizzle-kit": "^0.31.10"
+    "drizzle-kit": "^0.31.10",
+    "tsx": "catalog:"
   }
 }
