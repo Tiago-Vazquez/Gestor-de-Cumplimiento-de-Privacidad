@@ -1,3 +1,5 @@
+import { pool } from "@workspace/db";
+import type { Server } from "node:http";
 import app from "./app";
 import { logger } from "./lib/logger";
 
@@ -12,7 +14,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+const server: Server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -20,3 +22,38 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 });
+
+// Graceful shutdown: stop accepting new connections, drain the HTTP server,
+// close the PostgreSQL pool and then exit. A watchdog force-exits if draining
+// takes too long (e.g. an open keep-alive connection with 10s idle timeout).
+const GRACEFUL_TIMEOUT_MS = 10_000;
+let shuttingDown = false;
+
+function shutdown(signal: NodeJS.Signals): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info({ signal }, "Shutting down gracefully");
+
+  const watchdog = setTimeout(() => {
+    logger.error("Graceful shutdown timed out; forcing exit");
+    process.exit(1);
+  }, GRACEFUL_TIMEOUT_MS);
+  watchdog.unref();
+
+  server.close((closeErr) => {
+    void pool
+      .end()
+      .then(() => {
+        clearTimeout(watchdog);
+        logger.info("Shutdown complete");
+        process.exit(closeErr ? 1 : 0);
+      })
+      .catch((poolErr) => {
+        logger.error({ err: poolErr }, "Error closing database pool");
+        process.exit(1);
+      });
+  });
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

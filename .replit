@@ -3,6 +3,8 @@ modules = ["nodejs-24"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
+build = ["sh", "-c", "pnpm install --frozen-lockfile && pnpm run build"]
+run = ["sh", "-c", "NODE_ENV=production pnpm --filter @workspace/api-server run start"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
@@ -10,6 +12,14 @@ env = { "CI" = "true" }
 
 [workflows]
 runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "ONLINE"
+
+[[workflows.workflow.tasks]]
+task = "shell"
+command = "pnpm --filter @workspace/api-server run dev"
 
 [agent]
 stack = "PNPM_WORKSPACE"

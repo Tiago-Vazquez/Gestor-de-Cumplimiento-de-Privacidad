@@ -8,6 +8,8 @@ import * as reports from "./reports.repo";
 import * as rules from "./rules.repo";
 import * as scans from "./scans.repo";
 import * as sources from "./sources.repo";
+import * as userRoles from "./user-roles.repo";
+import * as users from "./users.repo";
 
 export const repos = {
   activity,
@@ -17,6 +19,8 @@ export const repos = {
   rules,
   scans,
   sources,
+  userRoles,
+  users,
 } as const;
 
 export type Repos = typeof repos;

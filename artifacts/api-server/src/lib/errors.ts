@@ -28,3 +28,13 @@ export function notFound(detail?: string): AppError {
 export function badRequest(detail?: string): AppError {
   return new AppError(400, "Bad Request", detail);
 }
+
+/** 401 when authentication is missing or invalid. */
+export function unauthorized(detail?: string): AppError {
+  return new AppError(401, "Unauthorized", detail);
+}
+
+/** 403 when the authenticated user lacks the required role. */
+export function forbidden(detail?: string): AppError {
+  return new AppError(403, "Forbidden", detail);
+}

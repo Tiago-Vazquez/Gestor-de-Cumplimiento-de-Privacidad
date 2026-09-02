@@ -1,4 +1,13 @@
-import type { Activity, Finding, Report, Rule, Scan, Source } from "@workspace/db";
+import type {
+  Activity,
+  Finding,
+  Report,
+  Rule,
+  Scan,
+  Source,
+  User,
+  UserRole,
+} from "@workspace/db";
 
 /**
  * Stub in-memory de la capa de repositorios para los tests HTTP.
@@ -14,6 +23,8 @@ import type { Activity, Finding, Report, Rule, Scan, Source } from "@workspace/d
  */
 
 export type MockState = {
+  users: User[];
+  userRoles: UserRole[];
   findings: Finding[];
   sources: (Source & { findingsCount: number })[];
   rules: Rule[];
@@ -37,6 +48,8 @@ export function createMockRepos() {
   const nextId = (prefix: string) => `${prefix}-mock-${++counter}`;
 
   const state: MockState = {
+    users: [],
+    userRoles: [],
     findings: [
       { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12) },
       { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38) },
@@ -229,6 +242,51 @@ export function createMockRepos() {
           scanStatus: state.scans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
           complianceScore: open.length === 0 ? 100 : 0,
         };
+      },
+    },
+    users: {
+      async getBySub(sub: string) {
+        return state.users.find((user) => user.sub === sub) ?? null;
+      },
+      async getByEmail(email: string) {
+        return state.users.find((user) => user.email === email) ?? null;
+      },
+      async upsertBySub(values: { sub: string; email: string; name: string | null }) {
+        const existing = state.users.find((user) => user.sub === values.sub);
+        if (existing) {
+          existing.email = values.email;
+          existing.name = values.name;
+          existing.updatedAt = new Date();
+          return { ...existing };
+        }
+        const created: User = {
+          sub: values.sub,
+          email: values.email,
+          name: values.name,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        state.users.push(created);
+        return { ...created };
+      },
+    },
+    userRoles: {
+      async listRolesForUser(sub: string) {
+        return state.userRoles
+          .filter((role) => role.userSub === sub)
+          .map((role) => role.role);
+      },
+      async addRole(sub: string, role: "admin" | "auditor") {
+        if (!state.userRoles.some((item) => item.userSub === sub && item.role === role)) {
+          state.userRoles.push({ userSub: sub, role, createdAt: new Date() });
+        }
+      },
+      async setRoles(sub: string, roles: string[]) {
+        state.userRoles = state.userRoles.filter((item) => item.userSub !== sub);
+        for (const role of roles) {
+          state.userRoles.push({ userSub: sub, role, createdAt: new Date() });
+        }
+        return roles;
       },
     },
   };

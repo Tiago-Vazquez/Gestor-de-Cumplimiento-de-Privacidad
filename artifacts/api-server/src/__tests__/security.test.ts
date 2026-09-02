@@ -3,6 +3,9 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 
+// Los tests HTTP que cubren la API funcionan con autenticación desactivada.
+process.env.AUTH_DISABLED = "true";
+
 // Los tests HTTP nunca tocan PostgreSQL: se sustituye la capa completa de
 // repositorios por el stub in-memory antes de cargar `app`, por lo que
 // `@workspace/db` ni siquiera llega a importarse.
@@ -10,6 +13,9 @@ vi.mock("../repositories", async () => {
   const { createMockRepos } = await import("./mock-repos");
   return { repos: createMockRepos().repos };
 });
+vi.mock("@workspace/db", () => ({
+  pool: { query: vi.fn() },
+}));
 
 describe("Security middleware", () => {
   let server: ReturnType<Express["listen"]>;

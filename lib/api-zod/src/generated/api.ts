@@ -18,6 +18,39 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * @summary Login with bootstrap token
+ */
+
+
+
+export const AuthLoginBody = zod.object({
+  "token": zod.string().min(1)
+})
+
+export const AuthLoginResponse = zod.object({
+  "sub": zod.string(),
+  "email": zod.string().nullish(),
+  "roles": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Logout (clears session cookie)
+ */
+export const AuthLogoutResponse = zod.void()
+
+
+/**
+ * @summary Get authenticated user identity
+ */
+export const AuthMeResponse = zod.object({
+  "sub": zod.string(),
+  "email": zod.string().nullish(),
+  "roles": zod.array(zod.string())
+})
+
+
+/**
  * @summary Get compliance dashboard summary
  */
 export const GetDashboardResponse = zod.object({

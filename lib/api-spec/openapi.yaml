@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication and session
   - name: dashboard
     description: Overview and activity
   - name: findings
@@ -22,12 +24,15 @@ tags:
     description: Audit reports
   - name: masking
     description: Test data anonymization
+security:
+  - bearerAuth: []
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
+      security: []
       description: Returns server health status
       responses:
         "200":
@@ -36,6 +41,52 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /auth/login:
+    post:
+      operationId: authLogin
+      tags: [auth]
+      summary: Login with bootstrap token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthLoginInput"
+      responses:
+        "200":
+          description: Authenticated (session cookie set)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "400":
+          description: Missing bootstrap token in request body
+        "401":
+          description: Invalid bootstrap token
+  /auth/logout:
+    post:
+      operationId: authLogout
+      tags: [auth]
+      summary: Logout (clears session cookie)
+      security: []
+      responses:
+        "204":
+          description: Session cleared
+  /auth/me:
+    get:
+      operationId: authMe
+      tags: [auth]
+      summary: Get authenticated user identity
+      responses:
+        "200":
+          description: Authenticated user identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Not authenticated
   /dashboard:
     get:
       operationId: getDashboard
@@ -211,7 +262,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaskingPreview"
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
+    AuthLoginInput:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, minLength: 1 }
+    AuthUser:
+      type: object
+      required: [sub, roles]
+      properties:
+        sub: { type: string }
+        email: { type: ["string", "null"] }
+        roles:
+          type: array
+          items: { type: string }
     HealthStatus:
       type: object
       properties:

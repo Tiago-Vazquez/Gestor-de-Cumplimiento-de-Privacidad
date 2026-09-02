@@ -7,3 +7,5 @@ export * from "./reports";
 export * from "./rules";
 export * from "./scans";
 export * from "./sources";
+export * from "./user-roles";
+export * from "./users";

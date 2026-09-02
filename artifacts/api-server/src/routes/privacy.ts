@@ -26,6 +26,7 @@ import {
   mapSource,
 } from "../mappers";
 import { repos } from "../repositories";
+import { requireRole } from "../auth/middleware";
 
 const router: IRouter = Router();
 
@@ -61,7 +62,7 @@ router.get("/findings", async (req, res) => {
   res.json(ListFindingsResponse.parse(rows.map(mapFinding)));
 });
 
-router.patch("/findings/:id", async (req, res) => {
+router.patch("/findings/:id", requireRole("admin"), async (req, res) => {
   const { id } = UpdateFindingParams.parse(req.params);
   const { status } = UpdateFindingBody.parse(req.body);
 
@@ -83,7 +84,7 @@ router.get("/rules", async (_req, res) => {
   res.json(ListRulesResponse.parse(rows.map(mapRule)));
 });
 
-router.post("/scans", async (req, res) => {
+router.post("/scans", requireRole("admin"), async (req, res) => {
   const { sourceId } = StartScanBody.parse(req.body);
 
   const result = await repos.scans.startScan({ sourceId, startedAt: new Date() });
@@ -116,13 +117,13 @@ router.get("/reports", async (_req, res) => {
   res.json(rows.map(mapReport));
 });
 
-router.post("/reports", async (req, res) => {
+router.post("/reports", requireRole("admin"), async (req, res) => {
   const { name, period } = CreateReportBody.parse(req.body);
   const report = await repos.reports.create({ name, period, at: new Date() });
   res.status(201).json(mapReport(report));
 });
 
-router.post("/masking/preview", async (req, res) => {
+router.post("/masking/preview", requireRole("admin"), async (req, res) => {
   const { sourceId, fields } = PreviewMaskingBody.parse(req.body);
 
   // La fuente se valida contra PostgreSQL; el resto del preview no persiste

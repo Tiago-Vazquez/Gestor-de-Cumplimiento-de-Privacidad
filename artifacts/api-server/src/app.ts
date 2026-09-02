@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
@@ -149,6 +152,53 @@ app.use(express.json({ limit: jsonBodyLimit }));
 app.use(express.urlencoded({ extended: true, limit: jsonBodyLimit }));
 
 app.use("/api", router);
+
+// Unmatched /api/* routes always get an API problem+json 404 — never the SPA.
+app.use("/api", notFoundHandler);
+
+// Compiled React frontend (SPA), served by this same server. The directory is
+// resolved relative to this module so it works both from src (vitest) and from
+// the esbuild bundle (dist). STATIC_ROOT overrides it if the deployment layout
+// ever changes.
+const frontendDir = process.env.STATIC_ROOT
+  ? path.resolve(process.env.STATIC_ROOT)
+  : path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "privacy-compliance-manager",
+      "dist",
+      "public",
+    );
+const frontendIndex = path.join(frontendDir, "index.html");
+const serveFrontend = existsSync(frontendIndex);
+
+if (serveFrontend) {
+  logger.info({ frontendDir }, "Serving compiled React frontend");
+  app.use(express.static(frontendDir));
+  app.use((req, res, next) => {
+    // SPA fallback for browser navigation only. Unmatched /api/* routes were
+    // already answered above and never reach this fallback.
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      next();
+      return;
+    }
+    if (req.path === "/api" || req.path.startsWith("/api/")) {
+      next();
+      return;
+    }
+    res.sendFile(frontendIndex, (error) => {
+      if (error) {
+        next(error);
+      }
+    });
+  });
+} else {
+  logger.warn(
+    { frontendIndex },
+    "Compiled frontend not found; running in API-only mode",
+  );
+}
 
 app.use(notFoundHandler);
 app.use(errorHandler);

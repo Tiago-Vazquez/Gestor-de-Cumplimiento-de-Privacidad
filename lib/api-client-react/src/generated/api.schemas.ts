@@ -5,6 +5,18 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface AuthLoginInput {
+  /** @minLength 1 */
+  token: string;
+}
+
+export interface AuthUser {
+  sub: string;
+  /** @nullable */
+  email?: string | null;
+  roles: string[];
+}
+
 export interface HealthStatus {
   status: string;
 }
