@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router, type IRouter } from "express";
+import { rateLimit } from "express-rate-limit";
 import { logger } from "../lib/logger";
 import { repos } from "../repositories";
 import { signToken } from "../auth/tokens";
@@ -9,6 +10,7 @@ import {
   sessionCookieOptions,
 } from "../auth/cookies";
 import { badRequest, unauthorized } from "../lib/errors";
+import { sendProblemJson } from "../lib/problem-json";
 
 const router: IRouter = Router();
 
@@ -37,11 +39,31 @@ function compareBootstrapToken(provided: string): boolean {
 }
 
 /**
+ * Rate limit específico para login: máximo 5 intentos por IP cada 15 minutos.
+ * Protege contra ataques de fuerza bruta sobre el bootstrap token sin
+ * afectar al rate limiter general de la API.
+ */
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    sendProblemJson(res, {
+      type: "about:blank",
+      title: "Too Many Requests",
+      status: 429,
+      detail: "Too many login attempts, please try again later.",
+    });
+  },
+});
+
+/**
  * POST /api/auth/login
  * Intercambia un bootstrap token (de un solo uso en el arranque) por una sesión
  * JWT con cookie httpOnly. Crea/actualiza al usuario y le asigna rol admin.
  */
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   const provided = (req.body ?? {}).token;
   if (typeof provided !== "string" || provided.length === 0) {
     throw badRequest("Missing bootstrap token in request body");

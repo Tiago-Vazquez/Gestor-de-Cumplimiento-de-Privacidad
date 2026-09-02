@@ -81,4 +81,35 @@ describe("Auth middleware (JWT)", () => {
     const res = await request(server).get("/api/healthz");
     expect(res.status).toBe(200);
   });
+
+  it("returns 401 for an expired JWT", async () => {
+    const { signToken } = await import("../auth/tokens");
+    const expiredToken = await signToken(
+      {
+        sub: "admin-1",
+        email: "admin@test.local",
+        name: "Admin",
+        roles: ["admin"],
+      },
+      { expiresInSeconds: -1 }, // Ya expirado
+    );
+
+    const res = await request(server)
+      .get("/api/dashboard")
+      .set("Authorization", `Bearer ${expiredToken}`);
+    expect(res.status).toBe(401);
+    expect(res.headers["www-authenticate"]).toContain("Bearer");
+  });
+
+  it("returns 401 for a tampered JWT", async () => {
+    // Token manipulado: alteramos la firma cambiando el último caracter
+    const validToken = `Bearer ${adminToken}`;
+    const tampered = validToken.slice(0, -1) + (validToken.slice(-1) === "A" ? "B" : "A");
+
+    const res = await request(server)
+      .get("/api/dashboard")
+      .set("Authorization", tampered);
+    expect(res.status).toBe(401);
+    expect(res.headers["www-authenticate"]).toContain("Bearer");
+  });
 });
