@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@workspace/api-zod": "workspace:*",
+    "@workspace/auth": "workspace:*",
     "@workspace/db": "workspace:*",
     "cors": "^2.8.6",
     "drizzle-orm": "catalog:",

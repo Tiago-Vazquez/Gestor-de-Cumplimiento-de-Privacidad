@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { TextEncoder } from "node:util";
 
@@ -16,12 +17,46 @@ export type AuthTokenPayload = {
   email: string | null;
   name: string | null;
   roles: string[];
+  /** JWT ID opcional para identificación única de sesión (revocación futura). */
+  jti?: string;
 };
 
-/** La autenticación está desactivada solo si AUTH_DISABLED=true|1. */
-export function authDisabled(): boolean {
+/**
+ * Interpretación única de NODE_ENV=production (fuente de verdad compartida
+ * por authDisabled() y assertAuthConfigForEnv()).
+ */
+export function isProductionEnv(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+/** AUTH_DISABLED=true|1 pide desactivar la autenticación (solo dev/tests). */
+function authDisabledRaw(): boolean {
   const raw = process.env.AUTH_DISABLED;
   return raw === "true" || raw === "1";
+}
+
+/**
+ * La autenticación está desactivada solo si AUTH_DISABLED=true|1.
+ * Hardening 6.3B.7 (fail-closed): en producción el bypass NUNCA aplica,
+ * aunque la variable llegue accidentalmente al entorno — defensa en
+ * profundidad usada por requireAuth/requireRole.
+ */
+export function authDisabled(): boolean {
+  return authDisabledRaw() && !isProductionEnv();
+}
+
+/**
+ * Guard de configuración fail-fast para el arranque del servidor: en
+ * producción, AUTH_DISABLED=true es una configuración prohibida (sería un
+ * bypass total de autenticación/autorización) y aborta el startup con un
+ * error claro. No expone secretos (solo nombres de variables).
+ */
+export function assertAuthConfigForEnv(): void {
+  if (authDisabledRaw() && isProductionEnv()) {
+    throw new Error(
+      "AUTH_DISABLED=true is forbidden when NODE_ENV=production: refusing to start with authentication/authorization bypassed. Remove AUTH_DISABLED or set it to false.",
+    );
+  }
 }
 
 function requireSecret(): Uint8Array {
@@ -43,19 +78,22 @@ export function defaultExpiresInSeconds(): number {
 
 export async function signToken(
   payload: AuthTokenPayload,
-  options?: { expiresInSeconds?: number },
+  options?: { expiresInSeconds?: number; jti?: string },
 ): Promise<string> {
   const expiresIn = options?.expiresInSeconds ?? defaultExpiresInSeconds();
+  const jti = options?.jti ?? randomUUID();
   return new SignJWT({
     email: payload.email ?? null,
     name: payload.name ?? null,
     roles: payload.roles,
+    jti,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(payload.sub)
     .setIssuedAt()
     .setIssuer(JWT_ISSUER)
     .setAudience(JWT_AUDIENCE)
+    .setJti(jti)
     .setExpirationTime(`${expiresIn}s`)
     .sign(requireSecret());
 }
@@ -80,6 +118,7 @@ export async function verifyToken(token: string): Promise<AuthTokenPayload | nul
       email: typeof payload.email === "string" ? payload.email : null,
       name: typeof payload.name === "string" ? payload.name : null,
       roles,
+      jti: typeof payload.jti === "string" ? payload.jti : undefined,
     };
   } catch {
     return null;

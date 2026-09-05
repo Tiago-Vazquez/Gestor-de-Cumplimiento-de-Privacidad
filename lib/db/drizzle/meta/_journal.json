@@ -1,20 +1,34 @@
 {
-  "version": "7",
-  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "7",
+      "breakpoints": true,
       "when": 1788196157913,
-      "tag": "0000_fancy_xorn",
-      "breakpoints": true
+      "version": "7",
+      "tag": "0000_fancy_xorn"
     },
     {
       "idx": 1,
-      "version": "7",
+      "breakpoints": true,
       "when": 1788212484954,
-      "tag": "0001_far_cerebro",
+      "version": "7",
+      "tag": "0001_far_cerebro"
+    },
+    {
+      "idx": 2,
+      "breakpoints": true,
+      "when": 1788368449820,
+      "version": "7",
+      "tag": "0002_add_user_password"
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788390979909,
+      "tag": "0003_harsh_shriek",
       "breakpoints": true
     }
-  ]
+  ],
+  "version": "7",
+  "dialect": "postgresql"
 }

@@ -1,4 +1,4 @@
-import { Bell, Command, Database, FileBarChart2, Fingerprint, Gauge, Layers3, LogOut, Menu, Radar, Search, ShieldCheck, Sparkles, X } from 'lucide-react';
+import { Bell, Command, Database, FileBarChart2, Fingerprint, Gauge, Layers3, LogOut, Menu, Radar, Search, ShieldCheck, Sparkles, Users, X } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Link, useLocation } from 'wouter';
 import { getGetDashboardQueryKey, useGetDashboard, useHealthCheck } from '@workspace/api-client-react';
@@ -11,6 +11,10 @@ const navItems = [
   { href: '/rules', label: 'Reglas', icon: Layers3 },
   { href: '/masking', label: 'Anonimización', icon: Fingerprint },
   { href: '/reports', label: 'Informes', icon: FileBarChart2 },
+];
+
+const adminNavItems = [
+  { href: '/users', label: 'Usuarios', icon: Users },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -53,6 +57,20 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Link>
               );
             })}
+            {user?.roles.includes('admin') && (
+              <>
+                <div className="mb-1 mt-5 px-3 font-mono text-[10px] uppercase tracking-[0.18em] text-sidebar-foreground/40">Administración</div>
+                {adminNavItems.map(({ href, label, icon: Icon }) => {
+                  const active = location.startsWith(href);
+                  return (
+                    <Link key={href} href={href} onClick={() => setMobileOpen(false)} className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition-colors ${active ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/66 hover:bg-sidebar-accent/65 hover:text-sidebar-accent-foreground'}`} data-testid={`link-nav-${label.toLowerCase()}`}>
+                      <Icon size={17} strokeWidth={active ? 2.2 : 1.8} className={active ? 'text-sidebar-primary' : 'text-sidebar-foreground/50 group-hover:text-sidebar-primary'} />
+                      <span>{label}</span>
+                    </Link>
+                  );
+                })}
+              </>
+            )}
           </nav>
         </div>
 

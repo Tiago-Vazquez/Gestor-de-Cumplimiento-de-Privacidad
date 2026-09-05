@@ -38,3 +38,8 @@ export function unauthorized(detail?: string): AppError {
 export function forbidden(detail?: string): AppError {
   return new AppError(403, "Forbidden", detail);
 }
+
+/** 409 when a resource conflicts with the current state (e.g. duplicate email). */
+export function conflict(detail?: string): AppError {
+  return new AppError(409, "Conflict", detail);
+}

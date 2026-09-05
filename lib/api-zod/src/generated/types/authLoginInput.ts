@@ -5,8 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { BootstrapLoginInput } from './bootstrapLoginInput';
+import type { LocalLoginInput } from './localLoginInput';
 
-export interface AuthLoginInput {
-  /** @minLength 1 */
-  token: string;
-}
+export type AuthLoginInput = BootstrapLoginInput | LocalLoginInput;

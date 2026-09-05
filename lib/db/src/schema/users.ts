@@ -13,8 +13,13 @@ export const usersTable = pgTable("users", {
   sub: text("sub").primaryKey(),
   email: text("email").notNull().unique(),
   name: text("name"),
+  // Hash de contraseña (scrypt). Null para usuarios sin contraseña local
+  // (ej. bootstrap-admin o usuarios OIDC futuros).
+  passwordHash: text("password_hash"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  // Último login exitoso. Null si nunca ha iniciado sesión.
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({

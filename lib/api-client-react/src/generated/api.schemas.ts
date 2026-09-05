@@ -5,9 +5,26 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export interface AuthLoginInput {
+export interface BootstrapLoginInput {
   /** @minLength 1 */
   token: string;
+}
+
+export interface LocalLoginInput {
+  /** User email (normalized to lowercase server-side) */
+  email: string;
+  /** @minLength 1 */
+  password: string;
+}
+
+export type AuthLoginInput = BootstrapLoginInput | LocalLoginInput;
+
+export interface RegisterInput {
+  /** User email (normalized to lowercase server-side) */
+  email: string;
+  /** @minLength 12 */
+  password: string;
+  name?: string;
 }
 
 export interface AuthUser {
@@ -15,6 +32,51 @@ export interface AuthUser {
   /** @nullable */
   email?: string | null;
   roles: string[];
+}
+
+export type AdminUserRolesItem = typeof AdminUserRolesItem[keyof typeof AdminUserRolesItem];
+
+
+export const AdminUserRolesItem = {
+  admin: 'admin',
+  auditor: 'auditor',
+} as const;
+
+/**
+ * Safe projection for administration (never includes credentials)
+ */
+export interface AdminUser {
+  sub: string;
+  email: string;
+  /** @nullable */
+  name?: string | null;
+  roles: AdminUserRolesItem[];
+  createdAt: string;
+  /** @nullable */
+  lastLoginAt?: string | null;
+}
+
+/**
+ * Only email and name are admin-editable; sub is immutable
+ */
+export interface UserUpdateInput {
+  /** New email (normalized to lowercase server-side) */
+  email?: string;
+  /** @nullable */
+  name?: string | null;
+}
+
+export type RolesUpdateInputRolesItem = typeof RolesUpdateInputRolesItem[keyof typeof RolesUpdateInputRolesItem];
+
+
+export const RolesUpdateInputRolesItem = {
+  admin: 'admin',
+  auditor: 'auditor',
+} as const;
+
+export interface RolesUpdateInput {
+  /** Full replacement set; roles are backend-authoritative */
+  roles: RolesUpdateInputRolesItem[];
 }
 
 export interface HealthStatus {

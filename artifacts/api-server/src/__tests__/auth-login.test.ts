@@ -1,20 +1,46 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
+import { decodeJwt } from "jose";
 import app from "../app";
 import { signToken } from "../auth/tokens";
 import { logger } from "../lib/logger";
+import type { MockState } from "./mock-repos";
 
 // Suite con autenticación REAL: activamos JWT para validar el flujo de login.
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
 process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
+process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
+
+vi.mock("@workspace/db", () => ({ pool: { query: vi.fn(), end: vi.fn() } }));
+const mocks = vi.hoisted(() => ({ state: undefined as MockState | undefined }));
 
 vi.mock("@workspace/db", () => ({ pool: { query: vi.fn(), end: vi.fn() } }));
 vi.mock("../repositories", async () => {
   const { createMockRepos } = await import("./mock-repos");
-  return { repos: createMockRepos().repos };
+  const created = createMockRepos();
+  mocks.state = created.state;
+  return { repos: created.repos };
 });
+
+function state(): MockState {
+  if (!mocks.state) throw new Error("mock repos not initialized");
+  return mocks.state;
+}
+
+/** Cutover del allowlist (6.3B.5e): un JWT firmado ad-hoc necesita su fila de
+ * sesión activa en `sessions` para ser aceptado por requireAuth(). */
+function seedSessionFor(token: string) {
+  const { jti, sub, exp } = decodeJwt(token);
+  state().sessions.push({
+    jti: jti!,
+    userSub: sub!,
+    issuedAt: new Date(),
+    expiresAt: new Date((exp ?? 0) * 1000),
+    revokedAt: null,
+  });
+}
 
 describe("Auth flow (login / logout / me)", () => {
   let server: ReturnType<Express["listen"]>;
@@ -28,6 +54,7 @@ describe("Auth flow (login / logout / me)", () => {
       name: "Admin",
       roles: ["admin"],
     });
+    seedSessionFor(adminToken);
   });
 
   afterAll(() => {

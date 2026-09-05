@@ -12,12 +12,14 @@ import { AppShell } from '@/components/app-shell';
 import { AuthProvider, useAuth } from '@/auth/auth-context';
 import { FullScreenSpinner, ProtectedRoute } from '@/auth/protected-route';
 import LoginPage from '@/pages/login';
+import RegisterPage from '@/pages/register';
 import DashboardPage from '@/pages/dashboard';
 import FindingsPage from '@/pages/findings';
 import SourcesPage from '@/pages/sources';
 import RulesPage from '@/pages/rules';
 import MaskingPage from '@/pages/masking';
 import ReportsPage from '@/pages/reports';
+import UsersPage from '@/pages/users';
 import NotFound from '@/pages/not-found';
 import {
   Route,
@@ -99,6 +101,7 @@ function Router() {
     return (
       <Switch>
         <Route path="/login" component={LoginPage} />
+        <Route path="/register" component={RegisterPage} />
         <Route>
           <Redirect to="/login" />
         </Route>
@@ -107,11 +110,11 @@ function Router() {
   }
 
   // Autenticado: shell completo con rutas protegidas.
-  // Si el usuario navega a /login con sesión activa, redirigir al dashboard.
-  const onLoginPage = location === '/login';
+  // /login y /register no tienen sentido con sesión activa: redirigir al shell.
+  const onAuthPage = location === '/login' || location === '/register';
   return (
     <AppShell>
-      {onLoginPage && <Redirect to="/" />}
+      {onAuthPage && <Redirect to="/" />}
       <Switch>
         <Route path="/" component={DashboardPage} />
         <Route path="/findings" component={FindingsPage} />
@@ -119,6 +122,7 @@ function Router() {
         <Route path="/rules" component={RulesPage} />
         <Route path="/masking" component={MaskingPage} />
         <Route path="/reports" component={ReportsPage} />
+        <Route path="/users" component={UsersPage} />
         <Route component={NotFound} />
       </Switch>
     </AppShell>

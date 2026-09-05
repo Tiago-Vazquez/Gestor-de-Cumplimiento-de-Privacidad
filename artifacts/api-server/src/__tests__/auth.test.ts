@@ -1,18 +1,29 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
+import { decodeJwt } from "jose";
 import app from "../app";
 import { signToken } from "../auth/tokens";
+import type { MockState } from "./mock-repos";
 
 // Suite con autenticación REAL: activamos JWT para validar el middleware.
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
 
+const mocks = vi.hoisted(() => ({ state: undefined as MockState | undefined }));
+
 vi.mock("@workspace/db", () => ({ pool: { query: vi.fn(), end: vi.fn() } }));
 vi.mock("../repositories", async () => {
   const { createMockRepos } = await import("./mock-repos");
-  return { repos: createMockRepos().repos };
+  const created = createMockRepos();
+  mocks.state = created.state;
+  return { repos: created.repos };
 });
+
+function state(): MockState {
+  if (!mocks.state) throw new Error("mock repos not initialized");
+  return mocks.state;
+}
 
 describe("Auth middleware (JWT)", () => {
   let server: ReturnType<Express["listen"]>;
@@ -33,6 +44,18 @@ describe("Auth middleware (JWT)", () => {
       name: "Auditor",
       roles: ["auditor"],
     });
+    // Cutover del allowlist: cada token con `jti` necesita una fila de sesión
+    // activa para ser aceptado por requireAuth().
+    for (const token of [adminToken, auditorToken]) {
+      const { jti, sub, exp } = decodeJwt(token);
+      state().sessions.push({
+        jti: jti!,
+        userSub: sub!,
+        issuedAt: new Date(),
+        expiresAt: new Date((exp ?? 0) * 1000),
+        revokedAt: null,
+      });
+    }
   });
 
   afterAll(() => {
@@ -109,6 +132,43 @@ describe("Auth middleware (JWT)", () => {
     const res = await request(server)
       .get("/api/dashboard")
       .set("Authorization", tampered);
+    expect(res.status).toBe(401);
+    expect(res.headers["www-authenticate"]).toContain("Bearer");
+  });
+
+  it("returns 401 for a JWT without jti (legacy tokens rejected)", async () => {
+    const { signToken } = await import("../auth/tokens");
+    const tokenWithoutJti = await signToken({
+      sub: "admin-1",
+      email: "admin@test.local",
+      name: "Admin",
+      roles: ["admin"],
+    });
+    const parts = tokenWithoutJti.split(".");
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+    delete payload.jti;
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+    const legacyToken = `${parts[0]}.${encodedPayload}.${parts[2]}`;
+
+    const res = await request(server)
+      .get("/api/dashboard")
+      .set("Authorization", `Bearer ${legacyToken}`);
+    expect(res.status).toBe(401);
+    expect(res.headers["www-authenticate"]).toContain("Bearer");
+  });
+
+  it("returns 401 for a JWT with jti but no session row", async () => {
+    const { signToken } = await import("../auth/tokens");
+    const token = await signToken({
+      sub: "no-session-user",
+      email: "nosession@test.local",
+      name: "No Session",
+      roles: ["admin"],
+    });
+
+    const res = await request(server)
+      .get("/api/dashboard")
+      .set("Authorization", `Bearer ${token}`);
     expect(res.status).toBe(401);
     expect(res.headers["www-authenticate"]).toContain("Bearer");
   });

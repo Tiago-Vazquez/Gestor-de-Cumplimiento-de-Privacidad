@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import authRouter from "./auth";
 import privacyRouter from "./privacy";
+import usersRouter from "./users";
 import { requireAuth } from "../auth/middleware";
 
 const router: IRouter = Router();
@@ -14,5 +15,9 @@ router.use("/auth", authRouter);
 router.use(requireAuth());
 
 router.use(privacyRouter);
+
+// Administración de usuarios: adicionalmente exige rol `admin` (dentro del
+// router). Montado tras requireAuth para que req.user esté disponible.
+router.use("/users", usersRouter);
 
 export default router;

@@ -6,6 +6,7 @@ export * from "./findings";
 export * from "./reports";
 export * from "./rules";
 export * from "./scans";
+export * from "./sessions";
 export * from "./sources";
 export * from "./user-roles";
 export * from "./users";

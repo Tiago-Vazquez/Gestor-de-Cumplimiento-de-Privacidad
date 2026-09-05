@@ -7,6 +7,7 @@ import * as findings from "./findings.repo";
 import * as reports from "./reports.repo";
 import * as rules from "./rules.repo";
 import * as scans from "./scans.repo";
+import * as sessions from "./sessions.repo";
 import * as sources from "./sources.repo";
 import * as userRoles from "./user-roles.repo";
 import * as users from "./users.repo";
@@ -18,6 +19,7 @@ export const repos = {
   reports,
   rules,
   scans,
+  sessions,
   sources,
   userRoles,
   users,

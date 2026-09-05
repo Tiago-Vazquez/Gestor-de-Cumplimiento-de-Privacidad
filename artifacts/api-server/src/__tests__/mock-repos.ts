@@ -7,7 +7,10 @@ import type {
   Source,
   User,
   UserRole,
+  Session,
 } from "@workspace/db";
+import { forbidden } from "../lib/errors";
+import { decodeJwt } from "jose";
 
 /**
  * Stub in-memory de la capa de repositorios para los tests HTTP.
@@ -25,6 +28,7 @@ import type {
 export type MockState = {
   users: User[];
   userRoles: UserRole[];
+  sessions: Session[];
   findings: Finding[];
   sources: (Source & { findingsCount: number })[];
   rules: Rule[];
@@ -50,6 +54,7 @@ export function createMockRepos() {
   const state: MockState = {
     users: [],
     userRoles: [],
+  sessions: [],
     findings: [
       { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12) },
       { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38) },
@@ -251,6 +256,14 @@ export function createMockRepos() {
       async getByEmail(email: string) {
         return state.users.find((user) => user.email === email) ?? null;
       },
+      async updatePasswordHash(sub: string, passwordHash: string) {
+        const user = state.users.find((u) => u.sub === sub);
+        if (user) { user.passwordHash = passwordHash; user.updatedAt = new Date(); }
+      },
+      async updateLastLogin(sub: string) {
+        const user = state.users.find((u) => u.sub === sub);
+        if (user) { user.lastLoginAt = new Date(); }
+      },
       async upsertBySub(values: { sub: string; email: string; name: string | null }) {
         const existing = state.users.find((user) => user.sub === values.sub);
         if (existing) {
@@ -263,11 +276,31 @@ export function createMockRepos() {
           sub: values.sub,
           email: values.email,
           name: values.name,
+          passwordHash: null,
+          lastLoginAt: null,
           createdAt: new Date(),
           updatedAt: new Date(),
         };
         state.users.push(created);
         return { ...created };
+      },
+      /** Lista todos los usuarios ordenados por creación (proyección segura en la ruta). */
+      async listUsers() {
+        return [...state.users].sort(
+          (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+        );
+      },
+      /**
+       * Actualiza email/name de un usuario. `sub` NO es modificable:
+       * es la identidad estable (igual que el repositorio real).
+       */
+      async updateProfile(sub: string, values: { email?: string; name?: string | null }) {
+        const user = state.users.find((u) => u.sub === sub);
+        if (!user) return null;
+        if (values.email !== undefined) user.email = values.email;
+        if (values.name !== undefined) user.name = values.name;
+        user.updatedAt = new Date();
+        return { ...user };
       },
     },
     userRoles: {
@@ -287,6 +320,105 @@ export function createMockRepos() {
           state.userRoles.push({ userSub: sub, role, createdAt: new Date() });
         }
         return roles;
+      },
+      /**
+       * Variante U2 (6.3B.10): la invariante "siempre >= 1 admin" y la
+       * deteccion de cambio efectivo se evaluan AL MOMENTO DE LA MUTACION,
+       * equivalente in-tx tras los locks FOR UPDATE del repo real. Ante
+       * rechazo no se muta nada (rollback).
+       */
+      /**
+       * Variante U2 (6.3B.10): replica al repositorio real, que evalua la
+       * invariante "siempre >= 1 admin" DENTRO de la operacion (en el repo,
+       * tras los locks FOR UPDATE). Cuando se viola, lanza `forbidden` (403)
+       * ANTES de mutar el estado (equivalente al ROLLBACK real). La
+       * deteccion de cambio efectivo tambien ocurre al momento de mutar.
+       * Contrato = SetRolesResult: { applied, changed, revokedSessions }.
+       */
+      async setRolesAndRevokeSessions(sub: string, roles: string[]) {
+        const currentRoles = state.userRoles
+          .filter((r) => r.userSub === sub)
+          .map((r) => r.role);
+
+        // Invariante: retirar el ultimo admin -> 403.
+        const isLosingAdmin =
+          currentRoles.includes("admin") && !roles.includes("admin");
+        if (isLosingAdmin) {
+          const otherAdmins = state.userRoles.filter(
+            (r) => r.role === "admin" && r.userSub !== sub,
+          );
+          if (otherAdmins.length === 0) {
+            throw forbidden("Cannot remove the last administrator role");
+          }
+        }
+
+        // Cambio efectivo (ignora orden/duplicados), como en la tx real.
+        const sortKey = (xs: string[]) => [...xs].sort().join(",");
+        const changed = sortKey(currentRoles) !== sortKey(roles);
+        if (!changed) {
+          return { applied: [...currentRoles], changed: false, revokedSessions: 0 };
+        }
+
+        state.userRoles = state.userRoles.filter((r) => r.userSub !== sub);
+        for (const role of roles) {
+          state.userRoles.push({ userSub: sub, role, createdAt: new Date() });
+        }
+        let revokedSessions = 0;
+        for (const session of state.sessions) {
+          if (session.userSub === sub && session.revokedAt === null) {
+            session.revokedAt = new Date();
+            revokedSessions += 1;
+          }
+        }
+        return { applied: [...roles], changed: true, revokedSessions };
+      },
+    },
+
+    sessions: {
+      /**
+       * [6.3B.12] Contrato transaccional del login (equivalente al repo real:
+       * lock de users(sub) + lectura de roles + firma + alta de sesion). El
+       * mock es secuencial (no hay carrera real) pero replica la semantica:
+       * lee los roles ACTUALES, firma con ellos y crea la fila de sesion.
+       * Si el build del token o el alta fallan no queda ningun cambio.
+       */
+      async createSessionForUser(
+        sub: string,
+        buildToken: (roles: string[]) => Promise<string>,
+      ) {
+        const roles = state.userRoles
+          .filter((r) => r.userSub === sub)
+          .map((r) => r.role);
+        const jwt = await buildToken(roles);
+
+        const { jti, exp } = decodeJwt(jwt);
+        if (typeof jti !== "string" || typeof exp !== "number") {
+          throw new Error("JWT without jti/exp; refusing to create session");
+        }
+        const created = {
+          jti,
+          userSub: sub,
+          issuedAt: new Date(),
+          expiresAt: new Date(exp * 1000),
+          revokedAt: null,
+        };
+        state.sessions.push(created);
+        return { jwt, roles };
+      },
+      async findActiveByJti(jti: string) {
+        const now = new Date();
+        const session = state.sessions.find(
+          (s) => s.jti === jti && s.revokedAt === null && s.expiresAt > now,
+        );
+        return session ? { ...session } : null;
+      },
+      async revokeByJti(jti: string) {
+        const session = state.sessions.find(
+          (s) => s.jti === jti && s.revokedAt === null,
+        );
+        if (!session) return false;
+        session.revokedAt = new Date();
+        return true;
       },
     },
   };

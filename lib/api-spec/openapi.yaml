@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: auth
     description: Authentication and session
+  - name: users
+    description: User administration (admin role required)
   - name: dashboard
     description: Overview and activity
   - name: findings
@@ -45,7 +47,7 @@ paths:
     post:
       operationId: authLogin
       tags: [auth]
-      summary: Login with bootstrap token
+      summary: Login with local credentials (email + password) or legacy bootstrap token
       security: []
       requestBody:
         required: true
@@ -61,9 +63,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/AuthUser"
         "400":
-          description: Missing bootstrap token in request body
+          description: Invalid request body
         "401":
-          description: Invalid bootstrap token
+          description: Invalid credentials (uniform response, no account enumeration)
+        "429":
+          description: Too many login attempts (rate limited, local login only)
+  /auth/register:
+    post:
+      operationId: authRegister
+      tags: [auth]
+      summary: Register a new local user
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterInput"
+      responses:
+        "201":
+          description: User created (auditor role assigned; not logged in automatically)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "400":
+          description: Invalid input (email format or password policy)
+        "409":
+          description: Email already registered
   /auth/logout:
     post:
       operationId: authLogout
@@ -87,6 +114,101 @@ paths:
                 $ref: "#/components/schemas/AuthUser"
         "401":
           description: Not authenticated
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List users (admin only)
+      responses:
+        "200":
+          description: Safe user list (no credentials)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminUser"
+        "401":
+          description: Not authenticated
+        "403":
+          description: Admin role required
+  /users/{sub}:
+    get:
+      operationId: getUser
+      tags: [users]
+      summary: Get a single user (admin only)
+      parameters:
+        - name: sub
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "401": { description: Not authenticated }
+        "403": { description: Admin role required }
+        "404": { description: User not found }
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update admin-editable fields (email, name). `sub` is immutable (admin only)
+      parameters:
+        - name: sub
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdateInput"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "400": { description: Invalid input }
+        "401": { description: Not authenticated }
+        "403": { description: Admin role required }
+        "404": { description: User not found }
+        "409": { description: Email already in use }
+  /users/{sub}/roles:
+    patch:
+      operationId: updateUserRoles
+      tags: [users]
+      summary: Replace user roles (admin only, backend-authoritative)
+      description: |
+        Replaces the role set of a user. Removing the `admin` role from the
+        last administrator is rejected with 403 to avoid lock-out.
+      parameters:
+        - name: sub
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RolesUpdateInput"
+      responses:
+        "200":
+          description: Updated user with applied roles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUser"
+        "400": { description: Invalid roles }
+        "401": { description: Not authenticated }
+        "403": { description: Admin role required / would remove last admin }
+        "404": { description: User not found }
   /dashboard:
     get:
       operationId: getDashboard
@@ -269,10 +391,31 @@ components:
       bearerFormat: JWT
   schemas:
     AuthLoginInput:
+      oneOf:
+        - $ref: "#/components/schemas/BootstrapLoginInput"
+        - $ref: "#/components/schemas/LocalLoginInput"
+    BootstrapLoginInput:
       type: object
       required: [token]
       properties:
         token: { type: string, minLength: 1 }
+    LocalLoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          description: User email (normalized to lowercase server-side)
+        password: { type: string, minLength: 1 }
+    RegisterInput:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          description: User email (normalized to lowercase server-side)
+        password: { type: string, minLength: 12 }
+        name: { type: string }
     AuthUser:
       type: object
       required: [sub, roles]
@@ -282,6 +425,35 @@ components:
         roles:
           type: array
           items: { type: string }
+    AdminUser:
+      type: object
+      description: Safe projection for administration (never includes credentials)
+      required: [sub, email, roles, createdAt]
+      properties:
+        sub: { type: string }
+        email: { type: string }
+        name: { type: ["string", "null"] }
+        roles:
+          type: array
+          items: { type: string, enum: [admin, auditor] }
+        createdAt: { type: string, format: date-time }
+        lastLoginAt: { type: ["string", "null"], format: date-time }
+    UserUpdateInput:
+      type: object
+      description: Only email and name are admin-editable; sub is immutable
+      properties:
+        email:
+          type: string
+          description: New email (normalized to lowercase server-side)
+        name: { type: ["string", "null"] }
+    RolesUpdateInput:
+      type: object
+      required: [roles]
+      properties:
+        roles:
+          type: array
+          items: { type: string, enum: [admin, auditor] }
+          description: Full replacement set; roles are backend-authoritative
     HealthStatus:
       type: object
       properties:

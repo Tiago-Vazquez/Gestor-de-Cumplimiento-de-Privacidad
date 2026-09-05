@@ -1,7 +1,23 @@
 import { pool } from "@workspace/db";
 import type { Server } from "node:http";
 import app from "./app";
+import { assertAuthConfigForEnv } from "./auth/tokens";
+import { bootstrapProductionWarning } from "./routes/auth";
 import { logger } from "./lib/logger";
+
+// Fail-fast (hardening 6.3B.7): AUTH_DISABLED=true está prohibido en
+// producción — aborta el startup antes de abrir el puerto en lugar de
+// arrancar con la autenticación/autorización burlada.
+assertAuthConfigForEnv();
+
+// Hardening 6.3B.15: el bootstrap de admin es opt-in (AUTH_BOOTSTRAP_ENABLED
+// ausente = deshabilitado). Si un despliegue lo habilita explícitamente en
+// producción, dejar huella en el log de arranque (no está prohibido, pero sí
+// desaconsejado: identidad fija con rol admin y token estático).
+const bootstrapWarning = bootstrapProductionWarning();
+if (bootstrapWarning) {
+  logger.warn(bootstrapWarning);
+}
 
 // Replit always provides PORT. Outside Replit (local dev on Windows, macOS or
 // Linux) we fall back to the documented default port so `pnpm run dev` works

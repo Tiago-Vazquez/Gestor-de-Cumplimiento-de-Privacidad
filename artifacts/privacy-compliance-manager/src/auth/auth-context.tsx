@@ -32,10 +32,12 @@ interface AuthContextValue {
   /** True cuando /api/auth/me falló por una razón distinta a 401. */
   hasSystemError: boolean;
   /**
-   * Dispara POST /api/auth/login con el bootstrap token. La mutación
-   * generada por Orval espera la variable `{ data: AuthLoginInput }`.
+   * Dispara POST /api/auth/login con email + password (login local). La
+   * mutación generada por Orval espera la variable `{ data: AuthLoginInput }`.
+   * El bootstrap token sigue soportado por el backend como mecanismo legacy
+   * temporal, pero la UI ya no lo utiliza ni lo solicita.
    */
-  login: (token: string, callbacks?: LoginCallbacks) => void;
+  login: (email: string, password: string, callbacks?: LoginCallbacks) => void;
   /** Roles del usuario autenticado (p.ej. ['admin']) o lista vacía. */
   roles: string[];
   /** true cuando el usuario autenticado tiene el rol admin. */
@@ -98,8 +100,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     hasSystemError,
     roles: meQuery.data?.roles ?? [],
     isAdmin: (meQuery.data?.roles ?? []).includes('admin'),
-    login: (token: string, callbacks?: LoginCallbacks) => {
-      loginMutation.mutate({ data: { token } }, callbacks);
+    login: (email: string, password: string, callbacks?: LoginCallbacks) => {
+      loginMutation.mutate({ data: { email, password } }, callbacks);
     },
     logout: () => logoutMutation.mutate(),
   };

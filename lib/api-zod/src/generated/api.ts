@@ -18,16 +18,40 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * @summary Login with bootstrap token
+ * @summary Login with local credentials (email + password) or legacy bootstrap token
  */
 
 
 
-export const AuthLoginBody = zod.object({
+
+export const AuthLoginBody = zod.union([zod.object({
   "token": zod.string().min(1)
-})
+}),zod.object({
+  "email": zod.string().describe('User email (normalized to lowercase server-side)'),
+  "password": zod.string().min(1)
+})])
 
 export const AuthLoginResponse = zod.object({
+  "sub": zod.string(),
+  "email": zod.string().nullish(),
+  "roles": zod.array(zod.string())
+})
+
+
+/**
+ * @summary Register a new local user
+ */
+export const authRegisterBodyPasswordMin = 12;
+
+
+
+export const AuthRegisterBody = zod.object({
+  "email": zod.string().describe('User email (normalized to lowercase server-side)'),
+  "password": zod.string().min(authRegisterBodyPasswordMin),
+  "name": zod.string().optional()
+})
+
+export const AuthRegisterResponse = zod.object({
   "sub": zod.string(),
   "email": zod.string().nullish(),
   "roles": zod.array(zod.string())
@@ -48,6 +72,82 @@ export const AuthMeResponse = zod.object({
   "email": zod.string().nullish(),
   "roles": zod.array(zod.string())
 })
+
+
+/**
+ * @summary List users (admin only)
+ */
+export const ListUsersResponseItem = zod.object({
+  "sub": zod.string(),
+  "email": zod.string(),
+  "name": zod.string().nullish(),
+  "roles": zod.array(zod.enum(['admin', 'auditor'])),
+  "createdAt": zod.coerce.date(),
+  "lastLoginAt": zod.coerce.date().nullish()
+}).describe('Safe projection for administration (never includes credentials)')
+export const ListUsersResponse = zod.array(ListUsersResponseItem)
+
+
+/**
+ * @summary Get a single user (admin only)
+ */
+export const GetUserParams = zod.object({
+  "sub": zod.coerce.string()
+})
+
+export const GetUserResponse = zod.object({
+  "sub": zod.string(),
+  "email": zod.string(),
+  "name": zod.string().nullish(),
+  "roles": zod.array(zod.enum(['admin', 'auditor'])),
+  "createdAt": zod.coerce.date(),
+  "lastLoginAt": zod.coerce.date().nullish()
+}).describe('Safe projection for administration (never includes credentials)')
+
+
+/**
+ * @summary Update admin-editable fields (email, name). `sub` is immutable (admin only)
+ */
+export const UpdateUserParams = zod.object({
+  "sub": zod.coerce.string()
+})
+
+export const UpdateUserBody = zod.object({
+  "email": zod.string().optional().describe('New email (normalized to lowercase server-side)'),
+  "name": zod.string().nullish()
+}).describe('Only email and name are admin-editable; sub is immutable')
+
+export const UpdateUserResponse = zod.object({
+  "sub": zod.string(),
+  "email": zod.string(),
+  "name": zod.string().nullish(),
+  "roles": zod.array(zod.enum(['admin', 'auditor'])),
+  "createdAt": zod.coerce.date(),
+  "lastLoginAt": zod.coerce.date().nullish()
+}).describe('Safe projection for administration (never includes credentials)')
+
+
+/**
+ * Replaces the role set of a user. Removing the `admin` role from the
+ * last administrator is rejected with 403 to avoid lock-out.
+ * @summary Replace user roles (admin only, backend-authoritative)
+ */
+export const UpdateUserRolesParams = zod.object({
+  "sub": zod.coerce.string()
+})
+
+export const UpdateUserRolesBody = zod.object({
+  "roles": zod.array(zod.enum(['admin', 'auditor'])).describe('Full replacement set; roles are backend-authoritative')
+})
+
+export const UpdateUserRolesResponse = zod.object({
+  "sub": zod.string(),
+  "email": zod.string(),
+  "name": zod.string().nullish(),
+  "roles": zod.array(zod.enum(['admin', 'auditor'])),
+  "createdAt": zod.coerce.date(),
+  "lastLoginAt": zod.coerce.date().nullish()
+}).describe('Safe projection for administration (never includes credentials)')
 
 
 /**
