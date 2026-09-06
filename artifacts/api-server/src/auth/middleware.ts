@@ -70,6 +70,17 @@ export function requireAuth() {
       throw unauthorized("Missing or invalid session");
     }
 
+    // Hardening 6.3B.23 (F23-03, defensa en profundidad): el JWT fue emitido
+    // para un `sub`, la sesión allowlist pertenece a `session.userSub`. Si no
+    // coinciden, el token fue reasignado/cambiamos de identidad → 401. La
+    // respuesta es idéntica al resto de fallos de auth para no filtrar cuál
+    // comprobación falló. `findActiveByJti` garantiza que la fila existe (if
+    // previo) y que está activa (revoked_at IS NULL AND expires_at > now).
+    if (activeSession.userSub !== payload.sub) {
+      res.set("WWW-Authenticate", WWW_AUTHENTICATE);
+      throw unauthorized("Missing or invalid session");
+    }
+
     (req as AuthedRequest).user = payload;
     next();
   };

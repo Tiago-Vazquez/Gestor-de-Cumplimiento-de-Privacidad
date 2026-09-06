@@ -106,6 +106,10 @@ export function registrationEnabled(): boolean {
  * una operación de escritura costosa (scrypt) alcanzable por anónimos, así
  * que merece su propio bucket: agotarlo no afecta al login (ni viceversa).
  * Los limiters globales de app.ts actúan como segunda capa.
+ *
+ * Hardening 6.3B.23 (F23-01): clave compuesta IP + email normalizado.
+ * Misma lógica que loginLimiter — evasión por rotación de XFF y bucket
+ * aislado por víctima.
  */
 const registerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -119,6 +123,12 @@ const registerLimiter = rateLimit({
       status: 429,
       detail: "Too many registration attempts, please try again later.",
     });
+  },
+  keyGenerator: (req) => {
+    const ip = req.ip ?? "unknown";
+    const body = req.body ?? {};
+    const email = typeof body.email === "string" ? normalizeEmail(body.email) : null;
+    return email ? `${ip}:${email}` : ip;
   },
 });
 
@@ -134,6 +144,16 @@ const loginLimiter = rateLimit({
       status: 429,
       detail: "Too many login attempts, please try again later.",
     });
+  },
+  // Hardening 6.3B.23 (F23-01): clave compuesta IP + email normalizado.
+  // Impide evasión del límite mediante rotación de X-Forwarded-For y aísla
+  // el bucket de cada víctima (el atacante no puede bloquear un email que no
+  // conoce). Sin email válido (body mal formado) se recae a solo-IP.
+  keyGenerator: (req) => {
+    const ip = req.ip ?? "unknown";
+    const body = req.body ?? {};
+    const email = typeof body.email === "string" ? normalizeEmail(body.email) : null;
+    return email ? `${ip}:${email}` : ip;
   },
   // Solo rate-limitear login local (email+password), no bootstrap token.
   skip: (req) => {

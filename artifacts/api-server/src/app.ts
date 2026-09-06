@@ -23,13 +23,16 @@ function numberFromEnv(name: string, fallback: number): number {
 }
 
 /**
- * Trusted proxy hops in front of this server (Replit's router adds one).
- * Configurable via TRUST_PROXY: "true"/"false", a hop count, or a proxy
- * IP/subnet. Defaults to 1, which is correct behind the Replit router.
+ * Trusted proxy hops in front of this server. Hardening 6.3B.23 (F23-01,
+ * fail-closed): the default is to trust NO proxy, so `req.ip` always reflects
+ * the socket peer and cannot be spoofed via `X-Forwarded-For`. Deployments
+ * behind a reverse proxy (load balancer, CDN, Replit router) MUST enable it
+ * explicitly with `TRUST_PROXY=true|1|<n>` — without it the rate limiters would
+ * key off the proxy's own IP and shared-NAT clients would collide on a bucket.
  */
 function resolveTrustProxy(): boolean | number | string {
   const raw = process.env.TRUST_PROXY;
-  if (raw === undefined || raw === "") return 1;
+  if (raw === undefined || raw === "") return false;
   if (raw === "true") return true;
   if (raw === "false") return false;
   const hops = Number(raw);

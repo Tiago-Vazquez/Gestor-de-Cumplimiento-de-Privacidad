@@ -9,6 +9,10 @@ process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
 process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
 process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
+// Los tests de rate limit necesitan controlar la IP para aislar buckets entre
+// casos; habilitamos trust proxy explícitamente (el default de producción es
+// false — fail-closed—, ver F23-01).
+process.env.TRUST_PROXY = "1";
 
 vi.mock("@workspace/db", () => ({ pool: { query: vi.fn(), end: vi.fn() } }));
 vi.mock("../repositories", async () => {

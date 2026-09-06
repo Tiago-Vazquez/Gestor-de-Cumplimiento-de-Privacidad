@@ -45,10 +45,11 @@ El arranque es **fail-fast**: `assertAuthConfigForEnv()` (en `src/auth/tokens.ts
 
 - Duración del JWT en **segundos** (default 8 horas). Valor no numérico o ≤0 → fallback 8h.
 
-### `TRUST_PROXY` (default: unset)
+### `TRUST_PROXY` (default: `false` — fail-closed)
 
 - Valor de Express `trust proxy`: `true`/`false`, número de saltos (p. ej. `1`) o expresión de proxy/CIDR.
-- Déjalo unset salvo que el API esté detrás de reverse proxy. Sin configurar, `req.ip` —y por tanto las claves de los rate limiters— verá la IP del proxy y no la del cliente.
+- **Default `false`**: `req.ip` refleja siempre el socket peer y NO puede spoofearse vía `X-Forwarded-For` (hardening 6.3B.23, F23-01). Los rate limiters usan `req.ip` como parte de su clave.
+- Despliegues detrás de reverse proxy (load balancer, CDN, router de Replit) DEBEN habilitarlo explícitamente con `TRUST_PROXY=true|1|<n>`. Sin configurar, los rate limiters verían la IP del proxy y clientes bajo NAT compartido compartirían bucket.
 
 ### `CORS_ORIGINS` (default: unset)
 

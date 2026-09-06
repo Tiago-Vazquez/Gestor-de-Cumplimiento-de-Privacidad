@@ -126,6 +126,7 @@ export async function verifyToken(token: string): Promise<AuthTokenPayload | nul
     const { payload } = await jwtVerify(token, requireSecret(), {
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
+      algorithms: ["HS256"],
     });
     const sub = typeof payload.sub === "string" ? payload.sub : "";
     if (!sub) return null;
