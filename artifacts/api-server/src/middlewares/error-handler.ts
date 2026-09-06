@@ -15,7 +15,7 @@
  */
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
-import { AppError } from "../lib/errors";
+import { AppError, isConflictError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import {
   sendProblemJson,
@@ -147,7 +147,24 @@ export function errorHandler(
     return;
   }
 
-  // 4) Unknown errors → 500 with a generic body. Full details go to the
+  // 5) PostgreSQL unique violation (SQLSTATE 23505) → 409.
+  //    Actúa como red de seguridad para carreras check-then-act (registro de
+  //    email, cambio de email): el check preventivo sigue dando la respuesta
+  //    rápida, y la constraint UNIQUE de BD es la autoridad definitiva. Sin
+  //    este mapeo, la carrera caería como HTTP 500 (F23-02).
+  if (isConflictError(err)) {
+    logger.warn({ reqId: requestId(req) }, "Unique constraint violation");
+    sendProblemJson(res, {
+      type: "about:blank",
+      title: "Conflict",
+      status: 409,
+      detail: "A resource with the given unique identifier already exists",
+      instance,
+    });
+    return;
+  }
+
+  // 6) Unknown errors → 500 with a generic body. Full details go to the
   //    server logs only; the client never sees stack traces in production.
   logError(req, "Unhandled error", err);
   const problem: ProblemDetails = {
