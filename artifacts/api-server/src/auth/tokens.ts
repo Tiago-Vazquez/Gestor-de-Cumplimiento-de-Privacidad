@@ -88,11 +88,21 @@ function requireSecret(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
+/**
+ * Duración del JWT. Hardening 6.3B.28: la configuración se acota a un rango
+ * seguro [60s, 86400s] (1 min – 24 h). Valores fuera de rango se saturan al
+ * extremo más cercano; ausencia / inválido → 8 h (default legacy). El tope
+ * superior evita tokens con validez de décadas por error de configuración;
+ * el inferior evita DoS de UX (tokens que expiran en el mismo request).
+ */
 export function defaultExpiresInSeconds(): number {
   const raw = process.env.JWT_EXPIRES_IN;
   if (!raw) return 8 * 60 * 60; // 8h
   const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : 8 * 60 * 60;
+  if (!Number.isFinite(value) || value <= 0) return 8 * 60 * 60;
+  const MIN_TTL = 60; // 1 minuto
+  const MAX_TTL = 86400; // 24 horas
+  return Math.min(Math.max(value, MIN_TTL), MAX_TTL);
 }
 
 export async function signToken(
