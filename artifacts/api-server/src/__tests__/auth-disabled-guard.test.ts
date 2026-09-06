@@ -28,9 +28,10 @@ describe("assertAuthConfigForEnv (startup guard)", () => {
     expect(() => assertAuthConfigForEnv()).toThrowError(/forbidden/);
   });
 
-  it("2. NODE_ENV=production + AUTH_DISABLED=false → configuración válida, JWT normal", () => {
+  it("2. NODE_ENV=production + AUTH_DISABLED=false + secret válido → configuración válida, JWT normal", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("AUTH_DISABLED", "false");
+    vi.stubEnv("JWT_SECRET", "valid-secret-of-32-chars-for-guard!!");
     expect(() => assertAuthConfigForEnv()).not.toThrow();
     expect(authDisabled()).toBe(false);
   });
@@ -117,5 +118,65 @@ describe("requireAuth con AUTH_DISABLED=true en producción (defensa en profundi
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("AUTH_DISABLED", "true");
     expect(authDisabled()).toBe(false);
+  });
+});
+
+describe("assertAuthConfigForEnv: JWT_SECRET fail-fast (6.3B.21)", () => {
+  it("7. secret ausente con auth habilitada → rechaza el arranque", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("AUTH_DISABLED", "false");
+    vi.stubEnv("JWT_SECRET", undefined);
+    expect(() => assertAuthConfigForEnv()).toThrowError(/JWT_SECRET is required/);
+  });
+
+  it("8. secret vacío → rechaza el arranque", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("AUTH_DISABLED", "false");
+    vi.stubEnv("JWT_SECRET", "");
+    expect(() => assertAuthConfigForEnv()).toThrowError(/JWT_SECRET is required/);
+  });
+
+  it("8b. secret solo espacios (trim vacío) → rechaza el arranque", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("AUTH_DISABLED", "false");
+    vi.stubEnv("JWT_SECRET", "                                    ");
+    expect(() => assertAuthConfigForEnv()).toThrowError(/JWT_SECRET is required/);
+  });
+
+  it("9. secret corto (<32) → rechaza el arranque", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("AUTH_DISABLED", "false");
+    vi.stubEnv("JWT_SECRET", "short-secret-12");
+    expect(() => assertAuthConfigForEnv()).toThrowError(/too short/);
+  });
+
+  it("9b. límite exacto: 31 chars rechaza, 32 chars acepta", () => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("AUTH_DISABLED", "false");
+    vi.stubEnv("JWT_SECRET", "x".repeat(31));
+    expect(() => assertAuthConfigForEnv()).toThrowError(/too short/);
+    vi.stubEnv("JWT_SECRET", "y".repeat(32));
+    expect(() => assertAuthConfigForEnv()).not.toThrow();
+  });
+
+  it("10. secret válido (>=32) en producción → configuración aceptada", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("AUTH_DISABLED", "false");
+    vi.stubEnv("JWT_SECRET", "production-grade-secret-with-32-chars!");
+    expect(() => assertAuthConfigForEnv()).not.toThrow();
+  });
+
+  it("11. bypass dev (AUTH_DISABLED=true) sin secret → arranque permitido", () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("AUTH_DISABLED", "true");
+    vi.stubEnv("JWT_SECRET", undefined);
+    expect(() => assertAuthConfigForEnv()).not.toThrow();
+  });
+
+  it("12. AUTH_DISABLED=true en producción tiene precedencia sobre el chequeo de secret", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("AUTH_DISABLED", "true");
+    vi.stubEnv("JWT_SECRET", undefined);
+    expect(() => assertAuthConfigForEnv()).toThrowError(/AUTH_DISABLED=true is forbidden/);
   });
 });

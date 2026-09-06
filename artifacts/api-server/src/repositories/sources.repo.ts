@@ -1,5 +1,6 @@
 import { asc, count, eq } from "drizzle-orm";
 import { db, findingsTable, sourcesTable, type Source } from "@workspace/db";
+import type { Pagination } from "../lib/pagination";
 
 export type SourceWithFindingsCount = Source & { findingsCount: number };
 
@@ -7,15 +8,21 @@ export type SourceWithFindingsCount = Source & { findingsCount: number };
  * Fuentes monitoreadas con el número de hallazgos asociados (D3: el contrato
  * expone `findings` como conteo, que no es columna de la tabla).
  * Orden estable: creación y, a igualdad, id.
+ * F4 (6.3B.20): paginación aplicada en SQL (LIMIT/OFFSET sobre el GROUP BY).
  */
-export async function list(): Promise<SourceWithFindingsCount[]> {
-  const rows = await db
+export async function list(pagination?: Pagination): Promise<SourceWithFindingsCount[]> {
+  let query = db
     .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
     .from(sourcesTable)
     .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
     .groupBy(sourcesTable.id)
-    .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id));
+    .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id))
+    .$dynamic();
+  if (pagination) {
+    query = query.limit(pagination.limit).offset(pagination.offset);
+  }
 
+  const rows = await query;
   return rows.map((row) => ({ ...row.source, findingsCount: row.findingsCount }));
 }
 

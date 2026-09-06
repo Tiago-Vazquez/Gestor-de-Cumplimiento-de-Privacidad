@@ -91,8 +91,10 @@ export function createMockRepos() {
 
   const repos = {
     sources: {
-      async list() {
-        return state.sources.map((source) => ({ ...source }));
+      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+        return state.sources
+          .slice(pagination.offset, pagination.offset + pagination.limit)
+          .map((source) => ({ ...source }));
       },
       async getById(id: string) {
         return state.sources.find((source) => source.id === id) ?? null;
@@ -106,13 +108,17 @@ export function createMockRepos() {
       },
     },
     findings: {
-      async list(filter: { status?: string; severity?: string } = {}) {
+      async list(
+        filter: { status?: string; severity?: string } = {},
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+      ) {
         return state.findings
           .filter(
             (finding) =>
               (!filter.status || finding.status === filter.status) &&
               (!filter.severity || finding.severity === filter.severity),
           )
+          .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((finding) => ({ ...finding }));
       },
       async getById(id: string) {
@@ -138,8 +144,10 @@ export function createMockRepos() {
       },
     },
     rules: {
-      async list() {
-        return state.rules.map((rule) => ({ ...rule }));
+      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+        return state.rules
+          .slice(pagination.offset, pagination.offset + pagination.limit)
+          .map((rule) => ({ ...rule }));
       },
     },
     scans: {
@@ -189,8 +197,10 @@ export function createMockRepos() {
       },
     },
     activity: {
-      async list() {
-        return state.activity.map((event) => ({ ...event }));
+      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+        return state.activity
+          .slice(pagination.offset, pagination.offset + pagination.limit)
+          .map((event) => ({ ...event }));
       },
       async create(values: { id: string; type: string; title: string; description: string; createdAt: Date; severity: string | null }) {
         state.activity.unshift({ ...values });
@@ -198,8 +208,10 @@ export function createMockRepos() {
       },
     },
     reports: {
-      async list() {
-        return state.reports.map((report) => ({ ...report }));
+      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+        return state.reports
+          .slice(pagination.offset, pagination.offset + pagination.limit)
+          .map((report) => ({ ...report }));
       },
       async create({ name, period, at }: { name: string; period: string; at: Date }) {
         const openFindings = state.findings.filter((f) => f.status !== "resolved").length;
@@ -285,10 +297,12 @@ export function createMockRepos() {
         return { ...created };
       },
       /** Lista todos los usuarios ordenados por creación (proyección segura en la ruta). */
-      async listUsers() {
-        return [...state.users].sort(
+      async listUsers(pagination?: { limit: number; offset: number }) {
+        const sorted = [...state.users].sort(
           (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
         );
+        if (!pagination) return sorted;
+        return sorted.slice(pagination.offset, pagination.offset + pagination.limit);
       },
       /**
        * Actualiza email/name de un usuario. `sub` NO es modificable:

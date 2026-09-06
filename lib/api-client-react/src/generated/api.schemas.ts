@@ -335,9 +335,42 @@ export interface MaskingPreview {
   rows: MaskingPreviewRowsItem[];
 }
 
+export type ListUsersParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type GetActivityParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
 export type ListFindingsParams = {
 status?: ListFindingsStatus;
 severity?: ListFindingsSeverity;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
 };
 
 export type ListFindingsStatus = typeof ListFindingsStatus[keyof typeof ListFindingsStatus];
@@ -358,4 +391,40 @@ export const ListFindingsSeverity = {
   medium: 'medium',
   low: 'low',
 } as const;
+
+export type ListSourcesParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListRulesParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListReportsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
 

@@ -57,6 +57,25 @@ export function assertAuthConfigForEnv(): void {
       "AUTH_DISABLED=true is forbidden when NODE_ENV=production: refusing to start with authentication/authorization bypassed. Remove AUTH_DISABLED or set it to false.",
     );
   }
+  // Hardening 6.3B.21 (fail-fast): con la autenticación activa, un JWT_SECRET
+  // válido es obligatorio PARA ARRANCAR. Sin esto, un despliegue sin secret
+  // (o con uno débil) arrancaría bien y fallaría recién en el primer request
+  // (401/500 por-request vía requireSecret). El bypass de desarrollo
+  // (AUTH_DISABLED=true|1 en dev/test) no exige secret: en ese modo no se
+  // firma ni verifica ningún JWT. Nunca se expone el valor, solo la causa.
+  if (!authDisabledRaw()) {
+    const secret = process.env.JWT_SECRET;
+    if (secret === undefined || secret.trim() === "") {
+      throw new Error(
+        "JWT_SECRET is required (at least 32 characters) when authentication is enabled: refusing to start without a signing secret.",
+      );
+    }
+    if (secret.length < 32) {
+      throw new Error(
+        "JWT_SECRET is too short (at least 32 characters required): refusing to start with a guessable signing secret.",
+      );
+    }
+  }
 }
 
 function requireSecret(): Uint8Array {

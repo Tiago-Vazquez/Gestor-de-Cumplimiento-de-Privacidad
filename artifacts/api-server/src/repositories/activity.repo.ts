@@ -1,11 +1,18 @@
 import { desc } from "drizzle-orm";
 import { activityTable, db, type Activity } from "@workspace/db";
+import type { Pagination } from "../lib/pagination";
 
-export function list(): Promise<Activity[]> {
-  return db
+/** F4 (6.3B.20): paginación aplicada en SQL (LIMIT/OFFSET), orden estable. */
+export function list(pagination?: Pagination): Promise<Activity[]> {
+  let query = db
     .select()
     .from(activityTable)
-    .orderBy(desc(activityTable.createdAt), desc(activityTable.id));
+    .orderBy(desc(activityTable.createdAt), desc(activityTable.id))
+    .$dynamic();
+  if (pagination) {
+    query = query.limit(pagination.limit).offset(pagination.offset);
+  }
+  return query;
 }
 
 export async function create(values: {

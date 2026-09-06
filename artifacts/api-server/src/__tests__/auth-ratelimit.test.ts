@@ -6,7 +6,7 @@ import app from "../app";
 // Suite dedicada al rate limit de login. Usa AUTH desactivado para probar solo
 // el rate limit, no el flujo completo de autenticación.
 process.env.AUTH_DISABLED = "false";
-process.env.JWT_SECRET = "test-secret-of-at least-32-characters!!";
+process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
 process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
 process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
 

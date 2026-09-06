@@ -8,6 +8,7 @@ process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
 process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
 process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
+process.env.AUTH_REGISTRATION_ENABLED = "true"; // 6.3B.20: registro opt-in (ausente = off)
 
 const mocks = vi.hoisted(() => ({
   state: undefined as MockState | undefined,

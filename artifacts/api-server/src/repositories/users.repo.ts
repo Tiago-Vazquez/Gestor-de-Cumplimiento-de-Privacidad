@@ -1,5 +1,6 @@
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db, usersTable, type User } from "@workspace/db";
+import type { Pagination } from "../lib/pagination";
 
 export async function getBySub(sub: string): Promise<User | null> {
   const [row] = await db.select().from(usersTable).where(eq(usersTable.sub, sub));
@@ -56,9 +57,20 @@ export async function updateLastLogin(sub: string): Promise<void> {
     .where(eq(usersTable.sub, sub));
 }
 
-/** Lista todos los usuarios (uso administrativo; nunca expone passwordHash). */
-export async function listUsers(): Promise<User[]> {
-  return db.select().from(usersTable).orderBy(usersTable.createdAt);
+/**
+ * Lista usuarios (uso administrativo; nunca expone passwordHash).
+ * F4 (6.3B.20): paginación en SQL; orden estable por creación + sub.
+ */
+export async function listUsers(pagination?: Pagination): Promise<User[]> {
+  let query = db
+    .select()
+    .from(usersTable)
+    .orderBy(asc(usersTable.createdAt), asc(usersTable.sub))
+    .$dynamic();
+  if (pagination) {
+    query = query.limit(pagination.limit).offset(pagination.offset);
+  }
+  return query;
 }
 
 /**

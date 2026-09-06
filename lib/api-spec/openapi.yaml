@@ -119,6 +119,15 @@ paths:
       operationId: listUsers
       tags: [users]
       summary: List users (admin only)
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Safe user list (no credentials)
@@ -226,6 +235,15 @@ paths:
       operationId: getActivity
       tags: [dashboard]
       summary: Get recent compliance activity
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Recent activity
@@ -253,6 +271,14 @@ paths:
           schema:
             type: string
             enum: [critical, high, medium, low]
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Findings
@@ -293,6 +319,15 @@ paths:
       operationId: listSources
       tags: [sources]
       summary: List monitored data sources
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Data sources
@@ -307,6 +342,15 @@ paths:
       operationId: listRules
       tags: [rules]
       summary: List detection rules
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Detection rules
@@ -339,6 +383,15 @@ paths:
       operationId: listReports
       tags: [reports]
       summary: List audit reports
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
           description: Audit reports

@@ -78,6 +78,19 @@ export function bootstrapProductionWarning(): string | null {
 }
 
 /**
+ * Kill switch del registro público (F2, 6.3B.20). Fail-closed con el mismo
+ * contrato estricto que `bootstrapEnabled()`: SOLO "true"|"1" habilita;
+ * ausente, vacío o cualquier otro valor (incluido "TRUE", "False", "yes" o
+ * typos) lo mantiene deshabilitado. El registro es la vía por la que un
+ * anónimo obtiene el rol `auditor` (acceso de lectura al dataset global),
+ * así que el default es OFF y habilitarlo exige configuración explícita.
+ */
+export function registrationEnabled(): boolean {
+  const raw = process.env.AUTH_REGISTRATION_ENABLED;
+  return raw === "true" || raw === "1";
+}
+
+/**
  * Rate limit específico para login local (email+password): máximo 5 intentos
  * por IP cada 15 minutos. Protege contra ataques de fuerza bruta sobre
  * credenciales locales sin afectar al rate limiter general de la API.
@@ -87,6 +100,28 @@ export function bootstrapProductionWarning(): string | null {
  * modo que agotar uno no afecta al otro y una misma IP no puede usar el flujo
  * bootstrap para eludir el límite del login local (ni viceversa).
  */
+/**
+ * Rate limit dedicado al registro público (F7, 6.3B.20): 10 intentos /
+ * 15 min / IP, con bucket independiente del login/bootstrap. El registro es
+ * una operación de escritura costosa (scrypt) alcanzable por anónimos, así
+ * que merece su propio bucket: agotarlo no afecta al login (ni viceversa).
+ * Los limiters globales de app.ts actúan como segunda capa.
+ */
+const registerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    sendProblemJson(res, {
+      type: "about:blank",
+      title: "Too Many Requests",
+      status: 429,
+      detail: "Too many registration attempts, please try again later.",
+    });
+  },
+});
+
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 5,
@@ -300,10 +335,19 @@ async function handleLocalLogin(
  * POST /api/auth/register
  *
  * Registra un nuevo usuario con email + password.
+ * Requiere AUTH_REGISTRATION_ENABLED=true|1 (F2, 6.3B.20: ausente = off,
+ * fail-closed). Con el flag deshabilitado responde 401 uniforme sin tocar
+ * repos ni revelar si un email existe.
  * El usuario recibe rol "auditor" por defecto (no admin).
  * No inicia sesión automáticamente (retorna 201 con datos públicos).
  */
-router.post("/register", async (req, res) => {
+router.post("/register", registerLimiter, async (req, res) => {
+  // Kill switch ANTES de cualquier acceso a repos (getByEmail incluido):
+  // cero escrituras, cero roles, cero sesiones, cero revelación de emails.
+  if (!registrationEnabled()) {
+    throw unauthorized("Registration is not available");
+  }
+
   const body = req.body ?? {};
   const { email, password, name } = body;
 

@@ -17,15 +17,20 @@
  * - No hay DELETE en esta fase (requiere política completa de último admin).
  */
 import { Router } from "express";
+import { z } from "zod";
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
 import { normalizeEmail, isValidName } from "../auth/validation";
 import { badRequest, conflict, notFound } from "../lib/errors";
+import { parsePagination } from "../lib/pagination";
 import { logger } from "../lib/logger";
 
 const router: ReturnType<typeof Router> = Router();
 
 const VALID_ROLES = new Set(["admin", "auditor"]);
+
+/** F1 (6.3B.20): los path params `sub` se validan explícitamente. */
+const SubParams = z.object({ sub: z.string().min(1).max(64) });
 
 /** Proyección pública de un usuario: nunca incluye passwordHash. */
 function toPublicUser(user: {
@@ -48,9 +53,10 @@ function toPublicUser(user: {
 // Todas las rutas de este router requieren sesión válida + rol admin.
 router.use(requireRole("admin"));
 
-/** GET /api/users — listado seguro de usuarios con sus roles. */
-router.get("/", async (_req, res) => {
-  const users = await repos.users.listUsers();
+/** GET /api/users — listado seguro de usuarios con sus roles (paginado, F4). */
+router.get("/", async (req, res) => {
+  const pagination = parsePagination(req.query);
+  const users = await repos.users.listUsers(pagination);
   const result = await Promise.all(
     users.map(async (user) =>
       toPublicUser(user, await repos.userRoles.listRolesForUser(user.sub)),
@@ -61,7 +67,8 @@ router.get("/", async (_req, res) => {
 
 /** GET /api/users/:sub — usuario individual (proyección pública). */
 router.get("/:sub", async (req, res) => {
-  const user = await repos.users.getBySub(req.params.sub);
+  const { sub } = SubParams.parse(req.params);
+  const user = await repos.users.getBySub(sub);
   if (!user) throw notFound("User not found");
   const roles = await repos.userRoles.listRolesForUser(user.sub);
   res.status(200).json(toPublicUser(user, roles));
@@ -97,7 +104,8 @@ router.patch("/:sub", async (req, res) => {
     throw badRequest("No updatable fields provided (email, name)");
   }
 
-  const updated = await repos.users.updateProfile(req.params.sub, updates);
+  const { sub } = SubParams.parse(req.params);
+  const updated = await repos.users.updateProfile(sub, updates);
   if (!updated) throw notFound("User not found");
   const roles = await repos.userRoles.listRolesForUser(updated.sub);
   logger.info({ sub: updated.sub, event: "user_updated" }, "User updated by admin");
@@ -113,7 +121,8 @@ router.patch("/:sub/roles", async (req, res) => {
   }
   const nextRoles = [...new Set(body.roles as string[])];
 
-  const user = await repos.users.getBySub(req.params.sub);
+  const { sub } = SubParams.parse(req.params);
+  const user = await repos.users.getBySub(sub);
   if (!user) throw notFound("User not found");
 
   // Los roles van embebidos en el JWT y `requireRole` no relee la BD; por eso

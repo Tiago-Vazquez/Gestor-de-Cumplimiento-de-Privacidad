@@ -11,4 +11,13 @@ import type { ListFindingsStatus } from './listFindingsStatus';
 export type ListFindingsParams = {
 status?: ListFindingsStatus;
 severity?: ListFindingsSeverity;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
 };

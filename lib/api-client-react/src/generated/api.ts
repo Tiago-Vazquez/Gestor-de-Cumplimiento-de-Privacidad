@@ -28,8 +28,13 @@ import type {
   DataSource,
   Finding,
   FindingUpdate,
+  GetActivityParams,
   HealthStatus,
   ListFindingsParams,
+  ListReportsParams,
+  ListRulesParams,
+  ListSourcesParams,
+  ListUsersParams,
   MaskingInput,
   MaskingPreview,
   RegisterInput,
@@ -437,20 +442,27 @@ export function useAuthMe<TData = Awaited<ReturnType<typeof authMe>>, TError = E
 
 
 
-export const getListUsersUrl = () => {
+export const getListUsersUrl = (params?: ListUsersParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/users`
+  return stringifiedParams.length > 0 ? `/api/users?${stringifiedParams}` : `/api/users`
 }
 
 /**
  * @summary List users (admin only)
  */
-export const listUsers = async ( options?: Parameters<typeof customFetch>[1]): Promise<AdminUser[]> => {
+export const listUsers = async (params?: ListUsersParams, options?: Parameters<typeof customFetch>[1]): Promise<AdminUser[]> => {
 
-  return customFetch<AdminUser[]>(getListUsersUrl(),
+  return customFetch<AdminUser[]>(getListUsersUrl(params),
   {
     ...options,
     method: 'GET'
@@ -463,23 +475,23 @@ export const listUsers = async ( options?: Parameters<typeof customFetch>[1]): P
 
 
 
-export const getListUsersQueryKey = () => {
+export const getListUsersQueryKey = (params?: ListUsersParams,) => {
     return [
-    `/api/users`
+    `/api/users`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListUsersQueryOptions = <TData = Awaited<ReturnType<typeof listUsers>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListUsersQueryOptions = <TData = Awaited<ReturnType<typeof listUsers>>, TError = ErrorType<void>>(params?: ListUsersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListUsersQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListUsersQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listUsers>>> = ({ signal }) => listUsers({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listUsers>>> = ({ signal }) => listUsers(params, { signal, ...requestOptions });
 
 
 
@@ -497,11 +509,11 @@ export type ListUsersQueryError = ErrorType<void>
  */
 
 export function useListUsers<TData = Awaited<ReturnType<typeof listUsers>>, TError = ErrorType<void>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: ListUsersParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListUsersQueryOptions(options)
+  const queryOptions = getListUsersQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -814,20 +826,27 @@ export function useGetDashboard<TData = Awaited<ReturnType<typeof getDashboard>>
 
 
 
-export const getGetActivityUrl = () => {
+export const getGetActivityUrl = (params?: GetActivityParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/activity`
+  return stringifiedParams.length > 0 ? `/api/activity?${stringifiedParams}` : `/api/activity`
 }
 
 /**
  * @summary Get recent compliance activity
  */
-export const getActivity = async ( options?: Parameters<typeof customFetch>[1]): Promise<Activity[]> => {
+export const getActivity = async (params?: GetActivityParams, options?: Parameters<typeof customFetch>[1]): Promise<Activity[]> => {
 
-  return customFetch<Activity[]>(getGetActivityUrl(),
+  return customFetch<Activity[]>(getGetActivityUrl(params),
   {
     ...options,
     method: 'GET'
@@ -840,23 +859,23 @@ export const getActivity = async ( options?: Parameters<typeof customFetch>[1]):
 
 
 
-export const getGetActivityQueryKey = () => {
+export const getGetActivityQueryKey = (params?: GetActivityParams,) => {
     return [
-    `/api/activity`
+    `/api/activity`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getGetActivityQueryOptions = <TData = Awaited<ReturnType<typeof getActivity>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getActivity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getGetActivityQueryOptions = <TData = Awaited<ReturnType<typeof getActivity>>, TError = ErrorType<unknown>>(params?: GetActivityParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getActivity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetActivityQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetActivityQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getActivity>>> = ({ signal }) => getActivity({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getActivity>>> = ({ signal }) => getActivity(params, { signal, ...requestOptions });
 
 
 
@@ -874,11 +893,11 @@ export type GetActivityQueryError = ErrorType<unknown>
  */
 
 export function useGetActivity<TData = Awaited<ReturnType<typeof getActivity>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getActivity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: GetActivityParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getActivity>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getGetActivityQueryOptions(options)
+  const queryOptions = getGetActivityQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1047,20 +1066,27 @@ export const useUpdateFinding = <TError = ErrorType<void>,
       return useMutation(getUpdateFindingMutationOptions(options));
     }
 
-export const getListSourcesUrl = () => {
+export const getListSourcesUrl = (params?: ListSourcesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/sources`
+  return stringifiedParams.length > 0 ? `/api/sources?${stringifiedParams}` : `/api/sources`
 }
 
 /**
  * @summary List monitored data sources
  */
-export const listSources = async ( options?: Parameters<typeof customFetch>[1]): Promise<DataSource[]> => {
+export const listSources = async (params?: ListSourcesParams, options?: Parameters<typeof customFetch>[1]): Promise<DataSource[]> => {
 
-  return customFetch<DataSource[]>(getListSourcesUrl(),
+  return customFetch<DataSource[]>(getListSourcesUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1073,23 +1099,23 @@ export const listSources = async ( options?: Parameters<typeof customFetch>[1]):
 
 
 
-export const getListSourcesQueryKey = () => {
+export const getListSourcesQueryKey = (params?: ListSourcesParams,) => {
     return [
-    `/api/sources`
+    `/api/sources`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListSourcesQueryOptions = <TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListSourcesQueryOptions = <TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorType<unknown>>(params?: ListSourcesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListSourcesQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListSourcesQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSources>>> = ({ signal }) => listSources({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSources>>> = ({ signal }) => listSources(params, { signal, ...requestOptions });
 
 
 
@@ -1107,11 +1133,11 @@ export type ListSourcesQueryError = ErrorType<unknown>
  */
 
 export function useListSources<TData = Awaited<ReturnType<typeof listSources>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: ListSourcesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSources>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListSourcesQueryOptions(options)
+  const queryOptions = getListSourcesQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1124,20 +1150,27 @@ export function useListSources<TData = Awaited<ReturnType<typeof listSources>>, 
 
 
 
-export const getListRulesUrl = () => {
+export const getListRulesUrl = (params?: ListRulesParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/rules`
+  return stringifiedParams.length > 0 ? `/api/rules?${stringifiedParams}` : `/api/rules`
 }
 
 /**
  * @summary List detection rules
  */
-export const listRules = async ( options?: Parameters<typeof customFetch>[1]): Promise<Rule[]> => {
+export const listRules = async (params?: ListRulesParams, options?: Parameters<typeof customFetch>[1]): Promise<Rule[]> => {
 
-  return customFetch<Rule[]>(getListRulesUrl(),
+  return customFetch<Rule[]>(getListRulesUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1150,23 +1183,23 @@ export const listRules = async ( options?: Parameters<typeof customFetch>[1]): P
 
 
 
-export const getListRulesQueryKey = () => {
+export const getListRulesQueryKey = (params?: ListRulesParams,) => {
     return [
-    `/api/rules`
+    `/api/rules`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListRulesQueryOptions = <TData = Awaited<ReturnType<typeof listRules>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListRulesQueryOptions = <TData = Awaited<ReturnType<typeof listRules>>, TError = ErrorType<unknown>>(params?: ListRulesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListRulesQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListRulesQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRules>>> = ({ signal }) => listRules({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listRules>>> = ({ signal }) => listRules(params, { signal, ...requestOptions });
 
 
 
@@ -1184,11 +1217,11 @@ export type ListRulesQueryError = ErrorType<unknown>
  */
 
 export function useListRules<TData = Awaited<ReturnType<typeof listRules>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: ListRulesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListRulesQueryOptions(options)
+  const queryOptions = getListRulesQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -1272,20 +1305,27 @@ export const useStartScan = <TError = ErrorType<unknown>,
       return useMutation(getStartScanMutationOptions(options));
     }
 
-export const getListReportsUrl = () => {
+export const getListReportsUrl = (params?: ListReportsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/reports`
+  return stringifiedParams.length > 0 ? `/api/reports?${stringifiedParams}` : `/api/reports`
 }
 
 /**
  * @summary List audit reports
  */
-export const listReports = async ( options?: Parameters<typeof customFetch>[1]): Promise<Report[]> => {
+export const listReports = async (params?: ListReportsParams, options?: Parameters<typeof customFetch>[1]): Promise<Report[]> => {
 
-  return customFetch<Report[]>(getListReportsUrl(),
+  return customFetch<Report[]>(getListReportsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -1298,23 +1338,23 @@ export const listReports = async ( options?: Parameters<typeof customFetch>[1]):
 
 
 
-export const getListReportsQueryKey = () => {
+export const getListReportsQueryKey = (params?: ListReportsParams,) => {
     return [
-    `/api/reports`
+    `/api/reports`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListReportsQueryOptions = <TData = Awaited<ReturnType<typeof listReports>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReports>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListReportsQueryOptions = <TData = Awaited<ReturnType<typeof listReports>>, TError = ErrorType<unknown>>(params?: ListReportsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReports>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListReportsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListReportsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listReports>>> = ({ signal }) => listReports({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listReports>>> = ({ signal }) => listReports(params, { signal, ...requestOptions });
 
 
 
@@ -1332,11 +1372,11 @@ export type ListReportsQueryError = ErrorType<unknown>
  */
 
 export function useListReports<TData = Awaited<ReturnType<typeof listReports>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReports>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+ params?: ListReportsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listReports>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListReportsQueryOptions(options)
+  const queryOptions = getListReportsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

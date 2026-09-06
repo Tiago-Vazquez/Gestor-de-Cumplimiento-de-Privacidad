@@ -8,6 +8,7 @@ import type { MockState } from "./mock-repos";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
+process.env.AUTH_REGISTRATION_ENABLED = "true"; // 6.3B.20: registro opt-in (ausente = off)
 process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
 
 // El factory de vi.mock corre durante la evaluacion de imports (antes del body

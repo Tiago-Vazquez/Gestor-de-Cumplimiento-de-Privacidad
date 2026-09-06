@@ -5,6 +5,8 @@ import {
   GetDashboardResponse,
   ListFindingsQueryParams,
   ListFindingsResponse,
+  ListReportsResponse,
+  ListReportsResponseItem,
   ListRulesResponse,
   ListSourcesResponse,
   PreviewMaskingBody,
@@ -16,6 +18,7 @@ import {
   UpdateFindingResponse,
 } from "@workspace/api-zod";
 import { notFound } from "../lib/errors";
+import { parsePagination } from "../lib/pagination";
 import { logger } from "../lib/logger";
 import {
   mapActivity,
@@ -48,17 +51,18 @@ router.get("/dashboard", async (_req, res) => {
   }));
 });
 
-router.get("/activity", async (_req, res) => {
-  const rows = await repos.activity.list();
+router.get("/activity", async (req, res) => {
+  const rows = await repos.activity.list(parsePagination(req.query));
   res.json(GetActivityResponse.parse(rows.map(mapActivity)));
 });
 
 router.get("/findings", async (req, res) => {
   const params = ListFindingsQueryParams.parse(req.query);
-  const rows = await repos.findings.list({
-    status: params.status,
-    severity: params.severity,
-  });
+  const pagination = parsePagination(req.query);
+  const rows = await repos.findings.list(
+    { status: params.status, severity: params.severity },
+    pagination,
+  );
   res.json(ListFindingsResponse.parse(rows.map(mapFinding)));
 });
 
@@ -74,13 +78,13 @@ router.patch("/findings/:id", requireRole("admin"), async (req, res) => {
   res.json(UpdateFindingResponse.parse(mapFinding(updated)));
 });
 
-router.get("/sources", async (_req, res) => {
-  const rows = await repos.sources.list();
+router.get("/sources", async (req, res) => {
+  const rows = await repos.sources.list(parsePagination(req.query));
   res.json(ListSourcesResponse.parse(rows.map(mapSource)));
 });
 
-router.get("/rules", async (_req, res) => {
-  const rows = await repos.rules.list();
+router.get("/rules", async (req, res) => {
+  const rows = await repos.rules.list(parsePagination(req.query));
   res.json(ListRulesResponse.parse(rows.map(mapRule)));
 });
 
@@ -112,15 +116,17 @@ router.post("/scans", requireRole("admin"), async (req, res) => {
   }, 1500);
 });
 
-router.get("/reports", async (_req, res) => {
-  const rows = await repos.reports.list();
-  res.json(rows.map(mapReport));
+router.get("/reports", async (req, res) => {
+  const rows = await repos.reports.list(parsePagination(req.query));
+  // F9 (6.3B.20): la salida se valida contra el esquema del contrato antes
+  // de enviarla (fallback no validado eliminado).
+  res.json(ListReportsResponse.parse(rows.map(mapReport)));
 });
 
 router.post("/reports", requireRole("admin"), async (req, res) => {
   const { name, period } = CreateReportBody.parse(req.body);
   const report = await repos.reports.create({ name, period, at: new Date() });
-  res.status(201).json(mapReport(report));
+  res.status(201).json(ListReportsResponseItem.parse(mapReport(report)));
 });
 
 router.post("/masking/preview", requireRole("admin"), async (req, res) => {

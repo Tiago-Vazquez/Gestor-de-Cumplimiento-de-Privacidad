@@ -77,6 +77,19 @@ export const AuthMeResponse = zod.object({
 /**
  * @summary List users (admin only)
  */
+export const listUsersQueryLimitDefault = 50;
+export const listUsersQueryLimitMax = 100;
+
+export const listUsersQueryOffsetDefault = 0;
+export const listUsersQueryOffsetMin = 0;
+
+
+
+export const ListUsersQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(listUsersQueryLimitMax).default(listUsersQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listUsersQueryOffsetMin).default(listUsersQueryOffsetDefault)
+})
+
 export const ListUsersResponseItem = zod.object({
   "sub": zod.string(),
   "email": zod.string(),
@@ -173,6 +186,19 @@ export const GetDashboardResponse = zod.object({
 /**
  * @summary Get recent compliance activity
  */
+export const getActivityQueryLimitDefault = 50;
+export const getActivityQueryLimitMax = 100;
+
+export const getActivityQueryOffsetDefault = 0;
+export const getActivityQueryOffsetMin = 0;
+
+
+
+export const GetActivityQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(getActivityQueryLimitMax).default(getActivityQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(getActivityQueryOffsetMin).default(getActivityQueryOffsetDefault)
+})
+
 export const GetActivityResponseItem = zod.object({
   "id": zod.string(),
   "type": zod.enum(['finding', 'scan', 'masking', 'report', 'system']),
@@ -187,9 +213,19 @@ export const GetActivityResponse = zod.array(GetActivityResponseItem)
 /**
  * @summary List privacy findings
  */
+export const listFindingsQueryLimitDefault = 50;
+export const listFindingsQueryLimitMax = 100;
+
+export const listFindingsQueryOffsetDefault = 0;
+export const listFindingsQueryOffsetMin = 0;
+
+
+
 export const ListFindingsQueryParams = zod.object({
   "status": zod.enum(['open', 'in_review', 'resolved']).optional(),
-  "severity": zod.enum(['critical', 'high', 'medium', 'low']).optional()
+  "severity": zod.enum(['critical', 'high', 'medium', 'low']).optional(),
+  "limit": zod.coerce.number().int().min(1).max(listFindingsQueryLimitMax).default(listFindingsQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listFindingsQueryOffsetMin).default(listFindingsQueryOffsetDefault)
 })
 
 export const ListFindingsResponseItem = zod.object({
@@ -239,6 +275,19 @@ export const UpdateFindingResponse = zod.object({
 /**
  * @summary List monitored data sources
  */
+export const listSourcesQueryLimitDefault = 50;
+export const listSourcesQueryLimitMax = 100;
+
+export const listSourcesQueryOffsetDefault = 0;
+export const listSourcesQueryOffsetMin = 0;
+
+
+
+export const ListSourcesQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(listSourcesQueryLimitMax).default(listSourcesQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listSourcesQueryOffsetMin).default(listSourcesQueryOffsetDefault)
+})
+
 export const ListSourcesResponseItem = zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -256,6 +305,19 @@ export const ListSourcesResponse = zod.array(ListSourcesResponseItem)
 /**
  * @summary List detection rules
  */
+export const listRulesQueryLimitDefault = 50;
+export const listRulesQueryLimitMax = 100;
+
+export const listRulesQueryOffsetDefault = 0;
+export const listRulesQueryOffsetMin = 0;
+
+
+
+export const ListRulesQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(listRulesQueryLimitMax).default(listRulesQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listRulesQueryOffsetMin).default(listRulesQueryOffsetDefault)
+})
+
 export const ListRulesResponseItem = zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -288,6 +350,19 @@ export const StartScanResponse = zod.object({
 /**
  * @summary List audit reports
  */
+export const listReportsQueryLimitDefault = 50;
+export const listReportsQueryLimitMax = 100;
+
+export const listReportsQueryOffsetDefault = 0;
+export const listReportsQueryOffsetMin = 0;
+
+
+
+export const ListReportsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(listReportsQueryLimitMax).default(listReportsQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listReportsQueryOffsetMin).default(listReportsQueryOffsetDefault)
+})
+
 export const ListReportsResponseItem = zod.object({
   "id": zod.string(),
   "name": zod.string(),
