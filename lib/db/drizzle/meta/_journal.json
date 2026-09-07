@@ -27,6 +27,20 @@
       "when": 1788390979909,
       "tag": "0003_harsh_shriek",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788713550217,
+      "tag": "0004_scanner_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788781863244,
+      "tag": "0005_source_integrity",
+      "breakpoints": true
     }
   ],
   "version": "7",

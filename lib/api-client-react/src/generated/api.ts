@@ -42,8 +42,12 @@ import type {
   ReportInput,
   RolesUpdateInput,
   Rule,
+  RuleInput,
   Scan,
   ScanInput,
+  SourceCreate,
+  SourceDetail,
+  SourceUpdate,
   UserUpdateInput
 } from './api.schemas';
 
@@ -1150,6 +1154,299 @@ export function useListSources<TData = Awaited<ReturnType<typeof listSources>>, 
 
 
 
+export const getCreateSourceUrl = () => {
+
+
+
+
+  return `/api/sources`
+}
+
+/**
+ * Admin only. The connection password is WRITE-ONLY: it is encrypted at rest and never returned in any response.
+ * @summary Create a data source
+ */
+export const createSource = async (sourceCreate: SourceCreate, options?: Parameters<typeof customFetch>[1]): Promise<SourceDetail> => {
+
+  return customFetch<SourceDetail>(getCreateSourceUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(sourceCreate)
+  }
+);}
+
+
+
+
+
+export const getCreateSourceMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSource>>, TError,{data: BodyType<SourceCreate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createSource>>, TError,{data: BodyType<SourceCreate>}, TContext> => {
+
+const mutationKey = ['createSource'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createSource>>, {data: BodyType<SourceCreate>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createSource(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateSourceMutationResult = NonNullable<Awaited<ReturnType<typeof createSource>>>
+    export type CreateSourceMutationBody = BodyType<SourceCreate>
+    export type CreateSourceMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a data source
+ */
+export const useCreateSource = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSource>>, TError,{data: BodyType<SourceCreate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createSource>>,
+        TError,
+        {data: BodyType<SourceCreate>},
+        TContext
+      > => {
+      return useMutation(getCreateSourceMutationOptions(options));
+    }
+
+export const getGetSourceUrl = (id: string,) => {
+
+
+
+
+  return `/api/sources/${id}`
+}
+
+/**
+ * @summary Get a data source by id
+ */
+export const getSource = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<SourceDetail> => {
+
+  return customFetch<SourceDetail>(getGetSourceUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSourceQueryKey = (id: string,) => {
+    return [
+    `/api/sources/${id}`
+    ] as const;
+    }
+
+
+export const getGetSourceQueryOptions = <TData = Awaited<ReturnType<typeof getSource>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSourceQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSource>>> = ({ signal }) => getSource(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSourceQueryResult = NonNullable<Awaited<ReturnType<typeof getSource>>>
+export type GetSourceQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a data source by id
+ */
+
+export function useGetSource<TData = Awaited<ReturnType<typeof getSource>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSource>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSourceQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateSourceUrl = (id: string,) => {
+
+
+
+
+  return `/api/sources/${id}`
+}
+
+/**
+ * Admin only. Update a data source's metadata or store a new connection configuration (encrypted). Password remains write-only on update as well.
+ * @summary Update a data source
+ */
+export const updateSource = async (id: string,
+    sourceUpdate: SourceUpdate, options?: Parameters<typeof customFetch>[1]): Promise<SourceDetail> => {
+
+  return customFetch<SourceDetail>(getUpdateSourceUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(sourceUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateSourceMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSource>>, TError,{id: string;data: BodyType<SourceUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSource>>, TError,{id: string;data: BodyType<SourceUpdate>}, TContext> => {
+
+const mutationKey = ['updateSource'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSource>>, {id: string;data: BodyType<SourceUpdate>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateSource(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateSourceMutationResult = NonNullable<Awaited<ReturnType<typeof updateSource>>>
+    export type UpdateSourceMutationBody = BodyType<SourceUpdate>
+    export type UpdateSourceMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a data source
+ */
+export const useUpdateSource = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSource>>, TError,{id: string;data: BodyType<SourceUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateSource>>,
+        TError,
+        {id: string;data: BodyType<SourceUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateSourceMutationOptions(options));
+    }
+
+export const getDeleteSourceUrl = (id: string,) => {
+
+
+
+
+  return `/api/sources/${id}`
+}
+
+/**
+ * @summary Delete a data source
+ */
+export const deleteSource = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteSourceUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteSourceMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSource>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteSource>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteSource'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteSource>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteSource(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteSourceMutationResult = NonNullable<Awaited<ReturnType<typeof deleteSource>>>
+
+    export type DeleteSourceMutationError = ErrorType<void>
+
+    /**
+ * @summary Delete a data source
+ */
+export const useDeleteSource = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSource>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteSource>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getDeleteSourceMutationOptions(options));
+    }
+
 export const getListRulesUrl = (params?: ListRulesParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -1260,7 +1557,7 @@ export const startScan = async (scanInput: ScanInput, options?: Parameters<typeo
 
 
 
-export const getStartScanMutationOptions = <TError = ErrorType<unknown>,
+export const getStartScanMutationOptions = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startScan>>, TError,{data: BodyType<ScanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof startScan>>, TError,{data: BodyType<ScanInput>}, TContext> => {
 
@@ -1289,12 +1586,12 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type StartScanMutationResult = NonNullable<Awaited<ReturnType<typeof startScan>>>
     export type StartScanMutationBody = BodyType<ScanInput>
-    export type StartScanMutationError = ErrorType<unknown>
+    export type StartScanMutationError = ErrorType<void>
 
     /**
  * @summary Start a privacy scan
  */
-export const useStartScan = <TError = ErrorType<unknown>,
+export const useStartScan = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof startScan>>, TError,{data: BodyType<ScanInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof startScan>>,
@@ -1303,6 +1600,81 @@ export const useStartScan = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getStartScanMutationOptions(options));
+    }
+
+export const getUpdateRuleUrl = (id: string,) => {
+
+
+
+
+  return `/api/rules/${id}`
+}
+
+/**
+ * FASE 7.0.5: actualiza únicamente el campo `enabled` de una regla.
+ * Solo este campo es gobernable desde la API; el resto (patrón, severidad,
+ * regulación) es built-in. El cambio es efectivo en el siguiente scan.
+ * @summary Update a detection rule (admin only)
+ */
+export const updateRule = async (id: string,
+    ruleInput: RuleInput, options?: Parameters<typeof customFetch>[1]): Promise<Rule> => {
+
+  return customFetch<Rule>(getUpdateRuleUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(ruleInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateRuleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRule>>, TError,{id: string;data: BodyType<RuleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateRule>>, TError,{id: string;data: BodyType<RuleInput>}, TContext> => {
+
+const mutationKey = ['updateRule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateRule>>, {id: string;data: BodyType<RuleInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateRule(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateRuleMutationResult = NonNullable<Awaited<ReturnType<typeof updateRule>>>
+    export type UpdateRuleMutationBody = BodyType<RuleInput>
+    export type UpdateRuleMutationError = ErrorType<void>
+
+    /**
+ * @summary Update a detection rule (admin only)
+ */
+export const useUpdateRule = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateRule>>, TError,{id: string;data: BodyType<RuleInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateRule>>,
+        TError,
+        {id: string;data: BodyType<RuleInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateRuleMutationOptions(options));
     }
 
 export const getListReportsUrl = (params?: ListReportsParams,) => {

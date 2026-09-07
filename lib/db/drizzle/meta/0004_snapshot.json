@@ -1,0 +1,882 @@
+﻿{
+    "id":  "33c93356-0e42-4494-9d49-d652d8712901",
+    "prevId":  "651609b1-bef8-4418-b436-6aac7ba72ed4",
+    "version":  "7",
+    "dialect":  "postgresql",
+    "tables":  {
+                   "public.activity":  {
+                                           "name":  "activity",
+                                           "schema":  "",
+                                           "columns":  {
+                                                           "id":  {
+                                                                      "name":  "id",
+                                                                      "type":  "text",
+                                                                      "primaryKey":  true,
+                                                                      "notNull":  true
+                                                                  },
+                                                           "type":  {
+                                                                        "name":  "type",
+                                                                        "type":  "text",
+                                                                        "primaryKey":  false,
+                                                                        "notNull":  true
+                                                                    },
+                                                           "title":  {
+                                                                         "name":  "title",
+                                                                         "type":  "text",
+                                                                         "primaryKey":  false,
+                                                                         "notNull":  true
+                                                                     },
+                                                           "description":  {
+                                                                               "name":  "description",
+                                                                               "type":  "text",
+                                                                               "primaryKey":  false,
+                                                                               "notNull":  true
+                                                                           },
+                                                           "created_at":  {
+                                                                              "name":  "created_at",
+                                                                              "type":  "timestamp with time zone",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  true,
+                                                                              "default":  "now()"
+                                                                          },
+                                                           "severity":  {
+                                                                            "name":  "severity",
+                                                                            "type":  "text",
+                                                                            "primaryKey":  false,
+                                                                            "notNull":  false
+                                                                        }
+                                                       },
+                                           "indexes":  {
+
+                                                       },
+                                           "foreignKeys":  {
+
+                                                           },
+                                           "compositePrimaryKeys":  {
+
+                                                                    },
+                                           "uniqueConstraints":  {
+
+                                                                 },
+                                           "policies":  {
+
+                                                        },
+                                           "checkConstraints":  {
+
+                                                                },
+                                           "isRLSEnabled":  false
+                                       },
+                   "public.findings":  {
+                                           "name":  "findings",
+                                           "schema":  "",
+                                           "columns":  {
+                                                           "id":  {
+                                                                      "name":  "id",
+                                                                      "type":  "text",
+                                                                      "primaryKey":  true,
+                                                                      "notNull":  true
+                                                                  },
+                                                           "title":  {
+                                                                         "name":  "title",
+                                                                         "type":  "text",
+                                                                         "primaryKey":  false,
+                                                                         "notNull":  true
+                                                                     },
+                                                           "data_type":  {
+                                                                             "name":  "data_type",
+                                                                             "type":  "text",
+                                                                             "primaryKey":  false,
+                                                                             "notNull":  true
+                                                                         },
+                                                           "source_id":  {
+                                                                             "name":  "source_id",
+                                                                             "type":  "text",
+                                                                             "primaryKey":  false,
+                                                                             "notNull":  true
+                                                                         },
+                                                           "source_name":  {
+                                                                               "name":  "source_name",
+                                                                               "type":  "text",
+                                                                               "primaryKey":  false,
+                                                                               "notNull":  true
+                                                                           },
+                                                           "location":  {
+                                                                            "name":  "location",
+                                                                            "type":  "text",
+                                                                            "primaryKey":  false,
+                                                                            "notNull":  true
+                                                                        },
+                                                           "severity":  {
+                                                                            "name":  "severity",
+                                                                            "type":  "text",
+                                                                            "primaryKey":  false,
+                                                                            "notNull":  true
+                                                                        },
+                                                           "status":  {
+                                                                          "name":  "status",
+                                                                          "type":  "text",
+                                                                          "primaryKey":  false,
+                                                                          "notNull":  true,
+                                                                          "default":  "\u0027open\u0027"
+                                                                      },
+                                                           "records":  {
+                                                                           "name":  "records",
+                                                                           "type":  "integer",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true
+                                                                       },
+                                                           "detected_at":  {
+                                                                               "name":  "detected_at",
+                                                                               "type":  "timestamp with time zone",
+                                                                               "primaryKey":  false,
+                                                                               "notNull":  true
+                                                                           },
+                                                           "regulation":  {
+                                                                              "name":  "regulation",
+                                                                              "type":  "text",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  true
+                                                                          },
+                                                           "recommendation":  {
+                                                                                  "name":  "recommendation",
+                                                                                  "type":  "text",
+                                                                                  "primaryKey":  false,
+                                                                                  "notNull":  true
+                                                                              },
+                                                           "sample":  {
+                                                                          "name":  "sample",
+                                                                          "type":  "text",
+                                                                          "primaryKey":  false,
+                                                                          "notNull":  true
+                                                                      },
+                                                           "scan_id":  {
+                                                                           "name":  "scan_id",
+                                                                           "type":  "text",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  false
+                                                                       },
+                                                           "created_at":  {
+                                                                              "name":  "created_at",
+                                                                              "type":  "timestamp with time zone",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  true,
+                                                                              "default":  "now()"
+                                                                          },
+                                                           "updated_at":  {
+                                                                              "name":  "updated_at",
+                                                                              "type":  "timestamp with time zone",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  true,
+                                                                              "default":  "now()"
+                                                                          }
+                                                       },
+                                           "indexes":  {
+                                                           "findings_source_id_idx":  {
+                                                                                          "name":  "findings_source_id_idx",
+                                                                                          "columns":  [
+                                                                                                          {
+                                                                                                              "expression":  "source_id",
+                                                                                                              "isExpression":  false,
+                                                                                                              "asc":  true,
+                                                                                                              "nulls":  "last"
+                                                                                                          }
+                                                                                                      ],
+                                                                                          "isUnique":  false,
+                                                                                          "concurrently":  false,
+                                                                                          "method":  "btree",
+                                                                                          "with":  {
+
+                                                                                                   }
+                                                                                      },
+                                                           "findings_scan_id_idx":  {
+                                                                                        "name":  "findings_scan_id_idx",
+                                                                                        "columns":  [
+                                                                                                        {
+                                                                                                            "expression":  "scan_id",
+                                                                                                            "isExpression":  false,
+                                                                                                            "asc":  true,
+                                                                                                            "nulls":  "last"
+                                                                                                        }
+                                                                                                    ],
+                                                                                        "isUnique":  false,
+                                                                                        "concurrently":  false,
+                                                                                        "method":  "btree",
+                                                                                        "with":  {
+
+                                                                                                 }
+                                                                                    }
+                                                       },
+                                           "foreignKeys":  {
+                                                               "findings_source_id_sources_id_fk":  {
+                                                                                                        "name":  "findings_source_id_sources_id_fk",
+                                                                                                        "tableFrom":  "findings",
+                                                                                                        "tableTo":  "sources",
+                                                                                                        "columnsFrom":  [
+                                                                                                                            "source_id"
+                                                                                                                        ],
+                                                                                                        "columnsTo":  [
+                                                                                                                          "id"
+                                                                                                                      ],
+                                                                                                        "onDelete":  "no action",
+                                                                                                        "onUpdate":  "no action"
+                                                                                                    },
+                                                               "findings_scan_id_scans_id_fk":  {
+                                                                                                    "name":  "findings_scan_id_scans_id_fk",
+                                                                                                    "tableFrom":  "findings",
+                                                                                                    "tableTo":  "scans",
+                                                                                                    "columnsFrom":  [
+                                                                                                                        "scan_id"
+                                                                                                                    ],
+                                                                                                    "columnsTo":  [
+                                                                                                                      "id"
+                                                                                                                  ],
+                                                                                                    "onDelete":  "set null",
+                                                                                                    "onUpdate":  "no action"
+                                                                                                }
+                                                           },
+                                           "compositePrimaryKeys":  {
+
+                                                                    },
+                                           "uniqueConstraints":  {
+
+                                                                 },
+                                           "policies":  {
+
+                                                        },
+                                           "checkConstraints":  {
+
+                                                                },
+                                           "isRLSEnabled":  false
+                                       },
+                   "public.reports":  {
+                                          "name":  "reports",
+                                          "schema":  "",
+                                          "columns":  {
+                                                          "id":  {
+                                                                     "name":  "id",
+                                                                     "type":  "text",
+                                                                     "primaryKey":  true,
+                                                                     "notNull":  true
+                                                                 },
+                                                          "name":  {
+                                                                       "name":  "name",
+                                                                       "type":  "text",
+                                                                       "primaryKey":  false,
+                                                                       "notNull":  true
+                                                                   },
+                                                          "period":  {
+                                                                         "name":  "period",
+                                                                         "type":  "text",
+                                                                         "primaryKey":  false,
+                                                                         "notNull":  true
+                                                                     },
+                                                          "status":  {
+                                                                         "name":  "status",
+                                                                         "type":  "text",
+                                                                         "primaryKey":  false,
+                                                                         "notNull":  true
+                                                                     },
+                                                          "created_at":  {
+                                                                             "name":  "created_at",
+                                                                             "type":  "timestamp with time zone",
+                                                                             "primaryKey":  false,
+                                                                             "notNull":  true,
+                                                                             "default":  "now()"
+                                                                         },
+                                                          "findings":  {
+                                                                           "name":  "findings",
+                                                                           "type":  "integer",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true
+                                                                       },
+                                                          "compliance_score":  {
+                                                                                   "name":  "compliance_score",
+                                                                                   "type":  "integer",
+                                                                                   "primaryKey":  false,
+                                                                                   "notNull":  true
+                                                                               },
+                                                          "format":  {
+                                                                         "name":  "format",
+                                                                         "type":  "text",
+                                                                         "primaryKey":  false,
+                                                                         "notNull":  true
+                                                                     }
+                                                      },
+                                          "indexes":  {
+
+                                                      },
+                                          "foreignKeys":  {
+
+                                                          },
+                                          "compositePrimaryKeys":  {
+
+                                                                   },
+                                          "uniqueConstraints":  {
+
+                                                                },
+                                          "policies":  {
+
+                                                       },
+                                          "checkConstraints":  {
+
+                                                               },
+                                          "isRLSEnabled":  false
+                                      },
+                   "public.rules":  {
+                                        "name":  "rules",
+                                        "schema":  "",
+                                        "columns":  {
+                                                        "id":  {
+                                                                   "name":  "id",
+                                                                   "type":  "text",
+                                                                   "primaryKey":  true,
+                                                                   "notNull":  true
+                                                               },
+                                                        "name":  {
+                                                                     "name":  "name",
+                                                                     "type":  "text",
+                                                                     "primaryKey":  false,
+                                                                     "notNull":  true
+                                                                 },
+                                                        "category":  {
+                                                                         "name":  "category",
+                                                                         "type":  "text",
+                                                                         "primaryKey":  false,
+                                                                         "notNull":  true
+                                                                     },
+                                                        "regulation":  {
+                                                                           "name":  "regulation",
+                                                                           "type":  "text",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true
+                                                                       },
+                                                        "enabled":  {
+                                                                        "name":  "enabled",
+                                                                        "type":  "boolean",
+                                                                        "primaryKey":  false,
+                                                                        "notNull":  true,
+                                                                        "default":  true
+                                                                    },
+                                                        "detections":  {
+                                                                           "name":  "detections",
+                                                                           "type":  "integer",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true,
+                                                                           "default":  0
+                                                                       },
+                                                        "last_triggered":  {
+                                                                               "name":  "last_triggered",
+                                                                               "type":  "timestamp with time zone",
+                                                                               "primaryKey":  false,
+                                                                               "notNull":  false
+                                                                           },
+                                                        "created_at":  {
+                                                                           "name":  "created_at",
+                                                                           "type":  "timestamp with time zone",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true,
+                                                                           "default":  "now()"
+                                                                       },
+                                                        "updated_at":  {
+                                                                           "name":  "updated_at",
+                                                                           "type":  "timestamp with time zone",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true,
+                                                                           "default":  "now()"
+                                                                       }
+                                                    },
+                                        "indexes":  {
+
+                                                    },
+                                        "foreignKeys":  {
+
+                                                        },
+                                        "compositePrimaryKeys":  {
+
+                                                                 },
+                                        "uniqueConstraints":  {
+
+                                                              },
+                                        "policies":  {
+
+                                                     },
+                                        "checkConstraints":  {
+
+                                                             },
+                                        "isRLSEnabled":  false
+                                    },
+                   "public.scans":  {
+                                        "name":  "scans",
+                                        "schema":  "",
+                                        "columns":  {
+                                                        "id":  {
+                                                                   "name":  "id",
+                                                                   "type":  "text",
+                                                                   "primaryKey":  true,
+                                                                   "notNull":  true
+                                                               },
+                                                        "source_id":  {
+                                                                          "name":  "source_id",
+                                                                          "type":  "text",
+                                                                          "primaryKey":  false,
+                                                                          "notNull":  true
+                                                                      },
+                                                        "status":  {
+                                                                       "name":  "status",
+                                                                       "type":  "text",
+                                                                       "primaryKey":  false,
+                                                                       "notNull":  true
+                                                                   },
+                                                        "started_at":  {
+                                                                           "name":  "started_at",
+                                                                           "type":  "timestamp with time zone",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true
+                                                                       },
+                                                        "completed_at":  {
+                                                                             "name":  "completed_at",
+                                                                             "type":  "timestamp with time zone",
+                                                                             "primaryKey":  false,
+                                                                             "notNull":  false
+                                                                         },
+                                                        "findings_created":  {
+                                                                                 "name":  "findings_created",
+                                                                                 "type":  "integer",
+                                                                                 "primaryKey":  false,
+                                                                                 "notNull":  true,
+                                                                                 "default":  0
+                                                                             }
+                                                    },
+                                        "indexes":  {
+                                                        "scans_source_id_idx":  {
+                                                                                    "name":  "scans_source_id_idx",
+                                                                                    "columns":  [
+                                                                                                    {
+                                                                                                        "expression":  "source_id",
+                                                                                                        "isExpression":  false,
+                                                                                                        "asc":  true,
+                                                                                                        "nulls":  "last"
+                                                                                                    }
+                                                                                                ],
+                                                                                    "isUnique":  false,
+                                                                                    "concurrently":  false,
+                                                                                    "method":  "btree",
+                                                                                    "with":  {
+
+                                                                                             }
+                                                                                }
+                                                    },
+                                        "foreignKeys":  {
+                                                            "scans_source_id_sources_id_fk":  {
+                                                                                                  "name":  "scans_source_id_sources_id_fk",
+                                                                                                  "tableFrom":  "scans",
+                                                                                                  "tableTo":  "sources",
+                                                                                                  "columnsFrom":  [
+                                                                                                                      "source_id"
+                                                                                                                  ],
+                                                                                                  "columnsTo":  [
+                                                                                                                    "id"
+                                                                                                                ],
+                                                                                                  "onDelete":  "no action",
+                                                                                                  "onUpdate":  "no action"
+                                                                                              }
+                                                        },
+                                        "compositePrimaryKeys":  {
+
+                                                                 },
+                                        "uniqueConstraints":  {
+
+                                                              },
+                                        "policies":  {
+
+                                                     },
+                                        "checkConstraints":  {
+
+                                                             },
+                                        "isRLSEnabled":  false
+                                    },
+                   "public.sessions":  {
+                                           "name":  "sessions",
+                                           "schema":  "",
+                                           "columns":  {
+                                                           "jti":  {
+                                                                       "name":  "jti",
+                                                                       "type":  "text",
+                                                                       "primaryKey":  true,
+                                                                       "notNull":  true
+                                                                   },
+                                                           "user_sub":  {
+                                                                            "name":  "user_sub",
+                                                                            "type":  "text",
+                                                                            "primaryKey":  false,
+                                                                            "notNull":  true
+                                                                        },
+                                                           "issued_at":  {
+                                                                             "name":  "issued_at",
+                                                                             "type":  "timestamp with time zone",
+                                                                             "primaryKey":  false,
+                                                                             "notNull":  true,
+                                                                             "default":  "now()"
+                                                                         },
+                                                           "expires_at":  {
+                                                                              "name":  "expires_at",
+                                                                              "type":  "timestamp with time zone",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  true
+                                                                          },
+                                                           "revoked_at":  {
+                                                                              "name":  "revoked_at",
+                                                                              "type":  "timestamp with time zone",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  false
+                                                                          }
+                                                       },
+                                           "indexes":  {
+                                                           "sessions_user_sub_idx":  {
+                                                                                         "name":  "sessions_user_sub_idx",
+                                                                                         "columns":  [
+                                                                                                         {
+                                                                                                             "expression":  "user_sub",
+                                                                                                             "isExpression":  false,
+                                                                                                             "asc":  true,
+                                                                                                             "nulls":  "last"
+                                                                                                         }
+                                                                                                     ],
+                                                                                         "isUnique":  false,
+                                                                                         "concurrently":  false,
+                                                                                         "method":  "btree",
+                                                                                         "with":  {
+
+                                                                                                  }
+                                                                                     },
+                                                           "sessions_active_user_idx":  {
+                                                                                            "name":  "sessions_active_user_idx",
+                                                                                            "columns":  [
+                                                                                                            {
+                                                                                                                "expression":  "user_sub",
+                                                                                                                "isExpression":  false,
+                                                                                                                "asc":  true,
+                                                                                                                "nulls":  "last"
+                                                                                                            }
+                                                                                                        ],
+                                                                                            "isUnique":  false,
+                                                                                            "where":  "revoked_at IS NULL",
+                                                                                            "concurrently":  false,
+                                                                                            "method":  "btree",
+                                                                                            "with":  {
+
+                                                                                                     }
+                                                                                        }
+                                                       },
+                                           "foreignKeys":  {
+                                                               "sessions_user_sub_users_sub_fk":  {
+                                                                                                      "name":  "sessions_user_sub_users_sub_fk",
+                                                                                                      "tableFrom":  "sessions",
+                                                                                                      "tableTo":  "users",
+                                                                                                      "columnsFrom":  [
+                                                                                                                          "user_sub"
+                                                                                                                      ],
+                                                                                                      "columnsTo":  [
+                                                                                                                        "sub"
+                                                                                                                    ],
+                                                                                                      "onDelete":  "cascade",
+                                                                                                      "onUpdate":  "no action"
+                                                                                                  }
+                                                           },
+                                           "compositePrimaryKeys":  {
+
+                                                                    },
+                                           "uniqueConstraints":  {
+
+                                                                 },
+                                           "policies":  {
+
+                                                        },
+                                           "checkConstraints":  {
+                                                                    "sessions_expiry_check":  {
+                                                                                                  "name":  "sessions_expiry_check",
+                                                                                                  "value":  "\"sessions\".\"expires_at\" \u003e \"sessions\".\"issued_at\""
+                                                                                              }
+                                                                },
+                                           "isRLSEnabled":  false
+                                       },
+                   "public.sources":  {
+                                          "name":  "sources",
+                                          "schema":  "",
+                                          "columns":  {
+                                                          "id":  {
+                                                                     "name":  "id",
+                                                                     "type":  "text",
+                                                                     "primaryKey":  true,
+                                                                     "notNull":  true
+                                                                 },
+                                                          "name":  {
+                                                                       "name":  "name",
+                                                                       "type":  "text",
+                                                                       "primaryKey":  false,
+                                                                       "notNull":  true
+                                                                   },
+                                                          "kind":  {
+                                                                       "name":  "kind",
+                                                                       "type":  "text",
+                                                                       "primaryKey":  false,
+                                                                       "notNull":  true
+                                                                   },
+                                                          "environment":  {
+                                                                              "name":  "environment",
+                                                                              "type":  "text",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  true
+                                                                          },
+                                                          "status":  {
+                                                                         "name":  "status",
+                                                                         "type":  "text",
+                                                                         "primaryKey":  false,
+                                                                         "notNull":  true
+                                                                     },
+                                                          "last_scan_at":  {
+                                                                               "name":  "last_scan_at",
+                                                                               "type":  "timestamp with time zone",
+                                                                               "primaryKey":  false,
+                                                                               "notNull":  false
+                                                                           },
+                                                          "tables":  {
+                                                                         "name":  "tables",
+                                                                         "type":  "integer",
+                                                                         "primaryKey":  false,
+                                                                         "notNull":  true
+                                                                     },
+                                                          "records":  {
+                                                                          "name":  "records",
+                                                                          "type":  "integer",
+                                                                          "primaryKey":  false,
+                                                                          "notNull":  true
+                                                                      },
+                                                          "connection_config":  {
+                                                                                    "name":  "connection_config",
+                                                                                    "type":  "jsonb",
+                                                                                    "primaryKey":  false,
+                                                                                    "notNull":  false
+                                                                                },
+                                                          "created_at":  {
+                                                                             "name":  "created_at",
+                                                                             "type":  "timestamp with time zone",
+                                                                             "primaryKey":  false,
+                                                                             "notNull":  true,
+                                                                             "default":  "now()"
+                                                                         },
+                                                          "updated_at":  {
+                                                                             "name":  "updated_at",
+                                                                             "type":  "timestamp with time zone",
+                                                                             "primaryKey":  false,
+                                                                             "notNull":  true,
+                                                                             "default":  "now()"
+                                                                         }
+                                                      },
+                                          "indexes":  {
+
+                                                      },
+                                          "foreignKeys":  {
+
+                                                          },
+                                          "compositePrimaryKeys":  {
+
+                                                                   },
+                                          "uniqueConstraints":  {
+
+                                                                },
+                                          "policies":  {
+
+                                                       },
+                                          "checkConstraints":  {
+
+                                                               },
+                                          "isRLSEnabled":  false
+                                      },
+                   "public.user_roles":  {
+                                             "name":  "user_roles",
+                                             "schema":  "",
+                                             "columns":  {
+                                                             "user_sub":  {
+                                                                              "name":  "user_sub",
+                                                                              "type":  "text",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  true
+                                                                          },
+                                                             "role":  {
+                                                                          "name":  "role",
+                                                                          "type":  "text",
+                                                                          "primaryKey":  false,
+                                                                          "notNull":  true
+                                                                      },
+                                                             "created_at":  {
+                                                                                "name":  "created_at",
+                                                                                "type":  "timestamp with time zone",
+                                                                                "primaryKey":  false,
+                                                                                "notNull":  true,
+                                                                                "default":  "now()"
+                                                                            }
+                                                         },
+                                             "indexes":  {
+                                                             "user_roles_user_sub_idx":  {
+                                                                                             "name":  "user_roles_user_sub_idx",
+                                                                                             "columns":  [
+                                                                                                             {
+                                                                                                                 "expression":  "user_sub",
+                                                                                                                 "isExpression":  false,
+                                                                                                                 "asc":  true,
+                                                                                                                 "nulls":  "last"
+                                                                                                             }
+                                                                                                         ],
+                                                                                             "isUnique":  false,
+                                                                                             "concurrently":  false,
+                                                                                             "method":  "btree",
+                                                                                             "with":  {
+
+                                                                                                      }
+                                                                                         }
+                                                         },
+                                             "foreignKeys":  {
+                                                                 "user_roles_user_sub_users_sub_fk":  {
+                                                                                                          "name":  "user_roles_user_sub_users_sub_fk",
+                                                                                                          "tableFrom":  "user_roles",
+                                                                                                          "tableTo":  "users",
+                                                                                                          "columnsFrom":  [
+                                                                                                                              "user_sub"
+                                                                                                                          ],
+                                                                                                          "columnsTo":  [
+                                                                                                                            "sub"
+                                                                                                                        ],
+                                                                                                          "onDelete":  "no action",
+                                                                                                          "onUpdate":  "no action"
+                                                                                                      }
+                                                             },
+                                             "compositePrimaryKeys":  {
+                                                                          "user_roles_user_sub_role_pk":  {
+                                                                                                              "name":  "user_roles_user_sub_role_pk",
+                                                                                                              "columns":  [
+                                                                                                                              "user_sub",
+                                                                                                                              "role"
+                                                                                                                          ]
+                                                                                                          }
+                                                                      },
+                                             "uniqueConstraints":  {
+
+                                                                   },
+                                             "policies":  {
+
+                                                          },
+                                             "checkConstraints":  {
+                                                                      "user_roles_role_check":  {
+                                                                                                    "name":  "user_roles_role_check",
+                                                                                                    "value":  "\"user_roles\".\"role\" IN (\u0027admin\u0027, \u0027auditor\u0027)"
+                                                                                                }
+                                                                  },
+                                             "isRLSEnabled":  false
+                                         },
+                   "public.users":  {
+                                        "name":  "users",
+                                        "schema":  "",
+                                        "columns":  {
+                                                        "sub":  {
+                                                                    "name":  "sub",
+                                                                    "type":  "text",
+                                                                    "primaryKey":  true,
+                                                                    "notNull":  true
+                                                                },
+                                                        "email":  {
+                                                                      "name":  "email",
+                                                                      "type":  "text",
+                                                                      "primaryKey":  false,
+                                                                      "notNull":  true
+                                                                  },
+                                                        "name":  {
+                                                                     "name":  "name",
+                                                                     "type":  "text",
+                                                                     "primaryKey":  false,
+                                                                     "notNull":  false
+                                                                 },
+                                                        "password_hash":  {
+                                                                              "name":  "password_hash",
+                                                                              "type":  "text",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  false
+                                                                          },
+                                                        "created_at":  {
+                                                                           "name":  "created_at",
+                                                                           "type":  "timestamp with time zone",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true,
+                                                                           "default":  "now()"
+                                                                       },
+                                                        "updated_at":  {
+                                                                           "name":  "updated_at",
+                                                                           "type":  "timestamp with time zone",
+                                                                           "primaryKey":  false,
+                                                                           "notNull":  true,
+                                                                           "default":  "now()"
+                                                                       },
+                                                        "last_login_at":  {
+                                                                              "name":  "last_login_at",
+                                                                              "type":  "timestamp with time zone",
+                                                                              "primaryKey":  false,
+                                                                              "notNull":  false
+                                                                          }
+                                                    },
+                                        "indexes":  {
+
+                                                    },
+                                        "foreignKeys":  {
+
+                                                        },
+                                        "compositePrimaryKeys":  {
+
+                                                                 },
+                                        "uniqueConstraints":  {
+                                                                  "users_email_unique":  {
+                                                                                             "name":  "users_email_unique",
+                                                                                             "nullsNotDistinct":  false,
+                                                                                             "columns":  [
+                                                                                                             "email"
+                                                                                                         ]
+                                                                                         }
+                                                              },
+                                        "policies":  {
+
+                                                     },
+                                        "checkConstraints":  {
+
+                                                             },
+                                        "isRLSEnabled":  false
+                                    }
+               },
+    "enums":  {
+
+              },
+    "schemas":  {
+
+                },
+    "sequences":  {
+
+                  },
+    "roles":  {
+
+              },
+    "policies":  {
+
+                 },
+    "views":  {
+
+              },
+    "_meta":  {
+                  "columns":  {
+
+                              },
+                  "schemas":  {
+
+                              },
+                  "tables":  {
+
+                             }
+              }
+}

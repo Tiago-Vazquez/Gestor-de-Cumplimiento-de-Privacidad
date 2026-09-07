@@ -1,4 +1,4 @@
-import { integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -9,6 +9,10 @@ import { z } from "zod/v4";
  * vive en los contratos Zod de `@workspace/api-zod` (fuente de verdad generada
  * desde `lib/api-spec/openapi.yaml`), lo que evita `ALTER TYPE` en la BD al
  * evolucionar el catálogo.
+ *
+ * FASE 7.0.0: `connectionConfig` almacena la configuración de conexión cifrada
+ * (AES-256-GCM) para fuentes PostgreSQL externas. Es NULL para fuentes legacy
+ * que no tienen configuración de conexión (solo metadatos).
  */
 export const sourcesTable = pgTable("sources", {
   id: text("id").primaryKey(),
@@ -19,6 +23,7 @@ export const sourcesTable = pgTable("sources", {
   lastScanAt: timestamp("last_scan_at", { withTimezone: true }),
   tables: integer("tables").notNull(),
   records: integer("records").notNull(),
+  connectionConfig: jsonb("connection_config"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

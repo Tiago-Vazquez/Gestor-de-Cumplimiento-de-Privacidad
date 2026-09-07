@@ -56,17 +56,17 @@ export function createMockRepos() {
     userRoles: [],
   sessions: [],
     findings: [
-      { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12) },
-      { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38) },
-      { id: "f-003", title: "Teléfonos visibles en exportación", dataType: "phone", sourceId: "src-003", sourceName: SOURCE_NAMES["src-003"], location: "crm.contacts.phone", severity: "medium", status: "open", records: 2187, detectedAt: minutesAgo(74), regulation: "CCPA §1798.100", recommendation: "Enmascarar últimos cuatro dígitos.", sample: "+54 9 11 •••• 4821", createdAt: minutesAgo(74), updatedAt: minutesAgo(74) },
-      { id: "f-004", title: "Direcciones residenciales detectadas", dataType: "address", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.shipping_addresses.full_address", severity: "low", status: "resolved", records: 864, detectedAt: minutesAgo(120), regulation: "GDPR Art. 5", recommendation: "Mantener solo ciudad y CP.", sample: "Av. del L•••• 120", createdAt: minutesAgo(120), updatedAt: minutesAgo(120) },
-      { id: "f-005", title: "Tarjetas almacenadas en logs", dataType: "credit_card", sourceId: "src-004", sourceName: SOURCE_NAMES["src-004"], location: "logs.checkout.payload", severity: "critical", status: "open", records: 91, detectedAt: minutesAgo(186), regulation: "PCI DSS 3.4", recommendation: "Redactar payloads históricos.", sample: "•••• •••• •••• 4242", createdAt: minutesAgo(186), updatedAt: minutesAgo(186) },
+      { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12), scanId: null },
+      { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38), scanId: null },
+      { id: "f-003", title: "Teléfonos visibles en exportación", dataType: "phone", sourceId: "src-003", sourceName: SOURCE_NAMES["src-003"], location: "crm.contacts.phone", severity: "medium", status: "open", records: 2187, detectedAt: minutesAgo(74), regulation: "CCPA §1798.100", recommendation: "Enmascarar últimos cuatro dígitos.", sample: "+54 9 11 •••• 4821", createdAt: minutesAgo(74), updatedAt: minutesAgo(74), scanId: null },
+      { id: "f-004", title: "Direcciones residenciales detectadas", dataType: "address", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.shipping_addresses.full_address", severity: "low", status: "resolved", records: 864, detectedAt: minutesAgo(120), regulation: "GDPR Art. 5", recommendation: "Mantener solo ciudad y CP.", sample: "Av. del L•••• 120", createdAt: minutesAgo(120), updatedAt: minutesAgo(120), scanId: null },
+      { id: "f-005", title: "Tarjetas almacenadas en logs", dataType: "credit_card", sourceId: "src-004", sourceName: SOURCE_NAMES["src-004"], location: "logs.checkout.payload", severity: "critical", status: "open", records: 91, detectedAt: minutesAgo(186), regulation: "PCI DSS 3.4", recommendation: "Redactar payloads históricos.", sample: "•••• •••• •••• 4242", createdAt: minutesAgo(186), updatedAt: minutesAgo(186), scanId: null },
     ],
     sources: [
-      { id: "src-001", name: SOURCE_NAMES["src-001"], kind: "postgresql", environment: "production", status: "healthy", lastScanAt: minutesAgo(12), tables: 48, records: 284_210, createdAt: minutesAgo(500), updatedAt: minutesAgo(12), findingsCount: 2 },
-      { id: "src-002", name: SOURCE_NAMES["src-002"], kind: "snowflake", environment: "staging", status: "warning", lastScanAt: minutesAgo(38), tables: 126, records: 1_840_400, createdAt: minutesAgo(500), updatedAt: minutesAgo(38), findingsCount: 1 },
-      { id: "src-003", name: SOURCE_NAMES["src-003"], kind: "mysql", environment: "production", status: "healthy", lastScanAt: minutesAgo(74), tables: 32, records: 98_321, createdAt: minutesAgo(500), updatedAt: minutesAgo(74), findingsCount: 1 },
-      { id: "src-004", name: SOURCE_NAMES["src-004"], kind: "postgresql", environment: "production", status: "healthy", lastScanAt: minutesAgo(186), tables: 17, records: 61_550, createdAt: minutesAgo(500), updatedAt: minutesAgo(186), findingsCount: 1 },
+      { id: "src-001", name: SOURCE_NAMES["src-001"], kind: "postgresql", environment: "production", status: "healthy", lastScanAt: minutesAgo(12), tables: 48, records: 284_210, createdAt: minutesAgo(500), updatedAt: minutesAgo(12), findingsCount: 2, connectionConfig: null },
+      { id: "src-002", name: SOURCE_NAMES["src-002"], kind: "snowflake", environment: "staging", status: "warning", lastScanAt: minutesAgo(38), tables: 126, records: 1_840_400, createdAt: minutesAgo(500), updatedAt: minutesAgo(38), findingsCount: 1, connectionConfig: null },
+      { id: "src-003", name: SOURCE_NAMES["src-003"], kind: "mysql", environment: "production", status: "healthy", lastScanAt: minutesAgo(74), tables: 32, records: 98_321, createdAt: minutesAgo(500), updatedAt: minutesAgo(74), findingsCount: 1, connectionConfig: null },
+      { id: "src-004", name: SOURCE_NAMES["src-004"], kind: "postgresql", environment: "production", status: "healthy", lastScanAt: minutesAgo(186), tables: 17, records: 61_550, createdAt: minutesAgo(500), updatedAt: minutesAgo(186), findingsCount: 1, connectionConfig: null },
     ],
     rules: [
       { id: "rule-001", name: "Email personal", category: "Identidad", regulation: "GDPR", enabled: true, detections: 12_843, lastTriggered: minutesAgo(12), createdAt: minutesAgo(500), updatedAt: minutesAgo(12) },
@@ -98,6 +98,96 @@ export function createMockRepos() {
       },
       async getById(id: string) {
         return state.sources.find((source) => source.id === id) ?? null;
+      },
+      // FASE 7.0.5 (M1): réplica del repo real — devuelve la fuente con su
+      // conteo real de hallazgos. Cada source del estado ya incluye el campo
+      // findingsCount (se mantiene coherente con createSource que lo inicia en 0).
+      async getByIdWithFindingsCount(id: string) {
+        const source = state.sources.find((source) => source.id === id);
+        return source ? { ...source, findingsCount: source.findingsCount } : null;
+      },
+      // FASE 7.0.1: réplica del repo real — connectionConfig cifrado (mock) se
+      // traduce a una configuración; null (legacy) se queda como null.
+      decryptConnectionConfig(source: { connectionConfig: unknown }) {
+        if (source.connectionConfig == null) return null;
+        return {
+          host: "mock-host",
+          port: 5432,
+          database: "mock-db",
+          user: "mock-user",
+          password: "mock-password",
+          schema: "public",
+        };
+      },
+      // FASE 7.0.0: CRUD con configuración de conexión (cifrado simulado). La
+      // contraseña nunca se persiste en claro; el mock usa un marcador opaco.
+      async createSource(input: {
+        name: string;
+        kind: string;
+        environment: string;
+        connection?: {
+          host: string;
+          port: number;
+          database: string;
+          user: string;
+          password: string;
+          schema?: string;
+        };
+      }) {
+        const now = new Date();
+        const created = {
+          id: nextId("src"),
+          name: input.name,
+          kind: input.kind,
+          environment: input.environment,
+          status: "healthy" as const,
+          lastScanAt: null,
+          tables: 0,
+          records: 0,
+          connectionConfig: input.connection
+            ? "mock-encrypted-connection-string"
+            : null,
+          createdAt: now,
+          updatedAt: now,
+          findingsCount: 0,
+        };
+        state.sources.push(created);
+        return { ...created };
+      },
+      async updateSource(
+        id: string,
+        input: {
+          name?: string;
+          kind?: string;
+          environment?: string;
+          connection?: {
+            host: string;
+            port: number;
+            database: string;
+            user: string;
+            password: string;
+            schema?: string;
+          } | null;
+        },
+      ) {
+        const source = state.sources.find((item) => item.id === id);
+        if (!source) return null;
+        if (input.name !== undefined) source.name = input.name;
+        if (input.kind !== undefined) source.kind = input.kind;
+        if (input.environment !== undefined) source.environment = input.environment;
+        if (input.connection !== undefined) {
+          source.connectionConfig = input.connection
+            ? "mock-encrypted-connection-string"
+            : null;
+        }
+        source.updatedAt = new Date();
+        return { ...source };
+      },
+      async deleteSource(id: string) {
+        const index = state.sources.findIndex((item) => item.id === id);
+        if (index === -1) return false;
+        state.sources.splice(index, 1);
+        return true;
       },
       async touchLastScan({ id, at }: { id: string; at: Date }) {
         const source = state.sources.find((item) => item.id === id);
@@ -149,6 +239,10 @@ export function createMockRepos() {
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((rule) => ({ ...rule }));
       },
+      // FASE 7.0.1: reglas habilitadas (interruptor del catálogo del scanner).
+      async listActive() {
+        return state.rules.filter((rule) => rule.enabled).map((rule) => ({ ...rule }));
+      },
     },
     scans: {
       async startScan({ sourceId, startedAt }: { sourceId: string; startedAt: Date }) {
@@ -176,24 +270,159 @@ export function createMockRepos() {
         });
         return { ok: true, scan: { ...scan }, sourceName: source.name, sourceTables: source.tables };
       },
-      async completeScan({ scanId, completedAt }: { scanId: string; completedAt: Date }) {
-        const scan = state.scans.find((item) => item.id === scanId);
+      // FASE 7.0.5: finaliza el scan en una ÚNICA transacción (findings + métricas
+      // de fuente + detecciones por regla + estado completed). Réplica del repo
+      // real: inserta findings, actualiza sources.tables/records, acumula
+      // rules.detecciones y marca `completed` con findingsCreated = insertados.
+      async finalizeScan(input: {
+        scanId: string;
+        sourceId: string;
+        sourceName: string;
+        completedAt: Date;
+        findings: Array<{
+          location: string;
+          dataType: string;
+          severity: string;
+          records: number;
+          sample: string;
+          regulation: string;
+          recommendation: string;
+          title: string;
+        }>;
+        scannedTables: number;
+        scannedRecords: number;
+        ruleDeltas: Map<string, number>;
+      }) {
+        const scan = state.scans.find((item) => item.id === input.scanId);
         if (!scan) return null;
-        const source = state.sources.find((item) => item.id === scan.sourceId);
+        const source = state.sources.find((item) => item.id === input.sourceId);
+
+        // 1. Insertar findings (con scan_id).
+        const now = new Date();
+        let insertedCount = 0;
+        for (const finding of input.findings) {
+          state.findings.push({
+            id: nextId("f"),
+            title: finding.title,
+            dataType: finding.dataType,
+            sourceId: input.sourceId,
+            sourceName: input.sourceName,
+            location: finding.location,
+            severity: finding.severity,
+            status: "open",
+            records: finding.records,
+            detectedAt: now,
+            regulation: finding.regulation,
+            recommendation: finding.recommendation,
+            sample: finding.sample,
+            scanId: input.scanId,
+            createdAt: now,
+            updatedAt: now,
+          });
+          insertedCount += 1;
+        }
+
+        // 2. Actualizar métricas de la fuente.
+        if (source) {
+          source.tables = input.scannedTables;
+          source.records = input.scannedRecords;
+        }
+
+        // 3. Acumular detecciones por regla (vinculación por lower(name)).
+        for (const [ruleNameLower, delta] of input.ruleDeltas) {
+          if (delta <= 0) continue;
+          const rule = state.rules.find(
+            (r) => r.name.toLowerCase() === ruleNameLower,
+          );
+          if (rule) {
+            rule.detections += delta;
+            rule.lastTriggered = input.completedAt;
+          }
+        }
+
+        // 4. Marcar scan como completed con findingsCreated = insertados.
         scan.status = "completed";
-        scan.completedAt = completedAt;
-        scan.findingsCreated = state.findings.filter((f) => f.sourceId === scan.sourceId).length;
+        scan.completedAt = input.completedAt;
+        scan.findingsCreated = insertedCount;
+
+        // 5. Registrar actividad de finalización.
         if (source) {
           state.activity.unshift({
             id: nextId("a"),
             type: "scan",
             title: "Escaneo completado",
-            description: `${source.name} · ${source.tables} tablas revisadas`,
-            createdAt: completedAt,
+            description: `${source.name} · ${input.scannedTables} tablas revisadas`,
+            createdAt: input.completedAt,
             severity: null,
           });
         }
+
         return { ...scan };
+      },
+      // FASE 7.0.1/7.0.2: fallo del scanner con su causa (source_not_found |
+      // source_not_scannable | connection_failed | persist_failed).
+      // Idempotente: scan inexistente → null.
+      async failScan({
+        scanId,
+        completedAt,
+        reason,
+      }: {
+        scanId: string;
+        completedAt: Date;
+        reason:
+          | "source_not_found"
+          | "source_not_scannable"
+          | "connection_failed"
+          | "persist_failed";
+      }) {
+        const scan = state.scans.find((item) => item.id === scanId);
+        if (!scan) return null;
+        scan.status = "failed";
+        scan.completedAt = completedAt;
+        const source = state.sources.find((item) => item.id === scan.sourceId);
+        state.activity.unshift({
+          id: nextId("a"),
+          type: "scan",
+          title: "Escaneo fallido",
+          description: `${source?.name ?? scan.sourceId} · ${reason}`,
+          createdAt: completedAt,
+          severity: null,
+        });
+        return { ...scan };
+      },
+
+      // FASE 7.0.4: recuperación de huérfanos — marca `failed(timeout)` los
+      // scans `running` con startedAt < before (comparación estricta). Los
+      // estados `completed`/`failed` no se tocan; un scan cuya source fue
+      // eliminada se recupera igualmente y sin actividad.
+      async failRunningScansStartedBefore({
+        before,
+        completedAt,
+        reason,
+      }: {
+        before: Date;
+        completedAt: Date;
+        reason: "timeout";
+      }) {
+        const recovered: Scan[] = [];
+        for (const scan of [...state.scans]) {
+          if (scan.status !== "running" || scan.startedAt.getTime() >= before.getTime()) continue;
+          scan.status = "failed";
+          scan.completedAt = completedAt;
+          const source = state.sources.find((item) => item.id === scan.sourceId);
+          if (source) {
+            state.activity.unshift({
+              id: nextId("a"),
+              type: "scan",
+              title: "Escaneo fallido",
+              description: `${source.name} · ${reason}`,
+              createdAt: completedAt,
+              severity: null,
+            });
+          }
+          recovered.push({ ...scan });
+        }
+        return recovered;
       },
     },
     activity: {

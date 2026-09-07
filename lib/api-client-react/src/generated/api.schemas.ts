@@ -246,6 +246,126 @@ export interface DataSource {
   findings: number;
 }
 
+/**
+ * Database connection credentials for an external source. The password is write-only: it is encrypted at rest and never returned in any response.
+ */
+export interface SourceConnectionInput {
+  /**
+     * Database host (hostname or IP)
+     * @minLength 1
+     * @maxLength 253
+     */
+  host: string;
+  /**
+     * Database port (1-65535)
+     * @minimum 1
+     * @maximum 65535
+     */
+  port: number;
+  /**
+     * Database name
+     * @minLength 1
+     * @maxLength 128
+     */
+  database: string;
+  /**
+     * Username for authentication
+     * @minLength 1
+     * @maxLength 128
+     */
+  user: string;
+  /**
+     * Password (write-only, never returned in responses)
+     * @minLength 1
+     * @maxLength 256
+     */
+  password: string;
+  /**
+     * Database schema (optional)
+     * @maxLength 128
+     */
+  schema?: string;
+}
+
+export type SourceCreateKind = typeof SourceCreateKind[keyof typeof SourceCreateKind];
+
+
+export const SourceCreateKind = {
+  postgresql: 'postgresql',
+  mysql: 'mysql',
+  mongodb: 'mongodb',
+  snowflake: 'snowflake',
+  bigquery: 'bigquery',
+} as const;
+
+export type SourceCreateEnvironment = typeof SourceCreateEnvironment[keyof typeof SourceCreateEnvironment];
+
+
+export const SourceCreateEnvironment = {
+  production: 'production',
+  staging: 'staging',
+  development: 'development',
+} as const;
+
+export interface SourceCreate {
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  name: string;
+  kind: SourceCreateKind;
+  environment: SourceCreateEnvironment;
+  /** Optional connection credentials. When omitted, the source is created without credentials (connectionConfig = null) and is not scannable until configuration is provided via PATCH. */
+  connection?: SourceConnectionInput;
+}
+
+export type SourceUpdateKind = typeof SourceUpdateKind[keyof typeof SourceUpdateKind];
+
+
+export const SourceUpdateKind = {
+  postgresql: 'postgresql',
+  mysql: 'mysql',
+  mongodb: 'mongodb',
+  snowflake: 'snowflake',
+  bigquery: 'bigquery',
+} as const;
+
+export type SourceUpdateEnvironment = typeof SourceUpdateEnvironment[keyof typeof SourceUpdateEnvironment];
+
+
+export const SourceUpdateEnvironment = {
+  production: 'production',
+  staging: 'staging',
+  development: 'development',
+} as const;
+
+export interface SourceUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  name?: string;
+  kind?: SourceUpdateKind;
+  environment?: SourceUpdateEnvironment;
+  /** New connection configuration to store (encrypted). Omit to keep the existing configuration. */
+  connection?: SourceConnectionInput;
+}
+
+export interface SourceDetail {
+  id: string;
+  name: string;
+  kind: string;
+  environment: string;
+  status: string;
+  /** @nullable */
+  lastScanAt: string | null;
+  tables: number;
+  records: number;
+  findings: number;
+  /** Whether this source has connection configuration and can be scanned */
+  scannable: boolean;
+}
+
 export interface Rule {
   id: string;
   name: string;
@@ -254,6 +374,14 @@ export interface Rule {
   enabled: boolean;
   detections: number;
   lastTriggered: string;
+}
+
+/**
+ * FASE 7.0.5: solo el campo `enabled` es gobernable desde la API.
+ * El resto (patrón, severidad, regulación) es built-in.
+ */
+export interface RuleInput {
+  enabled: boolean;
 }
 
 export interface ScanInput {
@@ -267,6 +395,7 @@ export const ScanStatus = {
   queued: 'queued',
   running: 'running',
   completed: 'completed',
+  failed: 'failed',
 } as const;
 
 export interface Scan {

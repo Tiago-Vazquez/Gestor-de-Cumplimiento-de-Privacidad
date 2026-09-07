@@ -337,6 +337,89 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/DataSource"
+    post:
+      operationId: createSource
+      tags: [sources]
+      summary: Create a data source
+      description: >-
+        Admin only. The connection password is WRITE-ONLY: it is encrypted at
+        rest and never returned in any response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceCreate"
+      responses:
+        "201":
+          description: Created data source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "400":
+          description: Invalid body
+  /sources/{id}:
+    get:
+      operationId: getSource
+      tags: [sources]
+      summary: Get a data source by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Data source detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "404":
+          description: Source not found
+    patch:
+      operationId: updateSource
+      tags: [sources]
+      summary: Update a data source
+      description: >-
+        Admin only. Update a data source's metadata or store a new connection
+        configuration (encrypted). Password remains write-only on update as
+        well.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceUpdate"
+      responses:
+        "200":
+          description: Updated data source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceDetail"
+        "404":
+          description: Source not found
+    delete:
+      operationId: deleteSource
+      tags: [sources]
+      summary: Delete a data source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Source deleted
+        "404":
+          description: Source not found
   /rules:
     get:
       operationId: listRules
@@ -378,6 +461,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Scan"
+        "409":
+          description: A scan is already running for this source
+  /rules/{id}:
+    patch:
+      operationId: updateRule
+      tags: [rules]
+      summary: Update a detection rule (admin only)
+      description: |
+        FASE 7.0.5: actualiza únicamente el campo `enabled` de una regla.
+        Solo este campo es gobernable desde la API; el resto (patrón, severidad,
+        regulación) es built-in. El cambio es efectivo en el siguiente scan.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RuleInput"
+      responses:
+        "200":
+          description: Rule updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Rule"
+        "400":
+          description: Invalid input
+        "401":
+          description: Authentication required
+        "403":
+          description: Admin role required
+        "404":
+          description: Rule not found
   /reports:
     get:
       operationId: listReports
@@ -577,6 +697,97 @@ components:
         tables: { type: number }
         records: { type: number }
         findings: { type: number }
+    SourceConnectionInput:
+      type: object
+      description: >-
+        Database connection credentials for an external source. The password is
+        write-only: it is encrypted at rest and never returned in any response.
+      required: [host, port, database, user, password]
+      properties:
+        host:
+          type: string
+          description: Database host (hostname or IP)
+          minLength: 1
+          maxLength: 253
+        port:
+          type: integer
+          description: Database port (1-65535)
+          minimum: 1
+          maximum: 65535
+        database:
+          type: string
+          description: Database name
+          minLength: 1
+          maxLength: 128
+        user:
+          type: string
+          description: Username for authentication
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          format: password
+          description: Password (write-only, never returned in responses)
+          minLength: 1
+          maxLength: 256
+        schema:
+          type: string
+          description: Database schema (optional)
+          maxLength: 128
+    SourceCreate:
+      type: object
+      required: [name, kind, environment]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        kind:
+          type: string
+          enum: [postgresql, mysql, mongodb, snowflake, bigquery]
+        environment:
+          type: string
+          enum: [production, staging, development]
+        connection:
+          $ref: "#/components/schemas/SourceConnectionInput"
+          description: >-
+            Optional connection credentials. When omitted, the source is
+            created without credentials (connectionConfig = null) and is not
+            scannable until configuration is provided via PATCH.
+    SourceUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 256
+        kind:
+          type: string
+          enum: [postgresql, mysql, mongodb, snowflake, bigquery]
+        environment:
+          type: string
+          enum: [production, staging, development]
+        connection:
+          $ref: "#/components/schemas/SourceConnectionInput"
+          description: >-
+            New connection configuration to store (encrypted). Omit to keep the
+            existing configuration.
+    SourceDetail:
+      type: object
+      required: [id, name, kind, environment, status, lastScanAt, tables, records, findings, scannable]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string }
+        environment: { type: string }
+        status: { type: string }
+        lastScanAt: { type: ["string", "null"] }
+        tables: { type: number }
+        records: { type: number }
+        findings: { type: number }
+        scannable:
+          type: boolean
+          description: Whether this source has connection configuration and can be scanned
     Rule:
       type: object
       required: [id, name, category, regulation, enabled, detections, lastTriggered]
@@ -588,6 +799,14 @@ components:
         enabled: { type: boolean }
         detections: { type: number }
         lastTriggered: { type: string }
+    RuleInput:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+      description: |
+        FASE 7.0.5: solo el campo `enabled` es gobernable desde la API.
+        El resto (patrón, severidad, regulación) es built-in.
     ScanInput:
       type: object
       required: [sourceId]
@@ -599,7 +818,7 @@ components:
       properties:
         id: { type: string }
         sourceId: { type: string }
-        status: { type: string, enum: [queued, running, completed] }
+        status: { type: string, enum: [queued, running, completed, failed] }
         startedAt: { type: string }
         completedAt: { type: ["string", "null"] }
         findingsCreated: { type: number }

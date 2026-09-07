@@ -303,6 +303,137 @@ export const ListSourcesResponse = zod.array(ListSourcesResponseItem)
 
 
 /**
+ * Admin only. The connection password is WRITE-ONLY: it is encrypted at rest and never returned in any response.
+ * @summary Create a data source
+ */
+export const createSourceBodyNameMax = 256;
+
+export const createSourceBodyConnectionHostMax = 253;
+
+export const createSourceBodyConnectionPortMax = 65535;
+
+export const createSourceBodyConnectionDatabaseMax = 128;
+
+export const createSourceBodyConnectionUserMax = 128;
+
+export const createSourceBodyConnectionPasswordMax = 256;
+
+export const createSourceBodyConnectionSchemaMax = 128;
+
+
+
+export const CreateSourceBody = zod.object({
+  "name": zod.string().min(1).max(createSourceBodyNameMax),
+  "kind": zod.enum(['postgresql', 'mysql', 'mongodb', 'snowflake', 'bigquery']),
+  "environment": zod.enum(['production', 'staging', 'development']),
+  "connection": zod.object({
+  "host": zod.string().min(1).max(createSourceBodyConnectionHostMax).describe('Database host (hostname or IP)'),
+  "port": zod.coerce.number().int().min(1).max(createSourceBodyConnectionPortMax).describe('Database port (1-65535)'),
+  "database": zod.string().min(1).max(createSourceBodyConnectionDatabaseMax).describe('Database name'),
+  "user": zod.string().min(1).max(createSourceBodyConnectionUserMax).describe('Username for authentication'),
+  "password": zod.string().min(1).max(createSourceBodyConnectionPasswordMax).describe('Password (write-only, never returned in responses)'),
+  "schema": zod.string().max(createSourceBodyConnectionSchemaMax).optional().describe('Database schema (optional)')
+}).optional().describe('Optional connection credentials. When omitted, the source is created without credentials (connectionConfig = null) and is not scannable until configuration is provided via PATCH.')
+})
+
+export const CreateSourceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "kind": zod.string(),
+  "environment": zod.string(),
+  "status": zod.string(),
+  "lastScanAt": zod.string().nullable(),
+  "tables": zod.number(),
+  "records": zod.number(),
+  "findings": zod.number(),
+  "scannable": zod.boolean().describe('Whether this source has connection configuration and can be scanned')
+})
+
+
+/**
+ * @summary Get a data source by id
+ */
+export const GetSourceParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetSourceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "kind": zod.string(),
+  "environment": zod.string(),
+  "status": zod.string(),
+  "lastScanAt": zod.string().nullable(),
+  "tables": zod.number(),
+  "records": zod.number(),
+  "findings": zod.number(),
+  "scannable": zod.boolean().describe('Whether this source has connection configuration and can be scanned')
+})
+
+
+/**
+ * Admin only. Update a data source's metadata or store a new connection configuration (encrypted). Password remains write-only on update as well.
+ * @summary Update a data source
+ */
+export const UpdateSourceParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const updateSourceBodyNameMax = 256;
+
+export const updateSourceBodyConnectionHostMax = 253;
+
+export const updateSourceBodyConnectionPortMax = 65535;
+
+export const updateSourceBodyConnectionDatabaseMax = 128;
+
+export const updateSourceBodyConnectionUserMax = 128;
+
+export const updateSourceBodyConnectionPasswordMax = 256;
+
+export const updateSourceBodyConnectionSchemaMax = 128;
+
+
+
+export const UpdateSourceBody = zod.object({
+  "name": zod.string().min(1).max(updateSourceBodyNameMax).optional(),
+  "kind": zod.enum(['postgresql', 'mysql', 'mongodb', 'snowflake', 'bigquery']).optional(),
+  "environment": zod.enum(['production', 'staging', 'development']).optional(),
+  "connection": zod.object({
+  "host": zod.string().min(1).max(updateSourceBodyConnectionHostMax).describe('Database host (hostname or IP)'),
+  "port": zod.coerce.number().int().min(1).max(updateSourceBodyConnectionPortMax).describe('Database port (1-65535)'),
+  "database": zod.string().min(1).max(updateSourceBodyConnectionDatabaseMax).describe('Database name'),
+  "user": zod.string().min(1).max(updateSourceBodyConnectionUserMax).describe('Username for authentication'),
+  "password": zod.string().min(1).max(updateSourceBodyConnectionPasswordMax).describe('Password (write-only, never returned in responses)'),
+  "schema": zod.string().max(updateSourceBodyConnectionSchemaMax).optional().describe('Database schema (optional)')
+}).optional().describe('New connection configuration to store (encrypted). Omit to keep the existing configuration.')
+})
+
+export const UpdateSourceResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "kind": zod.string(),
+  "environment": zod.string(),
+  "status": zod.string(),
+  "lastScanAt": zod.string().nullable(),
+  "tables": zod.number(),
+  "records": zod.number(),
+  "findings": zod.number(),
+  "scannable": zod.boolean().describe('Whether this source has connection configuration and can be scanned')
+})
+
+
+/**
+ * @summary Delete a data source
+ */
+export const DeleteSourceParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const DeleteSourceResponse = zod.void()
+
+
+/**
  * @summary List detection rules
  */
 export const listRulesQueryLimitDefault = 50;
@@ -340,10 +471,35 @@ export const StartScanBody = zod.object({
 export const StartScanResponse = zod.object({
   "id": zod.string(),
   "sourceId": zod.string(),
-  "status": zod.enum(['queued', 'running', 'completed']),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
   "startedAt": zod.string(),
   "completedAt": zod.string().nullish(),
   "findingsCreated": zod.number().optional()
+})
+
+
+/**
+ * FASE 7.0.5: actualiza únicamente el campo `enabled` de una regla.
+ * Solo este campo es gobernable desde la API; el resto (patrón, severidad,
+ * regulación) es built-in. El cambio es efectivo en el siguiente scan.
+ * @summary Update a detection rule (admin only)
+ */
+export const UpdateRuleParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const UpdateRuleBody = zod.object({
+  "enabled": zod.boolean()
+}).describe('FASE 7.0.5: solo el campo `enabled` es gobernable desde la API.\nEl resto (patrón, severidad, regulación) es built-in.\n')
+
+export const UpdateRuleResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "category": zod.string(),
+  "regulation": zod.string(),
+  "enabled": zod.boolean(),
+  "detections": zod.number(),
+  "lastTriggered": zod.string()
 })
 
 

@@ -1,8 +1,9 @@
-import { count, eq } from "drizzle-orm";
+import { and, count, eq, lt, sql } from "drizzle-orm";
 import {
   activityTable,
   db,
   findingsTable,
+  rulesTable,
   scansTable,
   sourcesTable,
   type Scan,
@@ -11,18 +12,35 @@ import { newId } from "./ids";
 
 export type StartScanResult =
   | { ok: true; scan: Scan; sourceName: string; sourceTables: number }
-  | { ok: false; reason: "source_not_found" };
+  | { ok: false; reason: "source_not_found" | "scan_already_running" };
 
 /**
  * Inicia un escaneo de forma atómica: crea el scan en estado `running`,
  * marca `last_scan_at` en la fuente y registra el evento de actividad.
  * Devuelve `source_not_found` si la fuente no existe (el handler responderá
  * 404 sin haber escrito nada).
+ * FASE 7.0.5: garantía de un único scan `running` por fuente. La garantía
+ * definitiva la da el índice único parcial de PostgreSQL
+ * (`scans_one_running_per_source_idx`); aquí se añade un pre-check con
+ * `FOR UPDATE` sobre la fuente para devolver 409 limpio sin depender de
+ * capturar el 23505.
  */
 export async function startScan({ sourceId, startedAt }: { sourceId: string; startedAt: Date }): Promise<StartScanResult> {
   return db.transaction(async (tx) => {
-    const [source] = await tx.select().from(sourcesTable).where(eq(sourcesTable.id, sourceId));
+    const [source] = await tx
+      .select()
+      .from(sourcesTable)
+      .where(eq(sourcesTable.id, sourceId))
+      .for("update");
     if (!source) return { ok: false, reason: "source_not_found" as const };
+
+    const [existingRunning] = await tx
+      .select({ id: scansTable.id })
+      .from(scansTable)
+      .where(and(eq(scansTable.sourceId, sourceId), eq(scansTable.status, "running")));
+    if (existingRunning) {
+      return { ok: false, reason: "scan_already_running" as const };
+    }
 
     const [scan] = await tx
       .insert(scansTable)
@@ -55,44 +73,135 @@ export async function startScan({ sourceId, startedAt }: { sourceId: string; sta
 }
 
 /**
- * Completa un escaneo de forma atómica: persiste `completed` con el número
- * de hallazgos de la fuente y registra el evento de actividad. Igual que en
- * el comportamiento demo, la finalización ocurre poco después del arranque;
- * al ser transaccional queda registrado aunque el proceso se detenga antes
- * del timeout.
+ * FASE 7.0.5: finaliza un escaneo en una ÚNICA transacción. Inserta los
+ * findings, actualiza las métricas de la fuente (tables/records), acumula
+ * las detecciones por regla y marca el scan como `completed`.
  */
-export async function completeScan({ scanId, completedAt }: { scanId: string; completedAt: Date }): Promise<Scan | null> {
+export interface FinalizeScanInput {
+  scanId: string;
+  sourceId: string;
+  sourceName: string;
+  findings: Array<{
+    location: string;
+    dataType: string;
+    severity: string;
+    records: number;
+    sample: string;
+    regulation: string;
+    recommendation: string;
+    title: string;
+  }>;
+  scannedTables: number;
+  recordsRead: number;
+  ruleDeltas: Map<string, number>;
+  completedAt: Date;
+}
+
+export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
+  await db.transaction(async (tx) => {
+    for (const finding of input.findings) {
+      await tx.insert(findingsTable).values({
+        id: newId("f"),
+        title: finding.title,
+        dataType: finding.dataType,
+        sourceId: input.sourceId,
+        sourceName: input.sourceName,
+        location: finding.location,
+        severity: finding.severity,
+        status: "open",
+        records: finding.records,
+        detectedAt: input.completedAt,
+        regulation: finding.regulation,
+        recommendation: finding.recommendation,
+        sample: finding.sample,
+        scanId: input.scanId,
+      });
+    }
+    await tx.update(sourcesTable).set({
+      tables: input.scannedTables,
+      records: input.recordsRead,
+      updatedAt: input.completedAt,
+    }).where(eq(sourcesTable.id, input.sourceId));
+    for (const [ruleName, delta] of input.ruleDeltas) {
+      await tx.update(rulesTable).set({
+        detections: sql`${rulesTable.detections} + ${delta}`,
+        lastTriggered: input.completedAt,
+        updatedAt: input.completedAt,
+      }).where(sql`lower(${rulesTable.name}) = ${ruleName.toLowerCase()}`);
+    }
+    await tx.update(scansTable).set({
+      status: "completed",
+      completedAt: input.completedAt,
+      findingsCreated: input.findings.length,
+    }).where(eq(scansTable.id, input.scanId));
+  });
+}
+
+/**
+ * FASE 7.0.1: marca un escaneo como `failed` con su causa y registra el evento
+ * de actividad. `completedAt` se fija al instante del fallo para cerrar el
+ * ciclo en la vista de scans.
+ */
+export async function failScan({
+  scanId,
+  completedAt,
+  reason,
+}: {
+  scanId: string;
+  completedAt: Date;
+  reason: "source_not_found" | "source_not_scannable" | "connection_failed" | "persist_failed";
+}): Promise<Scan | null> {
   return db.transaction(async (tx) => {
     const [scan] = await tx.select().from(scansTable).where(eq(scansTable.id, scanId));
     if (!scan) return null;
-
+    const [updated] = await tx.update(scansTable).set({ status: "failed", completedAt }).where(eq(scansTable.id, scanId)).returning();
     const [source] = await tx.select().from(sourcesTable).where(eq(sourcesTable.id, scan.sourceId));
-    const [countRow] = await tx
-      .select({ total: count() })
-      .from(findingsTable)
-      .where(eq(findingsTable.sourceId, scan.sourceId));
-
-    const [updated] = await tx
-      .update(scansTable)
-      .set({
-        status: "completed",
-        completedAt,
-        findingsCreated: countRow?.total ?? 0,
-      })
-      .where(eq(scansTable.id, scanId))
-      .returning();
-
     if (source) {
       await tx.insert(activityTable).values({
         id: newId("a"),
         type: "scan",
-        title: "Escaneo completado",
-        description: `${source.name} · ${source.tables} tablas revisadas`,
+        title: "Escaneo fallido",
+        description: `${source.name} · ${reason}`,
         createdAt: completedAt,
         severity: null,
       });
     }
-
     return updated;
+  });
+}
+
+/**
+ * Recuperación de scans huérfanos (FASE 7.0.4): marca como `failed(timeout)`
+ * todos los scans en estado `running` iniciados ANTES de `before`, en una
+ * única transacción. Devuelve los scans actualizados (RETURNING).
+ */
+export async function failRunningScansStartedBefore({
+  before,
+  completedAt,
+  reason,
+}: {
+  before: Date;
+  completedAt: Date;
+  reason: "timeout";
+}): Promise<Scan[]> {
+  return db.transaction(async (tx) => {
+    const stale = await tx.select().from(scansTable).where(and(eq(scansTable.status, "running"), lt(scansTable.startedAt, before)));
+    const recovered: Scan[] = [];
+    for (const scan of stale) {
+      const [updated] = await tx.update(scansTable).set({ status: "failed", completedAt }).where(eq(scansTable.id, scan.id)).returning();
+      const [source] = await tx.select().from(sourcesTable).where(eq(sourcesTable.id, scan.sourceId));
+      if (source) {
+        await tx.insert(activityTable).values({
+          id: newId("a"),
+          type: "scan",
+          title: "Escaneo fallido",
+          description: `${source.name} · ${reason}`,
+          createdAt: completedAt,
+          severity: null,
+        });
+      }
+      recovered.push(updated);
+    }
+    return recovered;
   });
 }

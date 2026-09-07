@@ -16,8 +16,11 @@ import {
   UpdateFindingBody,
   UpdateFindingParams,
   UpdateFindingResponse,
+  UpdateRuleBody,
+  UpdateRuleParams,
+  UpdateRuleResponse,
 } from "@workspace/api-zod";
-import { notFound } from "../lib/errors";
+import { conflict, notFound } from "../lib/errors";
 import { parsePagination } from "../lib/pagination";
 import { logger } from "../lib/logger";
 import {
@@ -30,6 +33,7 @@ import {
 } from "../mappers";
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
+import { runScan } from "../services/scanner";
 
 const router: IRouter = Router();
 
@@ -88,32 +92,44 @@ router.get("/rules", async (req, res) => {
   res.json(ListRulesResponse.parse(rows.map(mapRule)));
 });
 
+// FASE 7.0.5 (M7): PATCH /api/rules/:id — actualizar únicamente `enabled`.
+// Solo admin. El resto de campos (patrón, severidad, regulación) es built-in.
+// El cambio es efectivo en el siguiente scan (resolveActiveRules lee BD).
+router.patch("/rules/:id", requireRole("admin"), async (req, res) => {
+  const { id } = UpdateRuleParams.parse(req.params);
+  const { enabled } = UpdateRuleBody.parse(req.body);
+
+  const updated = await repos.rules.setEnabled({ id, enabled, at: new Date() });
+  if (!updated) {
+    throw notFound("Rule not found");
+  }
+
+  res.json(UpdateRuleResponse.parse(mapRule(updated)));
+});
+
 router.post("/scans", requireRole("admin"), async (req, res) => {
   const { sourceId } = StartScanBody.parse(req.body);
 
   const result = await repos.scans.startScan({ sourceId, startedAt: new Date() });
   if (!result.ok) {
+    // FASE 7.0.5 (M2): 409 si ya hay un scan running para esta fuente
+    if (result.reason === "scan_already_running") {
+      throw conflict("A scan is already running for this source");
+    }
     throw notFound("Source not found");
   }
 
-  // El contrato mantiene el ciclo running → completed: se responde 202 en
-  // cuanto el escaneo está persistido y la finalización se actualiza en
-  // PostgreSQL (no en un objeto en memoria). No se inventan hallazgos:
-  // `findingsCreated` cuenta los findings ya persistidos de la fuente.
+  // Contrato: 202 en cuanto el scan `running` está persistido. FASE 7.0.1:
+  // la ejecución real la hace el scanner (fase 7.0.1) en background: lee la
+  // fuente PostgreSQL externa, aplica el catálogo de reglas y materializa
+  // findings; si la fuente no es escaneable o falla la conexión, marca
+  // `failed` con su causa. Nunca lanza tras la respuesta: los errores quedan
+  // registrados en el scan y en el log.
   res.status(202).json(StartScanResponse.parse(mapScan(result.scan)));
 
-  setTimeout(() => {
-    void repos.scans
-      .completeScan({ scanId: result.scan.id, completedAt: new Date() })
-      .then((completed) => {
-        if (!completed) {
-          logger.error({ scanId: result.scan.id }, "Scan to complete was not found");
-        }
-      })
-      .catch((error) => {
-        logger.error({ err: error, scanId: result.scan.id }, "Failed to complete scan");
-      });
-  }, 1500);
+  void runScan({ scanId: result.scan.id, sourceId }).catch((error) => {
+    logger.error({ err: error, scanId: result.scan.id }, "Scanner crashed");
+  });
 });
 
 router.get("/reports", async (req, res) => {
