@@ -462,6 +462,38 @@ export const ListRulesResponse = zod.array(ListRulesResponseItem)
 
 
 /**
+ * Scan executions, newest first. `status=queued` is accepted but never returned (no scan is ever created in queued state).
+ * @summary List scan history
+ */
+export const listScansQueryLimitDefault = 50;
+export const listScansQueryLimitMax = 100;
+
+export const listScansQueryOffsetDefault = 0;
+export const listScansQueryOffsetMin = 0;
+
+
+
+export const ListScansQueryParams = zod.object({
+  "sourceId": zod.coerce.string().optional(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']).optional(),
+  "limit": zod.coerce.number().int().min(1).max(listScansQueryLimitMax).default(listScansQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listScansQueryOffsetMin).default(listScansQueryOffsetDefault)
+})
+
+export const ListScansResponseItem = zod.object({
+  "id": zod.string(),
+  "sourceId": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "startedAt": zod.string(),
+  "completedAt": zod.string().nullish(),
+  "findingsCreated": zod.number().optional(),
+  "tablesScanned": zod.number(),
+  "recordsRead": zod.number()
+})
+export const ListScansResponse = zod.array(ListScansResponseItem)
+
+
+/**
  * @summary Start a privacy scan
  */
 export const StartScanBody = zod.object({
@@ -474,7 +506,28 @@ export const StartScanResponse = zod.object({
   "status": zod.enum(['queued', 'running', 'completed', 'failed']),
   "startedAt": zod.string(),
   "completedAt": zod.string().nullish(),
-  "findingsCreated": zod.number().optional()
+  "findingsCreated": zod.number().optional(),
+  "tablesScanned": zod.number(),
+  "recordsRead": zod.number()
+})
+
+
+/**
+ * @summary Get one scan
+ */
+export const GetScanParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetScanResponse = zod.object({
+  "id": zod.string(),
+  "sourceId": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "startedAt": zod.string(),
+  "completedAt": zod.string().nullish(),
+  "findingsCreated": zod.number().optional(),
+  "tablesScanned": zod.number(),
+  "recordsRead": zod.number()
 })
 
 

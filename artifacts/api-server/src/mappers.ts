@@ -60,7 +60,9 @@ export function mapRule(rule: Rule) {
 }
 
 /** D5: `findingsCreated` es opcional en el contrato pero NOT NULL con
- * default 0 en la BD; se expone siempre. */
+ * default 0 en la BD; se expone siempre. FASE 7.1.1 (M1): el contrato `Scan`
+ * extendido expone además el progreso acumulado del último latido
+ * (`tablesScanned`/`recordsRead`, NOT NULL con default 0). */
 export function mapScan(scan: Scan) {
   return {
     id: scan.id,
@@ -69,6 +71,8 @@ export function mapScan(scan: Scan) {
     startedAt: scan.startedAt.toISOString(),
     completedAt: scan.completedAt ? scan.completedAt.toISOString() : null,
     findingsCreated: scan.findingsCreated,
+    tablesScanned: scan.tablesScanned,
+    recordsRead: scan.recordsRead,
   };
 }
 

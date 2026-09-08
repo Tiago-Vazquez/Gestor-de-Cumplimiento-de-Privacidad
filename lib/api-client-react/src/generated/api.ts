@@ -33,6 +33,7 @@ import type {
   ListFindingsParams,
   ListReportsParams,
   ListRulesParams,
+  ListScansParams,
   ListSourcesParams,
   ListUsersParams,
   MaskingInput,
@@ -1531,6 +1532,91 @@ export function useListRules<TData = Awaited<ReturnType<typeof listRules>>, TErr
 
 
 
+export const getListScansUrl = (params?: ListScansParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/scans?${stringifiedParams}` : `/api/scans`
+}
+
+/**
+ * Scan executions, newest first. `status=queued` is accepted but never returned (no scan is ever created in queued state).
+ * @summary List scan history
+ */
+export const listScans = async (params?: ListScansParams, options?: Parameters<typeof customFetch>[1]): Promise<Scan[]> => {
+
+  return customFetch<Scan[]>(getListScansUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListScansQueryKey = (params?: ListScansParams,) => {
+    return [
+    `/api/scans`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListScansQueryOptions = <TData = Awaited<ReturnType<typeof listScans>>, TError = ErrorType<unknown>>(params?: ListScansParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScans>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListScansQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listScans>>> = ({ signal }) => listScans(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listScans>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListScansQueryResult = NonNullable<Awaited<ReturnType<typeof listScans>>>
+export type ListScansQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary List scan history
+ */
+
+export function useListScans<TData = Awaited<ReturnType<typeof listScans>>, TError = ErrorType<unknown>>(
+ params?: ListScansParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listScans>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListScansQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getStartScanUrl = () => {
 
 
@@ -1601,6 +1687,83 @@ export const useStartScan = <TError = ErrorType<void>,
       > => {
       return useMutation(getStartScanMutationOptions(options));
     }
+
+export const getGetScanUrl = (id: string,) => {
+
+
+
+
+  return `/api/scans/${id}`
+}
+
+/**
+ * @summary Get one scan
+ */
+export const getScan = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<Scan> => {
+
+  return customFetch<Scan>(getGetScanUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScanQueryKey = (id: string,) => {
+    return [
+    `/api/scans/${id}`
+    ] as const;
+    }
+
+
+export const getGetScanQueryOptions = <TData = Awaited<ReturnType<typeof getScan>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScanQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScan>>> = ({ signal }) => getScan(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScan>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetScanQueryResult = NonNullable<Awaited<ReturnType<typeof getScan>>>
+export type GetScanQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get one scan
+ */
+
+export function useGetScan<TData = Awaited<ReturnType<typeof getScan>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getScan>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetScanQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getUpdateRuleUrl = (id: string,) => {
 

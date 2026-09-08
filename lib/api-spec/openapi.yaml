@@ -444,6 +444,39 @@ paths:
                 items:
                   $ref: "#/components/schemas/Rule"
   /scans:
+    get:
+      operationId: listScans
+      tags: [sources]
+      summary: List scan history
+      description: >-
+        Scan executions, newest first. `status=queued` is accepted but never
+        returned (no scan is ever created in queued state).
+      parameters:
+        - name: sourceId
+          in: query
+          required: false
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [queued, running, completed, failed] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Scan history (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Scan"
     post:
       operationId: startScan
       tags: [sources]
@@ -463,6 +496,25 @@ paths:
                 $ref: "#/components/schemas/Scan"
         "409":
           description: A scan is already running for this source
+  /scans/{id}:
+    get:
+      operationId: getScan
+      tags: [sources]
+      summary: Get one scan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Scan detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "404":
+          description: Scan not found
   /rules/{id}:
     patch:
       operationId: updateRule
@@ -814,7 +866,7 @@ components:
         sourceId: { type: string }
     Scan:
       type: object
-      required: [id, sourceId, status, startedAt]
+      required: [id, sourceId, status, startedAt, tablesScanned, recordsRead]
       properties:
         id: { type: string }
         sourceId: { type: string }
@@ -822,6 +874,8 @@ components:
         startedAt: { type: string }
         completedAt: { type: ["string", "null"] }
         findingsCreated: { type: number }
+        tablesScanned: { type: number }
+        recordsRead: { type: number }
     ReportInput:
       type: object
       required: [name, period]

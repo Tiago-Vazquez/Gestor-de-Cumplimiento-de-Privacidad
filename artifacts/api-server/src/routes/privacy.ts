@@ -3,11 +3,15 @@ import {
   CreateReportBody,
   GetActivityResponse,
   GetDashboardResponse,
+  GetScanParams,
+  GetScanResponse,
   ListFindingsQueryParams,
   ListFindingsResponse,
   ListReportsResponse,
   ListReportsResponseItem,
   ListRulesResponse,
+  ListScansQueryParams,
+  ListScansResponse,
   ListSourcesResponse,
   PreviewMaskingBody,
   PreviewMaskingResponse,
@@ -130,6 +134,27 @@ router.post("/scans", requireRole("admin"), async (req, res) => {
   void runScan({ scanId: result.scan.id, sourceId }).catch((error) => {
     logger.error({ err: error, scanId: result.scan.id }, "Scanner crashed");
   });
+});
+
+// FASE 7.1.1 (M1): historial de scans — lectura para cualquier usuario
+// autenticado (igual que /sources y /findings). Orden newest-first; filtros
+// exactos sourceId/status ya validados por el contrato; paginación en SQL.
+router.get("/scans", async (req, res) => {
+  const params = ListScansQueryParams.parse(req.query);
+  const rows = await repos.scans.list(
+    { sourceId: params.sourceId, status: params.status },
+    parsePagination(req.query),
+  );
+  res.json(ListScansResponse.parse(rows.map(mapScan)));
+});
+
+router.get("/scans/:id", async (req, res) => {
+  const { id } = GetScanParams.parse(req.params);
+  const scan = await repos.scans.getById(id);
+  if (!scan) {
+    throw notFound("Scan not found");
+  }
+  res.json(GetScanResponse.parse(mapScan(scan)));
 });
 
 router.get("/reports", async (req, res) => {

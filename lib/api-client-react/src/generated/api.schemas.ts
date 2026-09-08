@@ -406,6 +406,8 @@ export interface Scan {
   /** @nullable */
   completedAt?: string | null;
   findingsCreated?: number;
+  tablesScanned: number;
+  recordsRead: number;
 }
 
 export type ReportInputPeriod = typeof ReportInputPeriod[keyof typeof ReportInputPeriod];
@@ -544,6 +546,30 @@ limit?: number;
  */
 offset?: number;
 };
+
+export type ListScansParams = {
+sourceId?: string;
+status?: ListScansStatus;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListScansStatus = typeof ListScansStatus[keyof typeof ListScansStatus];
+
+
+export const ListScansStatus = {
+  queued: 'queued',
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
 
 export type ListReportsParams = {
 /**

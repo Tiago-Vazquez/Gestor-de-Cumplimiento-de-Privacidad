@@ -34,6 +34,8 @@ export * from './listFindingsSeverity';
 export * from './listFindingsStatus';
 export * from './listReportsParams';
 export * from './listRulesParams';
+export * from './listScansParams';
+export * from './listScansStatus';
 export * from './listSourcesParams';
 export * from './listUsersParams';
 export * from './localLoginInput';

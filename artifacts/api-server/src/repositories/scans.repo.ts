@@ -1,4 +1,4 @@
-import { and, count, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import {
   activityTable,
   db,
@@ -9,6 +9,7 @@ import {
   type Scan,
 } from "@workspace/db";
 import { newId } from "./ids";
+import type { Pagination } from "../lib/pagination";
 
 export type StartScanResult =
   | { ok: true; scan: Scan; sourceName: string; sourceTables: number }
@@ -240,4 +241,43 @@ export async function heartbeatScan({
     .update(scansTable)
     .set({ heartbeatAt: at, tablesScanned, recordsRead })
     .where(and(eq(scansTable.id, scanId), eq(scansTable.status, "running")));
+}
+
+/**
+ * FASE 7.1.1 (M1): historial de scans. Filtros exactos por `sourceId` y
+ * `status` (ya validados por el contrato en la ruta), orden `startedAt DESC,
+ * id DESC` — un historial se lee de lo más reciente a lo más antiguo, y el id
+ * como tiebreak garantiza paginación estable ante timestamps idénticos
+ * (decisión D2; el resto de listados de la API es ASC porque son catálogos,
+ * esto es una bitácora). Paginación aplicada en SQL.
+ */
+export async function list(
+  filters: { sourceId?: string; status?: string } = {},
+  pagination?: Pagination,
+): Promise<Scan[]> {
+  let query = db
+    .select()
+    .from(scansTable)
+    .where(
+      and(
+        filters.sourceId ? eq(scansTable.sourceId, filters.sourceId) : undefined,
+        filters.status ? eq(scansTable.status, filters.status) : undefined,
+      ),
+    )
+    .orderBy(desc(scansTable.startedAt), desc(scansTable.id))
+    .$dynamic();
+  if (pagination) {
+    query = query.limit(pagination.limit).offset(pagination.offset);
+  }
+  return query;
+}
+
+/** FASE 7.1.1 (M1): detalle de un scan por id (null si no existe). */
+export async function getById(id: string): Promise<Scan | null> {
+  const [scan] = await db
+    .select()
+    .from(scansTable)
+    .where(eq(scansTable.id, id))
+    .limit(1);
+  return scan ?? null;
 }

@@ -15,4 +15,6 @@ export interface Scan {
   /** @nullable */
   completedAt?: string | null;
   findingsCreated?: number;
+  tablesScanned: number;
+  recordsRead: number;
 }

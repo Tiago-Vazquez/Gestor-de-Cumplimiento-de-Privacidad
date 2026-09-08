@@ -411,6 +411,31 @@ export function createMockRepos() {
         scan.recordsRead = recordsRead;
       },
 
+      // FASE 7.1.1 (M1): historial — réplica del repo real: filtros exactos,
+      // orden startedAt DESC con id DESC como tiebreak, paginación en memoria.
+      async list(
+        filters: { sourceId?: string; status?: string } = {},
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+      ) {
+        return state.scans
+          .filter(
+            (scan) =>
+              (!filters.sourceId || scan.sourceId === filters.sourceId) &&
+              (!filters.status || scan.status === filters.status),
+          )
+          .sort(
+            (a, b) =>
+              b.startedAt.getTime() - a.startedAt.getTime() ||
+              b.id.localeCompare(a.id),
+          )
+          .slice(pagination.offset, pagination.offset + pagination.limit);
+      },
+
+      // FASE 7.1.1 (M1): detalle por id (null si no existe).
+      async getById(id: string) {
+        return state.scans.find((scan) => scan.id === id) ?? null;
+      },
+
       // FASE 7.0.4 (refinado 7.1.0 M0): recuperación de huérfanos — marca
       // `failed(timeout)` los scans `running` cuyo último signo de vida
       // (heartbeatAt con fallback a startedAt, réplica del COALESCE del repo
