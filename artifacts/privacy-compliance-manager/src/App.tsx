@@ -19,6 +19,7 @@ import SourcesPage from '@/pages/sources';
 import RulesPage from '@/pages/rules';
 import MaskingPage from '@/pages/masking';
 import ReportsPage from '@/pages/reports';
+import ScansPage from '@/pages/scans';
 import UsersPage from '@/pages/users';
 import NotFound from '@/pages/not-found';
 import {
@@ -122,6 +123,7 @@ function Router() {
         <Route path="/rules" component={RulesPage} />
         <Route path="/masking" component={MaskingPage} />
         <Route path="/reports" component={ReportsPage} />
+        <Route path="/scans" component={ScansPage} />
         <Route path="/users" component={UsersPage} />
         <Route component={NotFound} />
       </Switch>

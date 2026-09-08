@@ -43,7 +43,7 @@ function ActivityFeed({ activities, loading }: { activities?: Activity[]; loadin
 
 export default function DashboardPage() {
   const dashboardQuery = useGetDashboard({ query: { queryKey: getGetDashboardQueryKey(), refetchInterval: 10_000 } });
-  const activityQuery = useGetActivity({ query: { queryKey: getGetActivityQueryKey(), refetchInterval: 10_000 } });
+  const activityQuery = useGetActivity(undefined, { query: { queryKey: getGetActivityQueryKey(), refetchInterval: 10_000 } });
   const dashboard = dashboardQuery.data;
   return <section className="page-in mx-auto max-w-[1440px] px-5 py-8 md:px-9 md:py-10">
     <PageHeading eyebrow={`Vista de control · ${formatHeaderDate()}`} title="Siempre un paso adelante." description="El pulso de tus datos sensibles, reunido en un solo lugar." action={<div className="flex items-center gap-2 rounded-full border border-[#bcded6] bg-[#eff9f6] px-3 py-2 text-xs font-semibold text-[#267a6d]"><span className="h-2 w-2 animate-pulse rounded-full bg-[#31a886]" /> Monitoreo activo</div>} />
@@ -61,7 +61,7 @@ export default function DashboardPage() {
       <div className="mt-6 grid gap-6 lg:grid-cols-[1.4fr_.6fr]">
         <div className="rounded-2xl border border-card-border bg-card p-5 shadow-[var(--shadow-card)]">
           <div className="flex items-start justify-between"><div><p className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Cadencia operativa</p><h2 className="mt-1 font-display text-lg font-bold tracking-[-0.03em]">Cobertura de escaneo</h2></div><TimerReset size={19} className="text-primary" /></div>
-          <div className="mt-7 flex items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 px-5 py-10 text-center"><div><p className="text-sm font-bold">{dashboard.scanStatus === 'scanning' ? 'Escaneo en curso' : 'Monitoreo activo'}</p><p className="mt-1.5 text-xs leading-5 text-muted-foreground">El histórico de cobertura aparecerá cuando el motor de escaneo registre ejecuciones sobre las fuentes.</p></div></div>
+          <div className="mt-7 flex items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 px-5 py-10 text-center"><div><p className="text-sm font-bold">{dashboard.scanStatus === 'scanning' ? 'Escaneo en curso' : 'Monitoreo activo'}</p><p className="mt-1.5 text-xs leading-5 text-muted-foreground">El histórico de cobertura aparecerá cuando el motor de escaneo registre ejecuciones sobre las fuentes.</p><Link href="/scans" className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:underline" data-testid="link-view-scans">Ver historial de escaneos <ArrowRight size={13} /></Link></div></div>
         </div>
         <div className="rounded-2xl border border-[#c9ded9] bg-[#edf8f4] p-5 shadow-[var(--shadow-card)]"><div className="grid h-9 w-9 place-items-center rounded-xl bg-[#d4eee6] text-[#237b6c]"><LockKeyhole size={18} /></div><h2 className="mt-6 font-display text-xl font-bold tracking-[-0.04em] text-[#194b4b]">La privacidad no espera.</h2><p className="mt-2 text-sm leading-6 text-[#4c7470]">Hay {dashboard.criticalFindings} hallazgos críticos que necesitan una decisión hoy.</p><Link href="/findings" className="mt-6 inline-flex items-center gap-2 text-xs font-bold text-[#237b6c] hover:gap-3" data-testid="link-review-critical">Revisar prioridad <ArrowRight size={14} /></Link></div>
       </div>

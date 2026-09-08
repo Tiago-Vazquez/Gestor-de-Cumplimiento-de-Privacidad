@@ -1,4 +1,4 @@
-import { Bell, Command, Database, FileBarChart2, Fingerprint, Gauge, Layers3, LogOut, Menu, Radar, Search, ShieldCheck, Sparkles, Users, X } from 'lucide-react';
+import { Bell, Command, Database, FileBarChart2, Fingerprint, Gauge, History, Layers3, LogOut, Menu, Radar, Search, ShieldCheck, Sparkles, Users, X } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { Link, useLocation } from 'wouter';
 import { getGetDashboardQueryKey, useGetDashboard, useHealthCheck } from '@workspace/api-client-react';
@@ -11,6 +11,7 @@ const navItems = [
   { href: '/rules', label: 'Reglas', icon: Layers3 },
   { href: '/masking', label: 'Anonimización', icon: Fingerprint },
   { href: '/reports', label: 'Informes', icon: FileBarChart2 },
+  { href: '/scans', label: 'Escaneos', icon: History },
 ];
 
 const adminNavItems = [
