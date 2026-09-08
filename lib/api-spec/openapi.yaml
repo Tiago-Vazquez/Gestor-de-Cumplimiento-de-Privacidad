@@ -515,6 +515,32 @@ paths:
                 $ref: "#/components/schemas/Scan"
         "404":
           description: Scan not found
+  /scans/{id}/cancel:
+    post:
+      operationId: cancelScan
+      tags: [sources]
+      summary: Request cooperative cancellation of a running scan
+      description: >-
+        Admin only. Sets the cancellation flag; the scanner stops at its next
+        yield point (within one heartbeat interval) and finalizes as `failed`
+        (reason `cancelled`). Idempotent while the scan is still running;
+        409 once the scan reached a terminal state on its own.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "202":
+          description: Cancellation requested (scan still running)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scan"
+        "404":
+          description: Scan not found
+        "409":
+          description: Scan already reached a terminal state
   /rules/{id}:
     patch:
       operationId: updateRule

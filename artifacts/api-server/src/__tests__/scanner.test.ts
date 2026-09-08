@@ -636,3 +636,151 @@ describe("heartbeat del scanner (FASE 7.1.0 M0)", () => {
     expect(scan?.recordsRead).toBe(0);
   });
 });
+
+describe("cancelación cooperativa (FASE 7.1.2 M2)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function fullPage(): Record<string, unknown>[] {
+    return Array.from({ length: PAGE_SIZE }, () => ({ id: 1 }));
+  }
+
+  it("YIELD B: cancelación tras una página → deja de leer, failed(cancelled), sin finalize", async () => {
+    addScannableSource("src-cancel-b");
+    addRunningScan("scan-c1", "src-cancel-b");
+    const scans = reposPatch().scans;
+    const failSpy = vi.spyOn(scans, "failScan");
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    vi.mocked(listTables).mockResolvedValue(["users"]);
+    const conn: PgConnection = {
+      query: vi.fn().mockResolvedValue([]),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const pages = [fullPage(), fullPage(), []];
+    let page = 0;
+    const connector: PgConnector = {
+      connect: vi.fn().mockResolvedValue(conn),
+      listTables: vi.fn().mockResolvedValue(["users"]),
+      readPage: vi.fn().mockImplementation(async () => {
+        const current = pages[Math.min(page, pages.length - 1)] ?? [];
+        page += 1;
+        return current;
+      }),
+    };
+    let beat = 0;
+    // El flag llega a BD en el 3er latido (inicial + página 1 + página 2):
+    // el scanner debe detenerse tras leer la 2ª página.
+    vi.spyOn(scans, "heartbeatScan").mockImplementation(async () => {
+      beat += 1;
+      if (beat >= 3) {
+        const marked = state().scans.find((item) => item.id === "scan-c1");
+        if (marked) marked.cancelRequested = true;
+      }
+      const scan = state().scans.find((item) => item.id === "scan-c1");
+      return scan ?? null;
+    });
+
+    await runScan({ scanId: "scan-c1", sourceId: "src-cancel-b", connector, heartbeatIntervalMs: 0 });
+
+    expect((connector.readPage as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+    expect(conn.close).toHaveBeenCalled();
+    expect(finalizeSpy).not.toHaveBeenCalled();
+    expect(failSpy).toHaveBeenCalledWith(expect.objectContaining({ reason: "cancelled" }));
+    const scan = state().scans.find((item) => item.id === "scan-c1");
+    expect(scan?.status).toBe("failed");
+  });
+
+  it("YIELD A: cancelación antes de la primera tabla → 0 lecturas, failed(cancelled)", async () => {
+    addScannableSource("src-cancel-a");
+    addRunningScan("scan-c2", "src-cancel-a");
+    const scans = reposPatch().scans;
+    const failSpy = vi.spyOn(scans, "failScan");
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    vi.mocked(listTables).mockResolvedValue(["users"]);
+    const conn: PgConnection = {
+      query: vi.fn().mockResolvedValue([]),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const connector: PgConnector = {
+      connect: vi.fn().mockResolvedValue(conn),
+      listTables: vi.fn().mockResolvedValue(["users"]),
+      readPage: vi.fn(),
+    };
+    // El flag ya está en BD cuando ocurre el latido inicial (forzado).
+    vi.spyOn(scans, "heartbeatScan").mockImplementation(async () => {
+      const scan = state().scans.find((item) => item.id === "scan-c2");
+      if (scan) scan.cancelRequested = true;
+      return scan ?? null;
+    });
+
+    await runScan({ scanId: "scan-c2", sourceId: "src-cancel-a", connector, heartbeatIntervalMs: 0 });
+
+    expect((connector.readPage as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(conn.close).toHaveBeenCalled();
+    expect(finalizeSpy).not.toHaveBeenCalled();
+    expect(failSpy).toHaveBeenCalledWith(expect.objectContaining({ reason: "cancelled" }));
+  });
+
+  it("heartbeatScan devolviendo undefined (spies legados) nunca cancela", async () => {
+    addScannableSource("src-cancel-u");
+    addRunningScan("scan-c3", "src-cancel-u");
+    const scans = reposPatch().scans;
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    const failSpy = vi.spyOn(scans, "failScan");
+    vi.spyOn(scans, "heartbeatScan").mockResolvedValue(undefined);
+    vi.mocked(listTables).mockResolvedValue(["users"]);
+    const connector = fakeConnector(["users"], [[{ contact: "a@b.com" }], []]);
+
+    await runScan({ scanId: "scan-c3", sourceId: "src-cancel-u", connector, heartbeatIntervalMs: 0 });
+
+    const scan = state().scans.find((item) => item.id === "scan-c3");
+    expect(scan?.status).toBe("completed");
+    expect(finalizeSpy).toHaveBeenCalledTimes(1);
+    expect(failSpy).not.toHaveBeenCalled();
+  });
+
+  it("cancelación posterior al último yield: finalize gana la carrera (escenario B)", async () => {
+    addScannableSource("src-cancel-late");
+    addRunningScan("scan-c4", "src-cancel-late");
+    const scans = reposPatch().scans;
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    const failSpy = vi.spyOn(scans, "failScan");
+    vi.mocked(listTables).mockResolvedValue(["users"]);
+    const connector = fakeConnector(["users"], [[{ contact: "a@b.com" }], []]);
+    // El flag ya está en BD, pero el scanner no volverá a latir tras su última
+    // lectura: el spy devuelve la fila "congelada" sin flag (como el RETURNING
+    // de un latido previo a la cancelación) → finalize gana → completed.
+    state().scans.find((item) => item.id === "scan-c4")!.cancelRequested = true;
+    vi.spyOn(scans, "heartbeatScan").mockImplementation(async () => {
+      const scan = state().scans.find((item) => item.id === "scan-c4");
+      return scan ? { ...scan, cancelRequested: false } : null;
+    });
+
+    await runScan({ scanId: "scan-c4", sourceId: "src-cancel-late", connector, heartbeatIntervalMs: 60_000 });
+
+    const scan = state().scans.find((item) => item.id === "scan-c4");
+    expect(scan?.status).toBe("completed");
+    expect(finalizeSpy).toHaveBeenCalledTimes(1);
+    expect(failSpy).not.toHaveBeenCalled();
+  });
+
+  it("D2: failScan no sobrescribe un scan terminal ni duplica actividad", async () => {
+    addRunningScan("scan-d2", "src-scan-unit");
+    const terminal = state().scans.find((item) => item.id === "scan-d2")!;
+    terminal.status = "completed";
+    terminal.completedAt = new Date();
+    const scans = reposPatch().scans;
+    const activityBefore = state().activity.length;
+
+    const result = (await scans.failScan({
+      scanId: "scan-d2",
+      completedAt: new Date(),
+      reason: "cancelled",
+    })) as { status?: string } | null;
+
+    expect(result?.status).toBe("completed");
+    expect(state().scans.find((item) => item.id === "scan-d2")?.status).toBe("completed");
+    expect(state().activity.length).toBe(activityBefore);
+  });
+});

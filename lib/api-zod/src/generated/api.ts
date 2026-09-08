@@ -532,6 +532,26 @@ export const GetScanResponse = zod.object({
 
 
 /**
+ * Admin only. Sets the cancellation flag; the scanner stops at its next yield point (within one heartbeat interval) and finalizes as `failed` (reason `cancelled`). Idempotent while the scan is still running; 409 once the scan reached a terminal state on its own.
+ * @summary Request cooperative cancellation of a running scan
+ */
+export const CancelScanParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const CancelScanResponse = zod.object({
+  "id": zod.string(),
+  "sourceId": zod.string(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed']),
+  "startedAt": zod.string(),
+  "completedAt": zod.string().nullish(),
+  "findingsCreated": zod.number().optional(),
+  "tablesScanned": zod.number(),
+  "recordsRead": zod.number()
+})
+
+
+/**
  * FASE 7.0.5: actualiza únicamente el campo `enabled` de una regla.
  * Solo este campo es gobernable desde la API; el resto (patrón, severidad,
  * regulación) es built-in. El cambio es efectivo en el siguiente scan.

@@ -52,7 +52,7 @@ function addScan(
   sourceId: string,
   status: "running" | "completed" | "failed",
   startedAt: Date,
-  opts?: { heartbeatAt?: Date | null },
+  opts?: { heartbeatAt?: Date | null; cancelRequested?: boolean },
 ): void {
   state().scans.push({
     id,
@@ -65,7 +65,7 @@ function addScan(
     heartbeatAt: opts?.heartbeatAt ?? null,
     tablesScanned: 0,
     recordsRead: 0,
-    cancelRequested: false,
+    cancelRequested: opts?.cancelRequested ?? false,
   });
 }
 
@@ -236,6 +236,23 @@ describe("criterio heartbeat (FASE 7.1.0 M0)", () => {
 
     expect(recovered.map((scan) => scan.id)).toEqual(["scan-legacy"]);
     expect(state().scans[0]?.status).toBe("failed");
+  });
+
+  // FASE 7.1.2 (M2): el flag de cancelación NO altera el criterio del reaper —
+  // un scan marcado como cancelado que quedó muerto (liveness vencido, p. ej.
+  // el proceso murió antes de ver el flag) se reapea igualmente failed(timeout).
+  it("cancelRequested=true no impide el reapeo por liveness vencido", async () => {
+    const now = new Date();
+    addScan("scan-cancel-stale", "src-001", "running", new Date(now.getTime() - SCAN_RUNNING_TTL_MS - 1_000), {
+      heartbeatAt: new Date(now.getTime() - SCAN_RUNNING_TTL_MS - 1_000),
+      cancelRequested: true,
+    });
+
+    const recovered = await recoverStaleRunningScans(now);
+
+    expect(recovered.map((scan) => scan.id)).toContain("scan-cancel-stale");
+    const scan = state().scans.find((item) => item.id === "scan-cancel-stale");
+    expect(scan?.status).toBe("failed");
   });
 });
 

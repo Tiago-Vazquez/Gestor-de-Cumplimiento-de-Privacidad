@@ -204,12 +204,15 @@ function capFirst(value: string): string {
 
 /**
  * Razones terminales de fallo de un scan (HIGH #2, 7.0.2).
+ * FASE 7.1.2 (M2): `cancelled` — cancelación cooperativa aceptada y detectada
+ * por el scanner en un punto de yield.
  */
 type FailReason =
   | "source_not_found"
   | "source_not_scannable"
   | "connection_failed"
-  | "persist_failed";
+  | "persist_failed"
+  | "cancelled";
 
 /**
  * Marca un scan como `failed` garantizando que un fallo del propio `failScan`
@@ -287,18 +290,25 @@ async function runScanInner(input: RunScanInput): Promise<void> {
   const heartbeatIntervalMs = input.heartbeatIntervalMs ?? scanHeartbeatIntervalMs();
   let lastHeartbeatAt = 0;
   let heartbeatBroken = false;
+  // FASE 7.1.2 (M2): flag local de cancelación — el latido devuelve la fila
+  // post-update (UPDATE … RETURNING) y su `cancelRequested` vigente propaga la
+  // solicitud a los puntos de yield. Cero polling y cero queries extra.
+  let cancelRequested = false;
   const heartbeat = async (force: boolean): Promise<void> => {
     if (heartbeatBroken) return;
     const now = Date.now();
     if (!force && now - lastHeartbeatAt < heartbeatIntervalMs) return;
     lastHeartbeatAt = now;
     try {
-      await repos.scans.heartbeatScan({
+      // Tolerante a undefined/null (spies de tests legados, scan ya no
+      // running): en ese caso este latido simplemente no aporta señal.
+      const row = await repos.scans.heartbeatScan({
         scanId: input.scanId,
         at: new Date(now),
         tablesScanned: scannedTables.length,
         recordsRead,
       });
+      if (row?.cancelRequested) cancelRequested = true;
     } catch (error) {
       heartbeatBroken = true;
       logger.error(
@@ -308,10 +318,12 @@ async function runScanInner(input: RunScanInput): Promise<void> {
     }
   };
 
-  try {
+  scanTables: try {
     connection = await connector.connect(config);
     tables = await listTables(connection, schema);
     await heartbeat(true);
+    // FASE 7.1.2 (M2) YIELD A: cancelación solicitada antes de la primera tabla.
+    if (cancelRequested) break scanTables;
     for (const table of tables.slice(0, MAX_TABLES_PER_SCAN)) {
       let offset = 0;
       let tableCompleted = true;
@@ -322,11 +334,15 @@ async function runScanInner(input: RunScanInput): Promise<void> {
         detectRows(table, rows, rules, matches);
         offset += PAGE_SIZE;
         await heartbeat(false);
+        // FASE 7.1.2 (M2) YIELD B: cancelación tras una página leída.
+        if (cancelRequested) break scanTables;
         if (rows.length < PAGE_SIZE) break;
       }
       if (tableCompleted) {
         scannedTables.push(table);
         await heartbeat(false);
+        // FASE 7.1.2 (M2) YIELD C: cancelación tras completar una tabla.
+        if (cancelRequested) break scanTables;
       }
     }
 
@@ -354,6 +370,15 @@ async function runScanInner(input: RunScanInput): Promise<void> {
   if (connection) {
     await connection.close().catch((error) =>
       logger.error({ err: error, scanId: input.scanId }, "Error closing scan connection"));
+  }
+
+  // FASE 7.1.2 (M2, D3): cancelación cooperativa — la solicitud fue aceptada
+  // (cancel_requested = true) y el scanner la detectó en un yield: se detiene
+  // el trabajo, NO se calculan/persisten hallazgos parciales y el scan
+  // termina `failed(cancelled)` SIN pasar por finalizeScan.
+  if (cancelRequested) {
+    await failScanSafe(input.scanId, input.sourceId, "cancelled");
+    return;
   }
 
   const findings = [...matches.values()]

@@ -16,6 +16,16 @@ export type StartScanResult =
   | { ok: false; reason: "source_not_found" | "scan_already_running" };
 
 /**
+ * FASE 7.1.2 (M2): resultado de una solicitud de cancelación cooperativa.
+ * La cancelación NO cambia el status desde el endpoint — solo marca el flag;
+ * la terminación `failed(cancelled)` la ejecuta el scanner en su siguiente
+ * punto de yield (o el reaper si el scanner murió).
+ */
+export type CancelScanResult =
+  | { ok: true; scan: Scan }
+  | { ok: false; reason: "scan_not_found" | "scan_not_running" };
+
+/**
  * Inicia un escaneo de forma atómica: crea el scan en estado `running`,
  * marca `last_scan_at` en la fuente y registra el evento de actividad.
  * Devuelve `source_not_found` si la fuente no existe (el handler responderá
@@ -142,6 +152,12 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
  * FASE 7.0.1: marca un escaneo como `failed` con su causa y registra el evento
  * de actividad. `completedAt` se fija al instante del fallo para cerrar el
  * ciclo en la vista de scans.
+ *
+ * FASE 7.1.2 (M2, D2): guard de estado — el UPDATE exige `status='running'`,
+ * de modo que una finalización tardía (p. ej. `failed(cancelled)` de un
+ * scanner lento tras un reapeo `failed(timeout)`) NO sobrescribe un estado
+ * terminal ya producido ni duplica la actividad de cierre. En ese caso
+ * devuelve la fila terminal existente sin tocar nada.
  */
 export async function failScan({
   scanId,
@@ -150,12 +166,17 @@ export async function failScan({
 }: {
   scanId: string;
   completedAt: Date;
-  reason: "source_not_found" | "source_not_scannable" | "connection_failed" | "persist_failed";
+  reason: "source_not_found" | "source_not_scannable" | "connection_failed" | "persist_failed" | "cancelled";
 }): Promise<Scan | null> {
   return db.transaction(async (tx) => {
     const [scan] = await tx.select().from(scansTable).where(eq(scansTable.id, scanId));
     if (!scan) return null;
-    const [updated] = await tx.update(scansTable).set({ status: "failed", completedAt }).where(eq(scansTable.id, scanId)).returning();
+    const [updated] = await tx
+      .update(scansTable)
+      .set({ status: "failed", completedAt })
+      .where(and(eq(scansTable.id, scanId), eq(scansTable.status, "running")))
+      .returning();
+    if (!updated) return scan;
     const [source] = await tx.select().from(sourcesTable).where(eq(sourcesTable.id, scan.sourceId));
     if (source) {
       await tx.insert(activityTable).values({
@@ -225,6 +246,10 @@ export async function failStaleRunningScans({
  * el progreso acumulado SOLO si el scan sigue `running` — la condición vive en
  * el propio WHERE, de modo que un scan que terminó entre medias no se toca
  * (0 filas, sin error). Statement único, idempotente, sin transacción.
+ *
+ * FASE 7.1.2 (M2): devuelve la fila post-update (`UPDATE … RETURNING`) para
+ * que el scanner lea el `cancelRequested` vigente SIN consultas extra. `null`
+ * = 0 filas (scan inexistente o ya no running).
  */
 export async function heartbeatScan({
   scanId,
@@ -236,11 +261,13 @@ export async function heartbeatScan({
   at: Date;
   tablesScanned: number;
   recordsRead: number;
-}): Promise<void> {
-  await db
+}): Promise<Scan | null> {
+  const [updated] = await db
     .update(scansTable)
     .set({ heartbeatAt: at, tablesScanned, recordsRead })
-    .where(and(eq(scansTable.id, scanId), eq(scansTable.status, "running")));
+    .where(and(eq(scansTable.id, scanId), eq(scansTable.status, "running")))
+    .returning();
+  return updated ?? null;
 }
 
 /**
@@ -280,4 +307,37 @@ export async function getById(id: string): Promise<Scan | null> {
     .where(eq(scansTable.id, id))
     .limit(1);
   return scan ?? null;
+}
+
+/**
+ * FASE 7.1.2 (M2): solicita la cancelación cooperativa de un scan. Transacción
+ * con `FOR UPDATE` para serializar frente al reaper y frente a dobles
+ * solicitudes. Marca `cancel_requested = true` SIN cambiar el status — la
+ * terminación la ejecuta el scanner en su siguiente yield (o el reaper si
+ * murió). Idempotente: pedir cancel dos veces mientras siga `running` es un
+ * éxito (segunda llamada retorna el scan ya marcado).
+ */
+export async function requestCancel({
+  scanId,
+}: {
+  scanId: string;
+}): Promise<CancelScanResult> {
+  return db.transaction(async (tx) => {
+    const [scan] = await tx
+      .select()
+      .from(scansTable)
+      .where(eq(scansTable.id, scanId))
+      .for("update");
+    if (!scan) return { ok: false, reason: "scan_not_found" as const };
+    if (scan.status !== "running") {
+      return { ok: false, reason: "scan_not_running" as const };
+    }
+    if (scan.cancelRequested) return { ok: true, scan };
+    const [updated] = await tx
+      .update(scansTable)
+      .set({ cancelRequested: true })
+      .where(eq(scansTable.id, scanId))
+      .returning();
+    return { ok: true, scan: updated };
+  });
 }

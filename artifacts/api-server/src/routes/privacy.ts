@@ -1,5 +1,7 @@
 import { Router, type IRouter } from "express";
 import {
+  CancelScanParams,
+  CancelScanResponse,
   CreateReportBody,
   GetActivityResponse,
   GetDashboardResponse,
@@ -155,6 +157,23 @@ router.get("/scans/:id", async (req, res) => {
     throw notFound("Scan not found");
   }
   res.json(GetScanResponse.parse(mapScan(scan)));
+});
+
+// FASE 7.1.2 (M2): cancelación cooperativa — solo admin. Marca el flag; el
+// scanner se detiene en su siguiente yield (≤ 1 intervalo de heartbeat) y
+// finaliza `failed(cancelled)`. 202 = solicitud aceptada (el scan aún puede
+// completarse si no quedaban yields — carrera documentada). Idempotente
+// mientras siga `running`; 409 si ya alcanzó estado terminal por sí mismo.
+router.post("/scans/:id/cancel", requireRole("admin"), async (req, res) => {
+  const { id } = CancelScanParams.parse(req.params);
+  const result = await repos.scans.requestCancel({ scanId: id });
+  if (!result.ok) {
+    if (result.reason === "scan_not_found") {
+      throw notFound("Scan not found");
+    }
+    throw conflict("Scan already reached a terminal state");
+  }
+  res.status(202).json(CancelScanResponse.parse(mapScan(result.scan)));
 });
 
 router.get("/reports", async (req, res) => {

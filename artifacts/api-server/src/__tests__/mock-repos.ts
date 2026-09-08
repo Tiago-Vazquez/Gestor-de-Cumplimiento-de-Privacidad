@@ -378,10 +378,14 @@ export function createMockRepos() {
           | "source_not_found"
           | "source_not_scannable"
           | "connection_failed"
-          | "persist_failed";
+          | "persist_failed"
+          | "cancelled";
       }) {
         const scan = state.scans.find((item) => item.id === scanId);
         if (!scan) return null;
+        // FASE 7.1.2 (M2, D2): un scan ya terminal no se sobrescribe ni
+        // duplica la actividad de cierre (réplica del guard del repo real).
+        if (scan.status !== "running") return { ...scan };
         scan.status = "failed";
         scan.completedAt = completedAt;
         const source = state.sources.find((item) => item.id === scan.sourceId);
@@ -405,10 +409,13 @@ export function createMockRepos() {
         recordsRead: number;
       }) {
         const scan = state.scans.find((item) => item.id === scanId);
-        if (!scan || scan.status !== "running") return;
+        if (!scan || scan.status !== "running") return null;
         scan.heartbeatAt = at;
         scan.tablesScanned = tablesScanned;
         scan.recordsRead = recordsRead;
+        // FASE 7.1.2 (M2): fila post-update (RETURNING) — expone el flag
+        // `cancelRequested` vigente al scanner sin consultas extra.
+        return { ...scan };
       },
 
       // FASE 7.1.1 (M1): historial — réplica del repo real: filtros exactos,
@@ -434,6 +441,19 @@ export function createMockRepos() {
       // FASE 7.1.1 (M1): detalle por id (null si no existe).
       async getById(id: string) {
         return state.scans.find((scan) => scan.id === id) ?? null;
+      },
+
+      // FASE 7.1.2 (M2): cancelación cooperativa — réplica del repo real:
+      // transacción/FOR UPDATE simulada por orden de chequeo; NO cambia
+      // status (lo hace el scanner); idempotente mientras siga `running`.
+      async requestCancel({ scanId }: { scanId: string }) {
+        const scan = state.scans.find((item) => item.id === scanId);
+        if (!scan) return { ok: false as const, reason: "scan_not_found" as const };
+        if (scan.status !== "running") {
+          return { ok: false as const, reason: "scan_not_running" as const };
+        }
+        if (!scan.cancelRequested) scan.cancelRequested = true;
+        return { ok: true as const, scan: { ...scan } };
       },
 
       // FASE 7.0.4 (refinado 7.1.0 M0): recuperación de huérfanos — marca

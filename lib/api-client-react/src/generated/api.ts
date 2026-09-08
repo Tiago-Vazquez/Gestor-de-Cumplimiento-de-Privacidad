@@ -1765,6 +1765,78 @@ export function useGetScan<TData = Awaited<ReturnType<typeof getScan>>, TError =
 
 
 
+export const getCancelScanUrl = (id: string,) => {
+
+
+
+
+  return `/api/scans/${id}/cancel`
+}
+
+/**
+ * Admin only. Sets the cancellation flag; the scanner stops at its next yield point (within one heartbeat interval) and finalizes as `failed` (reason `cancelled`). Idempotent while the scan is still running; 409 once the scan reached a terminal state on its own.
+ * @summary Request cooperative cancellation of a running scan
+ */
+export const cancelScan = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<Scan> => {
+
+  return customFetch<Scan>(getCancelScanUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelScanMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelScan>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelScan>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['cancelScan'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelScan>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  cancelScan(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelScanMutationResult = NonNullable<Awaited<ReturnType<typeof cancelScan>>>
+
+    export type CancelScanMutationError = ErrorType<void>
+
+    /**
+ * @summary Request cooperative cancellation of a running scan
+ */
+export const useCancelScan = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelScan>>, TError,{id: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelScan>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+      return useMutation(getCancelScanMutationOptions(options));
+    }
+
 export const getUpdateRuleUrl = (id: string,) => {
 
 
