@@ -407,6 +407,13 @@ async function runScanInner(input: RunScanInput): Promise<void> {
   // FASE 7.0.5: finaliza el scan en una ÚNICA transacción (findings + métricas
   // de fuente + detecciones por regla + estado completed). Si falla, el wrapper
   // 7.0.2 marca `failed(persist_failed)`.
+  // FASE 7.2.1 (M1): la reconciliacion por ausencia es evidencia confiable
+  // SOLO si la cobertura fue completa: todas las tablas listadas escaneadas y
+  // sin tope de findings aplicado. En cualquier otro caso (cap de tablas o de
+  // findings, o scan failed/cancelled) `reconcileAbsence` queda en false y el
+  // repo nunca resuelve findings por ausencia.
+  const reconcileAbsence = scannedTables.length === tables.length && matches.size <= MAX_FINDINGS_PER_SCAN;
+
   await repos.scans.finalizeScan({
     scanId: input.scanId,
     sourceId: input.sourceId,
@@ -415,6 +422,7 @@ async function runScanInner(input: RunScanInput): Promise<void> {
     scannedTables: scannedTables.length,
     recordsRead,
     ruleDeltas,
+    reconcileAbsence,
     completedAt: new Date(),
   });
 

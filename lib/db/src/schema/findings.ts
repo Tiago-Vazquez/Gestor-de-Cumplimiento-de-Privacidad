@@ -1,4 +1,5 @@
-import { index, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { scansTable } from "./scans";
@@ -16,6 +17,22 @@ import { sourcesTable } from "./sources";
  *
  * FASE 7.0.0: `scanId` referencia opcional al scan que produjo este hallazgo.
  * Los hallazgos legacy/demo tienen `scanId = NULL`.
+ *
+ * FASE 7.2.1 (M1) — finding lifecycle (identidad histórica estable):
+ * - `scanId` CONSERVA su semántica documentada: el scan que CREÓ el hallazgo.
+ *   Nunca se reasigna en hallazgos persistentes (histórica de origen).
+ * - `lastSeenScanId` (nueva): último scan `completed` que volvió a detectar el
+ *   hallazgo mismo (`NULL` = nunca revisitado). Interna; no expuesta al contrato.
+ * - `fingerprint`: identificador lógico estable del hallazgo, calculado de forma
+ *   determinista por el servicio (src id + location + dataType normalizados y
+ *   escapados). `NULL` solo en filas legacy sin `sourceId` (fuente eliminada),
+ *   que quedan excluidas del lifecycle.
+ * - `firstSeenAt` / `lastSeenAt`: primera/última detección conocida. Se pueblan
+ *   en la migración desde `detectedAt` (dato real existente, sin fechas inventadas).
+ * - `superseded`: las filas duplicadas legacy de un mismo fingerprint se marcan
+ *   `true` (evidencia histórica conservada) y quedan fuera del índice único
+ *   parcial y del lifecycle. El índice único `findings_fingerprint_active_idx`
+ *   (parcial, WHERE superseded = false) protege contra duplicados futuros.
  *
  * FASE 7.0.5 (opción B aprobada): `source_id` es nullable con ON DELETE SET
  * NULL — los hallazgos son EVIDENCIA histórica de cumplimiento y NO deben
@@ -42,12 +59,21 @@ export const findingsTable = pgTable(
     recommendation: text("recommendation").notNull(),
     sample: text("sample").notNull(),
     scanId: text("scan_id").references(() => scansTable.id, { onDelete: "set null" }),
+    lastSeenScanId: text("last_seen_scan_id").references(() => scansTable.id, { onDelete: "set null" }),
+    fingerprint: text("fingerprint"),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+    superseded: boolean("superseded").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index("findings_source_id_idx").on(table.sourceId),
     index("findings_scan_id_idx").on(table.scanId),
+    index("findings_fingerprint_idx").on(table.fingerprint),
+    uniqueIndex("findings_fingerprint_active_idx")
+      .on(table.fingerprint)
+      .where(sql`${table.fingerprint} IS NOT NULL AND ${table.superseded} = false`),
   ],
 );
 

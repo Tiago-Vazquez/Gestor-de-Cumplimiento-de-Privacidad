@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   activityTable,
   db,
@@ -10,6 +10,10 @@ import {
 } from "@workspace/db";
 import { newId } from "./ids";
 import type { Pagination } from "../lib/pagination";
+import {
+  computeFingerprint,
+  planFindingLifecycle,
+} from "../services/finding-lifecycle";
 
 export type StartScanResult =
   | { ok: true; scan: Scan; sourceName: string; sourceTables: number }
@@ -84,9 +88,15 @@ export async function startScan({ sourceId, startedAt }: { sourceId: string; sta
 }
 
 /**
- * FASE 7.0.5: finaliza un escaneo en una ÚNICA transacción. Inserta los
- * findings, actualiza las métricas de la fuente (tables/records), acumula
- * las detecciones por regla y marca el scan como `completed`.
+ * FASE 7.2.1 (M1): finaliza un escaneo en una ÚNICA transacción aplicando el
+ * finding lifecycle (¿nuevo / persistente / resuelto / reabierto?) y actualiza
+ * las métricas de la fuente (tables/records), acumula las detecciones por regla
+ * y marca el scan como `completed`.
+ *
+ * Todas las escrituras del lifecycle (inserts/updates/reconciliación) ocurren
+ * DENTRO de esta transacción: si cualquier paso falla, PostgreSQL hace rollback
+ * y NUNCA queda un estado donde findings hayan sido reconciliados como resueltos
+ * y el scan haya terminado `failed`.
  */
 export interface FinalizeScanInput {
   scanId: string;
@@ -106,11 +116,76 @@ export interface FinalizeScanInput {
   recordsRead: number;
   ruleDeltas: Map<string, number>;
   completedAt: Date;
+  /**
+   * Reconciliación por ausencia permitida SOLO si el scan terminó `completed`
+   * con cobertura completa (todas las tablas listadas escaneadas y sin tope de
+   * findings aplicado). El scanner calcula este flag; es `false` en cualquier
+   * otro caso (failed/cancelled/timeout/incompleto), donde la ausencia no es
+   * evidencia de que un finding desapareció.
+   */
+  reconcileAbsence: boolean;
 }
 
 export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
   await db.transaction(async (tx) => {
-    for (const finding of input.findings) {
+    const fingerprints = [
+      ...new Set(
+        input.findings.map((finding) =>
+          computeFingerprint({
+            sourceId: input.sourceId,
+            location: finding.location,
+            dataType: finding.dataType,
+          }),
+        ),
+      ),
+    ];
+
+    // Findings canónicos ya persistidos (superseded=false) con el mismo
+    // fingerprint — incluye resolved para poder reabrirlos. FOR UPDATE
+    // serializa el upsert frente a otro finalize simultáneo del mismo finding;
+    // el índice único parcial findings_fingerprint_active_idx es la última
+    // línea de defensa contra duplicados.
+    const existing = fingerprints.length > 0
+      ? await tx
+          .select()
+          .from(findingsTable)
+          .where(and(inArray(findingsTable.fingerprint, fingerprints), eq(findingsTable.superseded, false)))
+          .for("update")
+      : [];
+    const existingByFingerprint = new Map<string, (typeof existing)[number]>();
+    for (const row of existing) {
+      if (row.fingerprint) existingByFingerprint.set(row.fingerprint, row);
+    }
+
+    // Finding activos de esta fuente: candidatos a resolución por ausencia.
+    // Solo se consultan cuando la reconciliación está permitida (completed +
+    // cobertura completa).
+    const activeForSource = input.reconcileAbsence
+      ? await tx
+          .select()
+          .from(findingsTable)
+          .where(
+            and(
+              eq(findingsTable.sourceId, input.sourceId),
+              eq(findingsTable.superseded, false),
+              ne(findingsTable.status, "resolved"),
+            ),
+          )
+      : [];
+
+    const plan = planFindingLifecycle({
+      sourceId: input.sourceId,
+      scanId: input.scanId,
+      at: input.completedAt,
+      detections: input.findings,
+      existingByFingerprint,
+      activeForSource,
+      reconcileAbsence: input.reconcileAbsence,
+    });
+
+    // 1. Findings NUEVOS (fingerprint desconocido): se inserta una única
+    // entidad lógica (scanId) = scan creador, firstSeen = lastSeen.
+    for (const finding of plan.toInsert) {
       await tx.insert(findingsTable).values({
         id: newId("f"),
         title: finding.title,
@@ -126,13 +201,52 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
         recommendation: finding.recommendation,
         sample: finding.sample,
         scanId: input.scanId,
+        fingerprint: finding.fingerprint,
+        firstSeenAt: input.completedAt,
+        lastSeenAt: input.completedAt,
+        lastSeenScanId: input.scanId,
       });
     }
+
+    // 2. Findings PERSISTENTES (mismo fingerprint en un scan posterior): se
+    // reutiliza el MISMO id; firstSeenAt y scanId se conservan intactos;
+    // lastSeenScanId apunta al scan actual como última observación.
+    for (const update of plan.toUpdate) {
+      await tx
+        .update(findingsTable)
+        .set({
+          status: update.nextStatus,
+          records: update.records,
+          sample: update.sample,
+          severity: update.severity,
+          regulation: update.regulation,
+          recommendation: update.recommendation,
+          title: update.title,
+          lastSeenAt: input.completedAt,
+          lastSeenScanId: update.lastSeenScanId,
+          updatedAt: input.completedAt,
+        })
+        .where(eq(findingsTable.id, update.findingId));
+    }
+
+    // 3. Reconciliación por ausencia: findings activos no detectados en un
+    // scan completed con cobertura completa → resolved (nunca en failed/cancelled).
+    if (plan.toResolveIds.length > 0) {
+      await tx
+        .update(findingsTable)
+        .set({ status: "resolved", updatedAt: input.completedAt })
+        .where(inArray(findingsTable.id, plan.toResolveIds));
+    }
+
+    // 4. Métricas de la fuente, deltas por regla y cierre del scan. Los
+    // finding actuales solo se crean una vez; `findingsCreated` es la cantidad
+    // de findings NUEVOS creados por este scan, no las re-detecciones.
     await tx.update(sourcesTable).set({
       tables: input.scannedTables,
       records: input.recordsRead,
       updatedAt: input.completedAt,
     }).where(eq(sourcesTable.id, input.sourceId));
+
     for (const [ruleName, delta] of input.ruleDeltas) {
       await tx.update(rulesTable).set({
         detections: sql`${rulesTable.detections} + ${delta}`,
@@ -140,10 +254,11 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
         updatedAt: input.completedAt,
       }).where(sql`lower(${rulesTable.name}) = ${ruleName.toLowerCase()}`);
     }
+
     await tx.update(scansTable).set({
       status: "completed",
       completedAt: input.completedAt,
-      findingsCreated: input.findings.length,
+      findingsCreated: plan.createdCount,
     }).where(eq(scansTable.id, input.scanId));
   });
 }

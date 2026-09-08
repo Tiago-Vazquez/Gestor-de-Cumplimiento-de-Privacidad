@@ -56,11 +56,11 @@ export function createMockRepos() {
     userRoles: [],
   sessions: [],
     findings: [
-      { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12), scanId: null },
-      { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38), scanId: null },
-      { id: "f-003", title: "Teléfonos visibles en exportación", dataType: "phone", sourceId: "src-003", sourceName: SOURCE_NAMES["src-003"], location: "crm.contacts.phone", severity: "medium", status: "open", records: 2187, detectedAt: minutesAgo(74), regulation: "CCPA §1798.100", recommendation: "Enmascarar últimos cuatro dígitos.", sample: "+54 9 11 •••• 4821", createdAt: minutesAgo(74), updatedAt: minutesAgo(74), scanId: null },
-      { id: "f-004", title: "Direcciones residenciales detectadas", dataType: "address", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.shipping_addresses.full_address", severity: "low", status: "resolved", records: 864, detectedAt: minutesAgo(120), regulation: "GDPR Art. 5", recommendation: "Mantener solo ciudad y CP.", sample: "Av. del L•••• 120", createdAt: minutesAgo(120), updatedAt: minutesAgo(120), scanId: null },
-      { id: "f-005", title: "Tarjetas almacenadas en logs", dataType: "credit_card", sourceId: "src-004", sourceName: SOURCE_NAMES["src-004"], location: "logs.checkout.payload", severity: "critical", status: "open", records: 91, detectedAt: minutesAgo(186), regulation: "PCI DSS 3.4", recommendation: "Redactar payloads históricos.", sample: "•••• •••• •••• 4242", createdAt: minutesAgo(186), updatedAt: minutesAgo(186), scanId: null },
+      { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
+      { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
+      { id: "f-003", title: "Teléfonos visibles en exportación", dataType: "phone", sourceId: "src-003", sourceName: SOURCE_NAMES["src-003"], location: "crm.contacts.phone", severity: "medium", status: "open", records: 2187, detectedAt: minutesAgo(74), regulation: "CCPA §1798.100", recommendation: "Enmascarar últimos cuatro dígitos.", sample: "+54 9 11 •••• 4821", createdAt: minutesAgo(74), updatedAt: minutesAgo(74), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
+      { id: "f-004", title: "Direcciones residenciales detectadas", dataType: "address", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.shipping_addresses.full_address", severity: "low", status: "resolved", records: 864, detectedAt: minutesAgo(120), regulation: "GDPR Art. 5", recommendation: "Mantener solo ciudad y CP.", sample: "Av. del L•••• 120", createdAt: minutesAgo(120), updatedAt: minutesAgo(120), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
+      { id: "f-005", title: "Tarjetas almacenadas en logs", dataType: "credit_card", sourceId: "src-004", sourceName: SOURCE_NAMES["src-004"], location: "logs.checkout.payload", severity: "critical", status: "open", records: 91, detectedAt: minutesAgo(186), regulation: "PCI DSS 3.4", recommendation: "Redactar payloads históricos.", sample: "•••• •••• •••• 4242", createdAt: minutesAgo(186), updatedAt: minutesAgo(186), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
     ],
     sources: [
       { id: "src-001", name: SOURCE_NAMES["src-001"], kind: "postgresql", environment: "production", status: "healthy", lastScanAt: minutesAgo(12), tables: 48, records: 284_210, createdAt: minutesAgo(500), updatedAt: minutesAgo(12), findingsCount: 2, connectionConfig: null },
@@ -321,6 +321,11 @@ export function createMockRepos() {
             recommendation: finding.recommendation,
             sample: finding.sample,
             scanId: input.scanId,
+            fingerprint: null,
+            firstSeenAt: now,
+            lastSeenAt: now,
+            lastSeenScanId: input.scanId,
+            superseded: false,
             createdAt: now,
             updatedAt: now,
           });

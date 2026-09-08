@@ -784,3 +784,37 @@ describe("cancelación cooperativa (FASE 7.1.2 M2)", () => {
     expect(state().activity.length).toBe(activityBefore);
   });
 });
+describe("reconcileAbsence flag (FASE 7.2.1 M1)", () => {
+  it("happy path con cobertura completa → finalizeScan recibe reconcileAbsence=true", async () => {
+    addScannableSource("src-reconcile-ok");
+    const scans = reposPatch().scans;
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    vi.mocked(listTables).mockResolvedValue(["users"]);
+    const connector = fakeConnector(["users"], [[{ contact: "x@example.com" }], []]);
+
+    await runScan({ scanId: "scan-rc1", sourceId: "src-reconcile-ok", connector });
+
+    expect(finalizeSpy).toHaveBeenCalledTimes(1);
+    const payload = finalizeSpy.mock.calls[0][0] as { reconcileAbsence: boolean };
+    expect(payload.reconcileAbsence).toBe(true);
+    finalizeSpy.mockRestore();
+  });
+
+  it("cap de tablas aplicado → reconcileAbsence=false (ausencia NO es evidencia)", async () => {
+    addScannableSource("src-reconcile-cap");
+    const scans = reposPatch().scans;
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    const manyTables = Array.from({ length: 101 }, (_, i) => `table_${i}`);
+    vi.mocked(listTables).mockResolvedValue(manyTables);
+    // Sin filas en ninguna tabla: el scan recorre las 100 primeras y el cap
+    // deja 1 tabla fuera → cobertura incompleta.
+    const connector = fakeConnector(manyTables, [[]]);
+
+    await runScan({ scanId: "scan-rc2", sourceId: "src-reconcile-cap", connector });
+
+    expect(finalizeSpy).toHaveBeenCalledTimes(1);
+    const payload = finalizeSpy.mock.calls[0][0] as { reconcileAbsence: boolean };
+    expect(payload.reconcileAbsence).toBe(false);
+    finalizeSpy.mockRestore();
+  });
+});
