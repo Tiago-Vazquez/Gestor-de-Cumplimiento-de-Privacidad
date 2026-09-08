@@ -1,12 +1,5 @@
 import { sql } from "drizzle-orm";
-import {
-  index,
-  integer,
-  pgTable,
-  text,
-  timestamp,
-  uniqueIndex,
-} from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { sourcesTable } from "./sources";
@@ -25,6 +18,16 @@ import { sourcesTable } from "./sources";
  *   `findings` (SET NULL allí).
  * - Índice único parcial: máximo UN scan `running` por fuente, garantizado
  *   por PostgreSQL incluso ante dos POST simultáneos.
+ *
+ * FASE 7.1.0 (M0) — observabilidad del scanner:
+ * - `heartbeat_at`: latido del scanner en ejecución (best-effort, throttled).
+ *   NULL = nunca latió (scans legacy y scans recién creados hasta el primer
+ *   latido); el reaper usa COALESCE(heartbeat_at, started_at) como criterio
+ *   de fresqueda con fallback seguro a `started_at`.
+ * - `tables_scanned` / `records_read`: progreso acumulado reportado en cada
+ *   latido (solo scans `running`).
+ * - `cancel_requested`: bandera de cancelación cooperativa — reservada para
+ *   7.1.2, dormida en M0.
  */
 export const scansTable = pgTable(
   "scans",
@@ -37,6 +40,10 @@ export const scansTable = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     findingsCreated: integer("findings_created").notNull().default(0),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+    tablesScanned: integer("tables_scanned").notNull().default(0),
+    recordsRead: integer("records_read").notNull().default(0),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
   },
   (table) => [
     index("scans_source_id_idx").on(table.sourceId),

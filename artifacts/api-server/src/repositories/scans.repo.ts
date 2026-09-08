@@ -1,4 +1,4 @@
-import { and, count, eq, lt, sql } from "drizzle-orm";
+import { and, count, eq, sql } from "drizzle-orm";
 import {
   activityTable,
   db,
@@ -171,11 +171,13 @@ export async function failScan({
 }
 
 /**
- * Recuperación de scans huérfanos (FASE 7.0.4): marca como `failed(timeout)`
- * todos los scans en estado `running` iniciados ANTES de `before`, en una
- * única transacción. Devuelve los scans actualizados (RETURNING).
+ * Recuperación de scans huérfanos (FASE 7.0.4, refinada en FASE 7.1.0 M0):
+ * marca como `failed(timeout)` todos los scans en estado `running` cuyo último
+ * signo de vida — `heartbeat_at` si existe, con fallback a `started_at` para
+ * los scans legacy — es ANTERIOR a `before`, en una única transacción.
+ * Devuelve los scans actualizados (RETURNING).
  */
-export async function failRunningScansStartedBefore({
+export async function failStaleRunningScans({
   before,
   completedAt,
   reason,
@@ -185,7 +187,18 @@ export async function failRunningScansStartedBefore({
   reason: "timeout";
 }): Promise<Scan[]> {
   return db.transaction(async (tx) => {
-    const stale = await tx.select().from(scansTable).where(and(eq(scansTable.status, "running"), lt(scansTable.startedAt, before)));
+    // FASE 7.1.0 M0: COALESCE(heartbeat_at, started_at) — un scan con latido
+    // reciente no se recupera aunque startedAt sea viejo; los scans legacy
+    // (sin latido) conservan el criterio original de 7.0.4. Frontera estricta.
+    const stale = await tx
+      .select()
+      .from(scansTable)
+      .where(
+        and(
+          eq(scansTable.status, "running"),
+          sql`coalesce(${scansTable.heartbeatAt}, ${scansTable.startedAt}) < ${before}`,
+        ),
+      );
     const recovered: Scan[] = [];
     for (const scan of stale) {
       const [updated] = await tx.update(scansTable).set({ status: "failed", completedAt }).where(eq(scansTable.id, scan.id)).returning();
@@ -204,4 +217,27 @@ export async function failRunningScansStartedBefore({
     }
     return recovered;
   });
+}
+
+/**
+ * FASE 7.1.0 M0: latido del scanner (best-effort). Actualiza `heartbeat_at` y
+ * el progreso acumulado SOLO si el scan sigue `running` — la condición vive en
+ * el propio WHERE, de modo que un scan que terminó entre medias no se toca
+ * (0 filas, sin error). Statement único, idempotente, sin transacción.
+ */
+export async function heartbeatScan({
+  scanId,
+  at,
+  tablesScanned,
+  recordsRead,
+}: {
+  scanId: string;
+  at: Date;
+  tablesScanned: number;
+  recordsRead: number;
+}): Promise<void> {
+  await db
+    .update(scansTable)
+    .set({ heartbeatAt: at, tablesScanned, recordsRead })
+    .where(and(eq(scansTable.id, scanId), eq(scansTable.status, "running")));
 }

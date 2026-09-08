@@ -81,18 +81,44 @@ export const BUILT_IN_RULES: DetectionRule[] = [
   },
 ];
 
-const PAGE_SIZE = 1000;
+/** Página de lectura (exportado para tests: página completa = PAGE_SIZE filas). */
+export const PAGE_SIZE = 1000;
 const MAX_PAGES_PER_TABLE = 100; // 100k filas máximo por tabla en el MVP
 const MAX_TABLES_PER_SCAN = 100; // FASE 7.0.3: tope de tablas por scan (selección alfabética determinista)
 const MAX_FINDINGS_PER_SCAN = 50;
 const MAX_FIELD_LENGTH = 4096; // FASE 7.0.3: ventana máxima por celda antes de evaluar patrones
 const SAMPLE_CAP = 120;
 
+/**
+ * FASE 7.1.0 M0: latido del scanner (observabilidad + recovery fino).
+ * - Intervalo mínimo entre escrituras de heartbeat (throttle, sin timers):
+ *   por defecto 10 s, configurable vía SCAN_HEARTBEAT_INTERVAL_MS
+ *   (clamp [1 s, 60 s]).
+ * - El latido es BEST-EFFORT: un fallo se registra y desactiva los intentos
+ *   restantes de ESE scan; JAMÁS aborta el escaneo ni altera su ciclo de vida.
+ */
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
+const MIN_HEARTBEAT_INTERVAL_MS = 1_000;
+const MAX_HEARTBEAT_INTERVAL_MS = 60_000;
+
+export function scanHeartbeatIntervalMs(): number {
+  const raw = process.env.SCAN_HEARTBEAT_INTERVAL_MS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_HEARTBEAT_INTERVAL_MS;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_HEARTBEAT_INTERVAL_MS;
+  return Math.min(Math.max(value, MIN_HEARTBEAT_INTERVAL_MS), MAX_HEARTBEAT_INTERVAL_MS);
+}
+
 export interface RunScanInput {
   scanId: string;
   sourceId: string;
   /** Inyectable en tests; por defecto el conector real. */
   connector?: PgConnector;
+  /**
+   * FASE 7.1.0 M0: intervalo mínimo entre latidos (ms). Inyectable en tests;
+   * por defecto resuelve SCAN_HEARTBEAT_INTERVAL_MS (clamp [1 s, 60 s], 10 s).
+   */
+  heartbeatIntervalMs?: number;
 }
 
 interface MatchAgg {
@@ -254,9 +280,38 @@ async function runScanInner(input: RunScanInput): Promise<void> {
   let recordsRead = 0;
   let tables: string[] = [];
 
+  // FASE 7.1.0 M0: heartbeat con throttle (sin timers que limpiar). El primer
+  // latido es inmediato tras listar tablas; los siguientes respetan el
+  // intervalo. Best-effort: el primer fallo desactiva los intentos de este
+  // scan y NUNCA propaga (el ciclo de vida lo gobierna failScan/finalizeScan).
+  const heartbeatIntervalMs = input.heartbeatIntervalMs ?? scanHeartbeatIntervalMs();
+  let lastHeartbeatAt = 0;
+  let heartbeatBroken = false;
+  const heartbeat = async (force: boolean): Promise<void> => {
+    if (heartbeatBroken) return;
+    const now = Date.now();
+    if (!force && now - lastHeartbeatAt < heartbeatIntervalMs) return;
+    lastHeartbeatAt = now;
+    try {
+      await repos.scans.heartbeatScan({
+        scanId: input.scanId,
+        at: new Date(now),
+        tablesScanned: scannedTables.length,
+        recordsRead,
+      });
+    } catch (error) {
+      heartbeatBroken = true;
+      logger.error(
+        { err: error, scanId: input.scanId, sourceId: input.sourceId },
+        "Scan heartbeat failed (best-effort, scan continues)",
+      );
+    }
+  };
+
   try {
     connection = await connector.connect(config);
     tables = await listTables(connection, schema);
+    await heartbeat(true);
     for (const table of tables.slice(0, MAX_TABLES_PER_SCAN)) {
       let offset = 0;
       let tableCompleted = true;
@@ -266,10 +321,12 @@ async function runScanInner(input: RunScanInput): Promise<void> {
         recordsRead += rows.length;
         detectRows(table, rows, rules, matches);
         offset += PAGE_SIZE;
+        await heartbeat(false);
         if (rows.length < PAGE_SIZE) break;
       }
       if (tableCompleted) {
         scannedTables.push(table);
+        await heartbeat(false);
       }
     }
 

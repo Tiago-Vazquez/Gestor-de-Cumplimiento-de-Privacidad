@@ -256,6 +256,11 @@ export function createMockRepos() {
           startedAt,
           completedAt: null,
           findingsCreated: 0,
+          // FASE 7.1.0 M0: espejo de los defaults de la migración 0006.
+          heartbeatAt: null,
+          tablesScanned: 0,
+          recordsRead: 0,
+          cancelRequested: false,
         };
         state.scans.push(scan);
         source.lastScanAt = startedAt;
@@ -290,7 +295,7 @@ export function createMockRepos() {
           title: string;
         }>;
         scannedTables: number;
-        scannedRecords: number;
+        recordsRead: number;
         ruleDeltas: Map<string, number>;
       }) {
         const scan = state.scans.find((item) => item.id === input.scanId);
@@ -325,7 +330,7 @@ export function createMockRepos() {
         // 2. Actualizar métricas de la fuente.
         if (source) {
           source.tables = input.scannedTables;
-          source.records = input.scannedRecords;
+          source.records = input.recordsRead;
         }
 
         // 3. Acumular detecciones por regla (vinculación por lower(name)).
@@ -391,11 +396,28 @@ export function createMockRepos() {
         return { ...scan };
       },
 
-      // FASE 7.0.4: recuperación de huérfanos — marca `failed(timeout)` los
-      // scans `running` con startedAt < before (comparación estricta). Los
-      // estados `completed`/`failed` no se tocan; un scan cuya source fue
-      // eliminada se recupera igualmente y sin actividad.
-      async failRunningScansStartedBefore({
+      // FASE 7.1.0 M0: latido best-effort — SOLO scans `running`; un scan que
+      // ya terminó no se toca (réplica de la condición del WHERE del repo real).
+      async heartbeatScan({ scanId, at, tablesScanned, recordsRead }: {
+        scanId: string;
+        at: Date;
+        tablesScanned: number;
+        recordsRead: number;
+      }) {
+        const scan = state.scans.find((item) => item.id === scanId);
+        if (!scan || scan.status !== "running") return;
+        scan.heartbeatAt = at;
+        scan.tablesScanned = tablesScanned;
+        scan.recordsRead = recordsRead;
+      },
+
+      // FASE 7.0.4 (refinado 7.1.0 M0): recuperación de huérfanos — marca
+      // `failed(timeout)` los scans `running` cuyo último signo de vida
+      // (heartbeatAt con fallback a startedAt, réplica del COALESCE del repo
+      // real) es < before (comparación estricta). Los estados
+      // `completed`/`failed` no se tocan; un scan cuya source fue eliminada
+      // se recupera igualmente y sin actividad.
+      async failStaleRunningScans({
         before,
         completedAt,
         reason,
@@ -406,7 +428,8 @@ export function createMockRepos() {
       }) {
         const recovered: Scan[] = [];
         for (const scan of [...state.scans]) {
-          if (scan.status !== "running" || scan.startedAt.getTime() >= before.getTime()) continue;
+          const lastAlive = scan.heartbeatAt ?? scan.startedAt;
+          if (scan.status !== "running" || lastAlive.getTime() >= before.getTime()) continue;
           scan.status = "failed";
           scan.completedAt = completedAt;
           const source = state.sources.find((item) => item.id === scan.sourceId);

@@ -10,7 +10,12 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest
 import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
-import { runScan, resolveActiveRules, BUILT_IN_RULES } from "../services/scanner";
+import {
+  runScan,
+  resolveActiveRules,
+  BUILT_IN_RULES,
+  PAGE_SIZE,
+} from "../services/scanner";
 import { connectPg, listTables, readPage, type PgConnector, type PgConnection } from "../connectors/postgres";
 import type { MockState } from "./mock-repos";
 
@@ -58,6 +63,7 @@ function reposPatch(): {
   scans: {
     finalizeScan: (args: unknown) => Promise<unknown>;
     failScan: (args: unknown) => Promise<unknown>;
+    heartbeatScan: (args: unknown) => Promise<unknown>;
   };
 } {
   if (!mocks.repos) throw new Error("mock repos not initialized");
@@ -126,6 +132,10 @@ function addRunningScan(id: string, sourceId: string): void {
     startedAt: new Date(),
     completedAt: null,
     findingsCreated: 0,
+    heartbeatAt: null,
+    tablesScanned: 0,
+    recordsRead: 0,
+    cancelRequested: false,
   });
 }
 
@@ -504,5 +514,125 @@ describe("Límites de volumen (FASE 7.0.3)", () => {
     expect((connector.readPage as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(100);
     const scan = state().scans.find((item) => item.id === "scan-v5");
     expect(scan?.status).toBe("completed");
+  });
+});
+
+describe("heartbeat del scanner (FASE 7.1.0 M0)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("latido de scan running: heartbeatAt/tablesScanned/recordsRead actualizados", async () => {
+    addScannableSource("src-hb1");
+    addRunningScan("scan-hb1", "src-hb1");
+    const scans = reposPatch().scans;
+    const beatSpy = vi.spyOn(scans, "heartbeatScan");
+    vi.mocked(listTables).mockResolvedValue(["users"]);
+    const connector = fakeConnector(["users"], [[{ contact: "a@b.com" }], []]);
+
+    await runScan({ scanId: "scan-hb1", sourceId: "src-hb1", connector, heartbeatIntervalMs: 0 });
+
+    expect(beatSpy).toHaveBeenCalled();
+    const scan = state().scans.find((item) => item.id === "scan-hb1");
+    expect(scan?.status).toBe("completed");
+    expect(scan?.heartbeatAt).not.toBeNull();
+    expect(scan?.tablesScanned).toBe(1);
+    expect(scan?.recordsRead).toBe(1);
+  });
+
+  it("throttle: solo late al vencer el intervalo (fake timers)", async () => {
+    addScannableSource("src-hb2");
+    addRunningScan("scan-hb2", "src-hb2");
+    const scans = reposPatch().scans;
+    const beatSpy = vi.spyOn(scans, "heartbeatScan");
+    vi.useFakeTimers();
+    const t0 = new Date("2026-01-01T00:00:00.000Z");
+    vi.setSystemTime(t0);
+    vi.mocked(listTables).mockResolvedValue(["users"]);
+
+    const conn: PgConnection = {
+      query: vi.fn().mockResolvedValue([]),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    // Contrato de paginación: una página corta (< PAGE_SIZE) cierra la tabla,
+    // así que las páginas intermedias deben ser COMPLETAS (PAGE_SIZE filas)
+    // para simular una tabla larga; la página vacía termina el bucle.
+    const fullPage = (): Record<string, unknown>[] =>
+      Array.from({ length: PAGE_SIZE }, () => ({ id: 1 }));
+    const pages: Record<string, unknown>[][] = [
+      fullPage(),
+      fullPage(),
+      fullPage(),
+      fullPage(),
+      [], // rompe el bucle (fin de tabla) antes de latir
+    ];
+    // Avance de reloj por página: 6 s, 1 s, 6 s, 6 s, 6 s.
+    const advances = [6_000, 1_000, 6_000, 6_000, 6_000];
+    let page = 0;
+    let elapsed = 0;
+    const connector: PgConnector = {
+      connect: vi.fn().mockResolvedValue(conn),
+      listTables: vi.fn().mockResolvedValue(["users"]),
+      readPage: vi.fn().mockImplementation(async () => {
+        const current = pages[Math.min(page, pages.length - 1)] ?? [];
+        elapsed += advances[Math.min(page, advances.length - 1)];
+        page += 1;
+        vi.setSystemTime(new Date(t0.getTime() + elapsed));
+        return current;
+      }),
+    };
+
+    await runScan({ scanId: "scan-hb2", sourceId: "src-hb2", connector, heartbeatIntervalMs: 5_000 });
+
+    // Throttle con intervalo 5 s y avances [6, 1, 6, 6, 6] s:
+    // t0 (inicial) → +6 s late → +7 s NO late (1 s < intervalo) →
+    // +13 s late → +19 s late → la página vacía (+25 s) rompe antes de
+    // latir y el cierre de tabla late a +25 s. Total: 5 latidos.
+    expect(beatSpy).toHaveBeenCalledTimes(5);
+    const scan = state().scans.find((item) => item.id === "scan-hb2");
+    expect(scan?.heartbeatAt?.getTime()).toBe(t0.getTime() + 25_000);
+    expect(scan?.recordsRead).toBe(4 * PAGE_SIZE);
+    expect(scan?.tablesScanned).toBe(1);
+  });
+
+  it("fallo del heartbeat NO aborta el scan (best-effort)", async () => {
+    addScannableSource("src-hb3");
+    addRunningScan("scan-hb3", "src-hb3");
+    const scans = reposPatch().scans;
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    vi.spyOn(scans, "heartbeatScan").mockRejectedValue(new Error("hb down"));
+    vi.mocked(listTables).mockResolvedValue(["users"]);
+    const connector = fakeConnector(["users"], [[{ contact: "a@b.com" }], []]);
+
+    await runScan({ scanId: "scan-hb3", sourceId: "src-hb3", connector, heartbeatIntervalMs: 0 });
+
+    const scan = state().scans.find((item) => item.id === "scan-hb3");
+    expect(scan?.status).toBe("completed");
+    expect(finalizeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("heartbeat ignorado para scans NO running (contrato del repo)", async () => {
+    state().scans.push({
+      id: "scan-hb4",
+      sourceId: "src-hb4",
+      status: "completed",
+      startedAt: new Date(),
+      completedAt: new Date(),
+      findingsCreated: 3,
+      heartbeatAt: null,
+      tablesScanned: 0,
+      recordsRead: 0,
+      cancelRequested: false,
+    });
+    const scans = reposPatch().scans;
+
+    await scans.heartbeatScan({ scanId: "scan-hb4", at: new Date(), tablesScanned: 9, recordsRead: 99 });
+
+    const scan = state().scans.find((item) => item.id === "scan-hb4");
+    expect(scan?.status).toBe("completed");
+    expect(scan?.heartbeatAt).toBeNull();
+    expect(scan?.tablesScanned).toBe(0);
+    expect(scan?.recordsRead).toBe(0);
   });
 });

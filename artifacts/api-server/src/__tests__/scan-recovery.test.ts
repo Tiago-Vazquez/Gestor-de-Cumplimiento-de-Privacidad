@@ -8,11 +8,12 @@
  * typecheck/build e inspección: la lógica íntegra vive en scan-recovery.ts
  * y en el repositorio.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MockState } from "./mock-repos";
 import {
   recoverOrphanedScansAtBoot,
   recoverStaleRunningScans,
+  scanStaleTtlMs,
   SCAN_RUNNING_TTL_MS,
 } from "../services/scan-recovery";
 
@@ -40,7 +41,7 @@ function state(): MockState {
 }
 
 function reposPatch(): {
-  scans: { failRunningScansStartedBefore: (args: unknown) => Promise<unknown> };
+  scans: { failStaleRunningScans: (args: unknown) => Promise<unknown> };
 } {
   if (!mocks.repos) throw new Error("mock repos not initialized");
   return mocks.repos as never;
@@ -51,8 +52,21 @@ function addScan(
   sourceId: string,
   status: "running" | "completed" | "failed",
   startedAt: Date,
+  opts?: { heartbeatAt?: Date | null },
 ): void {
-  state().scans.push({ id, sourceId, status, startedAt, completedAt: null, findingsCreated: 0 });
+  state().scans.push({
+    id,
+    sourceId,
+    status,
+    startedAt,
+    completedAt: null,
+    findingsCreated: 0,
+    // FASE 7.1.0 M0: sin latido por defecto → criterio legacy (startedAt).
+    heartbeatAt: opts?.heartbeatAt ?? null,
+    tablesScanned: 0,
+    recordsRead: 0,
+    cancelRequested: false,
+  });
 }
 
 describe("recoverOrphanedScansAtBoot — sweep de arranque (FASE 7.0.4)", () => {
@@ -152,20 +166,105 @@ describe("recoverStaleRunningScans — sweep periódico (FASE 7.0.4)", () => {
   it("usa el TTL correcto vía repositorio (spy) y nunca lanza si el repo falla", async () => {
     const now = new Date();
     const scansRepo = reposPatch().scans;
-    const spy = vi.spyOn(scansRepo, "failRunningScansStartedBefore");
+    const spy = vi.spyOn(scansRepo, "failStaleRunningScans");
 
     await recoverStaleRunningScans(now);
 
     expect(spy).toHaveBeenCalledTimes(1);
     const args = spy.mock.calls[0]?.[0] as { before: Date; reason: string };
     expect(args.reason).toBe("timeout");
-    expect(args.before.getTime()).toBe(now.getTime() - SCAN_RUNNING_TTL_MS);
+    expect(args.before.getTime()).toBe(now.getTime() - scanStaleTtlMs());
     spy.mockRestore();
 
     const failing = vi
-      .spyOn(scansRepo, "failRunningScansStartedBefore")
+      .spyOn(scansRepo, "failStaleRunningScans")
       .mockRejectedValue(new Error("db down"));
     await expect(recoverStaleRunningScans(now)).resolves.toEqual([]);
     failing.mockRestore();
+  });
+});
+
+describe("criterio heartbeat (FASE 7.1.0 M0)", () => {
+  beforeEach(() => {
+    state().scans = [];
+    state().activity = [];
+  });
+
+  it("heartbeat reciente NO recupera el scan aunque startedAt sea viejo", async () => {
+    const now = new Date();
+    addScan("scan-hb-fresh", "src-001", "running", new Date(now.getTime() - 2 * SCAN_RUNNING_TTL_MS), {
+      heartbeatAt: new Date(now.getTime() - 60_000),
+    });
+
+    const recovered = await recoverStaleRunningScans(now);
+
+    expect(recovered).toEqual([]);
+    expect(state().scans[0]?.status).toBe("running");
+    expect(state().scans[0]?.completedAt).toBeNull();
+  });
+
+  it("heartbeat vencido → recuperado failed(timeout)", async () => {
+    const now = new Date();
+    addScan("scan-hb-stale", "src-001", "running", new Date(now.getTime() - 60_000), {
+      heartbeatAt: new Date(now.getTime() - SCAN_RUNNING_TTL_MS - 1_000),
+    });
+
+    const recovered = await recoverStaleRunningScans(now);
+
+    expect(recovered.map((scan) => scan.id)).toEqual(["scan-hb-stale"]);
+    expect(state().scans[0]?.status).toBe("failed");
+    expect(state().activity.filter((event) => event.title === "Escaneo fallido")).toHaveLength(1);
+  });
+
+  it("frontera: heartbeatAt == now - TTL → NO tocado (comparación estricta)", async () => {
+    const now = new Date();
+    addScan("scan-hb-edge", "src-001", "running", new Date(now.getTime() - 3_600_000), {
+      heartbeatAt: new Date(now.getTime() - SCAN_RUNNING_TTL_MS),
+    });
+
+    const recovered = await recoverStaleRunningScans(now);
+
+    expect(recovered).toEqual([]);
+    expect(state().scans[0]?.status).toBe("running");
+  });
+
+  it("legacy sin heartbeat usa startedAt (criterio 7.0.4 intacto)", async () => {
+    const now = new Date();
+    addScan("scan-legacy", "src-001", "running", new Date(now.getTime() - SCAN_RUNNING_TTL_MS - 1_000));
+
+    const recovered = await recoverStaleRunningScans(now);
+
+    expect(recovered.map((scan) => scan.id)).toEqual(["scan-legacy"]);
+    expect(state().scans[0]?.status).toBe("failed");
+  });
+});
+
+describe("scanStaleTtlMs — TTL configurable (FASE 7.1.0 M0)", () => {
+  const KEY = "SCAN_RUNNING_TTL_MS";
+
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it("default 10 min cuando no hay env", () => {
+    delete process.env[KEY];
+    expect(scanStaleTtlMs()).toBe(600_000);
+  });
+
+  it("respeta un env válido", () => {
+    process.env[KEY] = "120000";
+    expect(scanStaleTtlMs()).toBe(120_000);
+  });
+
+  it("clampa fuera de rango [1 min, 24 h]", () => {
+    process.env[KEY] = "1000";
+    expect(scanStaleTtlMs()).toBe(60_000);
+    process.env[KEY] = "999999999";
+    expect(scanStaleTtlMs()).toBe(86_400_000);
+  });
+
+  it("env inválido → default", () => {
+    process.env[KEY] = "not-a-number";
+    expect(scanStaleTtlMs()).toBe(600_000);
   });
 });

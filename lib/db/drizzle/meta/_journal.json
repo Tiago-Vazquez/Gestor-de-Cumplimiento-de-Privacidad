@@ -41,6 +41,13 @@
       "when": 1788781863244,
       "tag": "0005_source_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788820000000,
+      "tag": "0006_scan_heartbeat",
+      "breakpoints": true
     }
   ],
   "version": "7",
