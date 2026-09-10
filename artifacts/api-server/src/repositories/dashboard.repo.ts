@@ -1,5 +1,6 @@
-import { count, eq, ne, sql } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { db, findingsTable, scansTable, sourcesTable } from "@workspace/db";
+import { activeFindingsWhere } from "./findings.repo";
 import { computeComplianceScore } from "./compliance-score";
 
 export type DashboardData = {
@@ -23,7 +24,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   const severityRows = await db
     .select({ severity: findingsTable.severity, total: count() })
     .from(findingsTable)
-    .where(ne(findingsTable.status, "resolved"))
+    .where(activeFindingsWhere())
     .groupBy(findingsTable.severity);
 
   const countsBySeverity: DashboardData["countsBySeverity"] = { critical: 0, high: 0, medium: 0, low: 0 };

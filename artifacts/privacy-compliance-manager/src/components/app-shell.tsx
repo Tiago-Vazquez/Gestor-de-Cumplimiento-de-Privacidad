@@ -12,6 +12,7 @@ const navItems = [
   { href: '/masking', label: 'Anonimización', icon: Fingerprint },
   { href: '/reports', label: 'Informes', icon: FileBarChart2 },
   { href: '/scans', label: 'Escaneos', icon: History },
+  { href: '/compliance', label: 'Compliance', icon: ShieldCheck },
 ];
 
 const adminNavItems = [

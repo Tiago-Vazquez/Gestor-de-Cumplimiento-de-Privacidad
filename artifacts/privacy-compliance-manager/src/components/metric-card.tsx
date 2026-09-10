@@ -18,5 +18,5 @@ export function MetricCard({ label, value, detail, icon: Icon, tone = 'teal', tr
 }
 
 export function LoadingCards() {
-  return <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{[1, 2, 3, 4].map((item) => <div className="h-[170px] rounded-2xl border border-border bg-card p-5" key={item}><div className="skeleton h-9 w-9 rounded-xl" /><div className="mt-6 skeleton h-3 w-24 rounded" /><div className="mt-2 skeleton h-8 w-32 rounded" /><div className="mt-2 skeleton h-3 w-40 rounded" /></div>)}</div>;
+  return <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" data-testid="loading-cards">{[1, 2, 3, 4].map((item) => <div className="h-[170px] rounded-2xl border border-border bg-card p-5" key={item}><div className="skeleton h-9 w-9 rounded-xl" /><div className="mt-6 skeleton h-3 w-24 rounded" /><div className="mt-2 skeleton h-8 w-32 rounded" /><div className="mt-2 skeleton h-3 w-40 rounded" /></div>)}</div>;
 }

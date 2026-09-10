@@ -151,6 +151,46 @@ describe("Privacy routes", () => {
     });
   });
 
+  describe("GET /api/reports/:id", () => {
+    it("returns 200 and the report for a valid id", async () => {
+      const createRes = await request(server)
+        .post("/api/reports")
+        .send({ name: "Fetch Me", period: "last_7d" });
+      const id = createRes.body.id;
+
+      const res = await request(server).get(`/api/reports/${id}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ id, name: "Fetch Me", status: "ready" });
+    });
+
+    it("returns 404 for a non-existent report", async () => {
+      const res = await request(server).get("/api/reports/nonexistent");
+      expect(res.status).toBe(404);
+      expect(res.body.title).toBe("Not Found");
+    });
+  });
+
+  describe("GET /api/reports/:id/download", () => {
+    it("returns 200 with Content-Disposition attachment header", async () => {
+      const createRes = await request(server)
+        .post("/api/reports")
+        .send({ name: "Download Me", period: "last_30d" });
+      const id = createRes.body.id;
+
+      const res = await request(server).get(`/api/reports/${id}/download`);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ id, name: "Download Me" });
+      expect(res.headers["content-disposition"]).toContain("attachment");
+      expect(res.headers["content-disposition"]).toContain(`report-${id}.json`);
+    });
+
+    it("returns 404 for a non-existent report", async () => {
+      const res = await request(server).get("/api/reports/nonexistent/download");
+      expect(res.status).toBe(404);
+      expect(res.body.title).toBe("Not Found");
+    });
+  });
+
   describe("POST /api/masking/preview", () => {
     it("returns 200 with masked rows for a valid source", async () => {
       const res = await request(server)

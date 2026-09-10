@@ -184,6 +184,56 @@ export const GetDashboardResponse = zod.object({
 
 
 /**
+ * Aggregated compliance metrics computed from persisted findings and sources (canonical findings only: superseded rows are excluded). Computed on demand; no metric tables are involved.
+ * @summary Get compliance metrics snapshot
+ */
+export const GetComplianceResponse = zod.object({
+  "complianceScore": zod.number().describe('Score computed exclusively by computeComplianceScore (single source of policy; currently 100 with zero open findings, 0 otherwise). Always present, 0..100.'),
+  "openFindings": zod.number().describe('Count of canonical active findings (status <> \'resolved\' AND superseded = false).'),
+  "findingsBySeverity": zod.object({
+  "critical": zod.number(),
+  "high": zod.number(),
+  "medium": zod.number(),
+  "low": zod.number()
+}).describe('Active canonical findings by severity. All four keys are always present (0 when empty) — same convention as Dashboard.'),
+  "findingsByDataType": zod.record(zod.string(), zod.number()).describe('Active canonical findings grouped by dataType. Keys come from the Finding.dataType enum (email, phone, national_id, credit_card, health, address, password); only dataTypes with at least one active finding appear. Empty object when there are no active findings. Named byDataType, never byRule — no finding→rule relation is persisted; per-rule metrics are a later phase if that relation is ever persisted.'),
+  "findingsBySource": zod.array(zod.object({
+  "sourceId": zod.string(),
+  "sourceName": zod.string(),
+  "openFindings": zod.number()
+})).describe('Active canonical findings grouped by source. Findings whose source was deleted (sourceId NULL) are EXCLUDED — no \"unknown\" bucket; their historical attribution survives in sourceName but they do not appear here. Ordered by openFindings DESC, then sourceName ASC (deterministic). Not paginated: acceptable at the current scale of monitored sources (documented decision).')
+})
+
+
+/**
+ * Daily event-based metrics (UTC calendar days) for the last `days` days, including today. Exactly `days` points are returned, oldest first; days without activity are included with zero counts. Resolution counts use the persisted resolution instant (updatedAt of findings currently in status resolved); intermediate re-resolutions are not historically trackable (no status history).
+ * @summary Get compliance trend for the last N days
+ */
+export const getComplianceTrendQueryDaysDefault = 30;
+export const getComplianceTrendQueryDaysMax = 90;
+
+
+
+export const GetComplianceTrendQueryParams = zod.object({
+  "days": zod.coerce.number().int().min(1).max(getComplianceTrendQueryDaysMax).default(getComplianceTrendQueryDaysDefault).describe('Number of UTC calendar days to include, counting back from today (inclusive). Values outside 1..90 are rejected with 400.')
+})
+
+export const getComplianceTrendResponsePointsItemDateRegExp = new RegExp('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+
+
+export const GetComplianceTrendResponse = zod.object({
+  "days": zod.number().describe('The effective number of days in the response (equals the requested days, or the default 30).'),
+  "points": zod.array(zod.object({
+  "date": zod.string().regex(getComplianceTrendResponsePointsItemDateRegExp).describe('UTC calendar day (YYYY-MM-DD). Deliberately not a date-time: bucket identity, no timezone ambiguity.'),
+  "newFindings": zod.number().describe('Canonical findings (superseded = false) whose firstSeenAt falls on this UTC day.'),
+  "resolvedFindings": zod.number().describe('Findings currently in status \'resolved\' whose updatedAt falls on this UTC day. updatedAt is the persisted resolution instant for resolved rows (the only write that leaves a row in resolved). Under the current model a row can only contribute its latest resolution (no status history by design).'),
+  "completedScans": zod.number().describe('Scans with status \'completed\' whose completedAt falls on this UTC day.'),
+  "recordsScanned": zod.number().describe('Sum of recordsRead of the completed scans attributed to this day (completedAt).')
+})).describe('Exactly `days` points, one per UTC calendar day, oldest first.')
+})
+
+
+/**
  * @summary Get recent compliance activity
  */
 export const getActivityQueryLimitDefault = 50;
@@ -614,6 +664,44 @@ export const CreateReportBody = zod.object({
 })
 
 export const CreateReportResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "period": zod.string(),
+  "status": zod.enum(['generating', 'ready']),
+  "createdAt": zod.string(),
+  "findings": zod.number(),
+  "complianceScore": zod.number(),
+  "format": zod.enum(['pdf', 'csv']).optional()
+})
+
+
+/**
+ * @summary Get a single audit report
+ */
+export const GetReportParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetReportResponse = zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "period": zod.string(),
+  "status": zod.enum(['generating', 'ready']),
+  "createdAt": zod.string(),
+  "findings": zod.number(),
+  "complianceScore": zod.number(),
+  "format": zod.enum(['pdf', 'csv']).optional()
+})
+
+
+/**
+ * @summary Download an audit report as JSON attachment
+ */
+export const DownloadReportParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const DownloadReportResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
   "period": zod.string(),

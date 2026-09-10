@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   activityTable,
   db,
@@ -9,6 +9,7 @@ import {
   type Scan,
 } from "@workspace/db";
 import { newId } from "./ids";
+import { activeFindingsWhere } from "./findings.repo";
 import type { Pagination } from "../lib/pagination";
 import {
   computeFingerprint,
@@ -159,7 +160,8 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
 
     // Finding activos de esta fuente: candidatos a resolución por ausencia.
     // Solo se consultan cuando la reconciliación está permitida (completed +
-    // cobertura completa).
+    // cobertura completa). Predicado canónico D8 (status <> 'resolved' AND
+    // superseded = false) reutilizado vía el helper compartido.
     const activeForSource = input.reconcileAbsence
       ? await tx
           .select()
@@ -167,8 +169,7 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
           .where(
             and(
               eq(findingsTable.sourceId, input.sourceId),
-              eq(findingsTable.superseded, false),
-              ne(findingsTable.status, "resolved"),
+              activeFindingsWhere(),
             ),
           )
       : [];

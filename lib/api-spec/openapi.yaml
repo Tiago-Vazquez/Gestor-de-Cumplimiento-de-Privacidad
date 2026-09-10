@@ -230,6 +230,59 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Dashboard"
+  /compliance:
+    get:
+      operationId: getCompliance
+      tags: [dashboard]
+      summary: Get compliance metrics snapshot
+      description: >-
+        Aggregated compliance metrics computed from persisted findings and
+        sources (canonical findings only: superseded rows are excluded).
+        Computed on demand; no metric tables are involved.
+      responses:
+        "200":
+          description: Compliance snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceSummary"
+  /compliance/trend:
+    get:
+      operationId: getComplianceTrend
+      tags: [dashboard]
+      summary: Get compliance trend for the last N days
+      description: >-
+        Daily event-based metrics (UTC calendar days) for the last `days`
+        days, including today. Exactly `days` points are returned, oldest
+        first; days without activity are included with zero counts.
+        Resolution counts use the persisted resolution instant (updatedAt of
+        findings currently in status resolved); intermediate re-resolutions
+        are not historically trackable (no status history).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 90
+            default: 30
+          description: >-
+            Number of UTC calendar days to include, counting back from today
+            (inclusive). Values outside 1..90 are rejected with 400.
+      responses:
+        "200":
+          description: Daily trend points (oldest first)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceTrend"
+        "400":
+          description: days outside the allowed range (1..90)
+        "401":
+          description: Missing or invalid session
   /activity:
     get:
       operationId: getActivity
@@ -616,6 +669,49 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Report"
+  /reports/{id}:
+    get:
+      operationId: getReport
+      tags: [reports]
+      summary: Get a single audit report
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Audit report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "404":
+          description: Report not found
+  /reports/{id}/download:
+    get:
+      operationId: downloadReport
+      tags: [reports]
+      summary: Download an audit report as JSON attachment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Report JSON payload delivered as a downloadable attachment
+          headers:
+            Content-Disposition:
+              description: Instructs the browser to download the response as a file
+              schema: { type: string, example: 'attachment; filename="report-r001.json"' }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "404":
+          description: Report not found
+
   /masking/preview:
     post:
       operationId: previewMasking
@@ -850,6 +946,97 @@ components:
           description: >-
             New connection configuration to store (encrypted). Omit to keep the
             existing configuration.
+    ComplianceSummary:
+      type: object
+      required: [complianceScore, openFindings, findingsBySeverity, findingsByDataType, findingsBySource]
+      properties:
+        complianceScore:
+          type: number
+          description: >-
+            Score computed exclusively by computeComplianceScore (single
+            source of policy; currently 100 with zero open findings, 0
+            otherwise). Always present, 0..100.
+        openFindings:
+          type: number
+          description: Count of canonical active findings (status <> 'resolved' AND superseded = false).
+        findingsBySeverity:
+          type: object
+          required: [critical, high, medium, low]
+          properties:
+            critical: { type: number }
+            high: { type: number }
+            medium: { type: number }
+            low: { type: number }
+          description: >-
+            Active canonical findings by severity. All four keys are always
+            present (0 when empty) — same convention as Dashboard.
+        findingsByDataType:
+          type: object
+          additionalProperties:
+            type: number
+          description: >-
+            Active canonical findings grouped by dataType. Keys come from the
+            Finding.dataType enum (email, phone, national_id, credit_card,
+            health, address, password); only dataTypes with at least one
+            active finding appear. Empty object when there are no active
+            findings. Named byDataType, never byRule — no finding→rule
+            relation is persisted; per-rule metrics are a later phase if that
+            relation is ever persisted.
+        findingsBySource:
+          type: array
+          items:
+            type: object
+            required: [sourceId, sourceName, openFindings]
+            properties:
+              sourceId: { type: string }
+              sourceName: { type: string }
+              openFindings: { type: number }
+          description: >-
+            Active canonical findings grouped by source. Findings whose
+            source was deleted (sourceId NULL) are EXCLUDED — no "unknown"
+            bucket; their historical attribution survives in sourceName but
+            they do not appear here. Ordered by openFindings DESC, then
+            sourceName ASC (deterministic). Not paginated: acceptable at the
+            current scale of monitored sources (documented decision).
+    ComplianceTrend:
+      type: object
+      required: [days, points]
+      properties:
+        days:
+          type: number
+          description: The effective number of days in the response (equals the requested days, or the default 30).
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComplianceTrendPoint"
+          description: Exactly `days` points, one per UTC calendar day, oldest first.
+    ComplianceTrendPoint:
+      type: object
+      required: [date, newFindings, resolvedFindings, completedScans, recordsScanned]
+      properties:
+        date:
+          type: string
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: >-
+            UTC calendar day (YYYY-MM-DD). Deliberately not a date-time:
+            bucket identity, no timezone ambiguity.
+        newFindings:
+          type: number
+          description: Canonical findings (superseded = false) whose firstSeenAt falls on this UTC day.
+        resolvedFindings:
+          type: number
+          description: >-
+            Findings currently in status 'resolved' whose updatedAt falls on
+            this UTC day. updatedAt is the persisted resolution instant for
+            resolved rows (the only write that leaves a row in resolved).
+            Under the current model a row can only contribute its latest
+            resolution (no status history by design).
+        completedScans:
+          type: number
+          description: Scans with status 'completed' whose completedAt falls on this UTC day.
+        recordsScanned:
+          type: number
+          description: Sum of recordsRead of the completed scans attributed to this day (completedAt).
     SourceDetail:
       type: object
       required: [id, name, kind, environment, status, lastScanAt, tables, records, findings, scannable]

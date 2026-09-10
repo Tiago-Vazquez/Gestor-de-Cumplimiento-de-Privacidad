@@ -11,6 +11,8 @@ import type {
 } from "@workspace/db";
 import { forbidden } from "../lib/errors";
 import { decodeJwt } from "jose";
+import { computeComplianceScore } from "../repositories/compliance-score";
+import { buildTrendDayKeys, buildTrendPoints } from "../lib/trend-buckets";
 
 /**
  * Stub in-memory de la capa de repositorios para los tests HTTP.
@@ -43,6 +45,16 @@ const SOURCE_NAMES: Record<string, string> = {
   "src-003": "CRM MySQL",
   "src-004": "Payments PostgreSQL",
 };
+
+/**
+ * Espejo EXACTO de la definición canónica de "finding activo" (D8;
+ * `activeFindingsWhere()` en findings.repo): `status <> 'resolved'` AND
+ * `superseded = false`. Único lugar en el mock para que los tres
+ * consumidores (findings.countOpen, reports.create, dashboard) no diverjan.
+ */
+function isActiveFinding(finding: Finding): boolean {
+  return finding.status !== "resolved" && finding.superseded === false;
+}
 
 export function createMockRepos() {
   const boot = new Date();
@@ -230,7 +242,7 @@ export function createMockRepos() {
         return { ...finding };
       },
       async countOpen() {
-        return state.findings.filter((finding) => finding.status !== "resolved").length;
+        return state.findings.filter(isActiveFinding).length;
       },
     },
     rules: {
@@ -515,8 +527,11 @@ export function createMockRepos() {
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((report) => ({ ...report }));
       },
+      async getById(id: string) {
+        return state.reports.find((report) => report.id === id) ?? null;
+      },
       async create({ name, period, at }: { name: string; period: string; at: Date }) {
-        const openFindings = state.findings.filter((f) => f.status !== "resolved").length;
+        const openFindings = state.findings.filter(isActiveFinding).length;
         const report: Report = {
           id: nextId("r"),
           name,
@@ -541,7 +556,7 @@ export function createMockRepos() {
     },
     dashboard: {
       async getDashboardData() {
-        const open = state.findings.filter((finding) => finding.status !== "resolved");
+        const open = state.findings.filter(isActiveFinding);
         const countsBySeverity: { critical: number; high: number; medium: number; low: number } = { critical: 0, high: 0, medium: 0, low: 0 };
         for (const finding of open) {
           if (finding.severity in countsBySeverity) {
@@ -560,6 +575,71 @@ export function createMockRepos() {
           lastScanAt,
           scanStatus: state.scans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
           complianceScore: open.length === 0 ? 100 : 0,
+        };
+      },
+    },
+
+    // FASE 7.2 (M2.c): espejo del repositorio de compliance. Recalcula desde
+    // el estado in-memory con la MISMA semántica canónica (isActiveFinding,
+    // D8), usa computeComplianceScore como única fuente del score y reutiliza
+    // el helper PURO real de buckets UTC (sin dependencias de BD).
+    compliance: {
+      async getComplianceSummary() {
+        const active = state.findings.filter(isActiveFinding);
+        const findingsBySeverity: { critical: number; high: number; medium: number; low: number } = {
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+        };
+        const findingsByDataType: Record<string, number> = {};
+        const bySource = new Map<string, { sourceId: string; sourceName: string; openFindings: number }>();
+        for (const finding of active) {
+          if (finding.severity in findingsBySeverity) {
+            findingsBySeverity[finding.severity as keyof typeof findingsBySeverity] += 1;
+          }
+          findingsByDataType[finding.dataType] = (findingsByDataType[finding.dataType] ?? 0) + 1;
+          if (finding.sourceId !== null) {
+            const entry =
+              bySource.get(finding.sourceId) ??
+              { sourceId: finding.sourceId, sourceName: finding.sourceName, openFindings: 0 };
+            entry.openFindings += 1;
+            bySource.set(finding.sourceId, entry);
+          }
+        }
+        const openFindings = active.length;
+        return {
+          complianceScore: computeComplianceScore({ openFindings }),
+          openFindings,
+          findingsBySeverity,
+          findingsByDataType,
+          findingsBySource: [...bySource.values()].sort(
+            (a, b) =>
+              b.openFindings - a.openFindings ||
+              (a.sourceName < b.sourceName ? -1 : a.sourceName > b.sourceName ? 1 : 0) ||
+              (a.sourceId < b.sourceId ? -1 : 1),
+          ),
+        };
+      },
+      async getComplianceTrend(days: number) {
+        const dayKeys = buildTrendDayKeys(days, new Date());
+        return {
+          days,
+          points: buildTrendPoints({
+            dayKeys,
+            // Altas: canónicos (superseded = false) por firstSeenAt.
+            // Resoluciones: filas actualmente 'resolved' por updatedAt
+            // (misma semántica que las consultas del repositorio real).
+            newFindings: state.findings
+              .filter((finding) => finding.superseded === false)
+              .map((finding) => ({ at: finding.firstSeenAt })),
+            resolvedFindings: state.findings
+              .filter((finding) => finding.status === "resolved")
+              .map((finding) => ({ at: finding.updatedAt })),
+            completedScans: state.scans
+              .filter((scan) => scan.status === "completed")
+              .map((scan) => ({ at: scan.completedAt, recordsRead: scan.recordsRead })),
+          }),
         };
       },
     },

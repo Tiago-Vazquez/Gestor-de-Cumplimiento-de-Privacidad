@@ -1,6 +1,7 @@
-import { count, desc, ne } from "drizzle-orm";
+import { count, desc, eq } from "drizzle-orm";
 import { activityTable, db, findingsTable, reportsTable, type Report } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
+import { activeFindingsWhere } from "./findings.repo";
 import { computeComplianceScore } from "./compliance-score";
 import { newId } from "./ids";
 
@@ -17,6 +18,12 @@ export function list(pagination?: Pagination): Promise<Report[]> {
   return query;
 }
 
+/** F4 (M4): obtención puntual por id; null si no existe. */
+export async function getById(id: string): Promise<Report | null> {
+  const [report] = await db.select().from(reportsTable).where(eq(reportsTable.id, id));
+  return report ?? null;
+}
+
 /**
  * Genera un informe de forma atómica: calcula los hallazgos pendientes y el
  * compliance score con la política actual (ver compliance-score.ts), inserta
@@ -27,7 +34,7 @@ export async function create({ name, period, at }: { name: string; period: strin
     const [openRow] = await tx
       .select({ total: count() })
       .from(findingsTable)
-      .where(ne(findingsTable.status, "resolved"));
+      .where(activeFindingsWhere());
     const openFindings = openRow?.total ?? 0;
 
     const [report] = await tx

@@ -351,6 +351,63 @@ export interface SourceUpdate {
   connection?: SourceConnectionInput;
 }
 
+/**
+ * Active canonical findings by severity. All four keys are always present (0 when empty) — same convention as Dashboard.
+ */
+export type ComplianceSummaryFindingsBySeverity = {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+};
+
+/**
+ * Active canonical findings grouped by dataType. Keys come from the Finding.dataType enum (email, phone, national_id, credit_card, health, address, password); only dataTypes with at least one active finding appear. Empty object when there are no active findings. Named byDataType, never byRule — no finding→rule relation is persisted; per-rule metrics are a later phase if that relation is ever persisted.
+ */
+export type ComplianceSummaryFindingsByDataType = {[key: string]: number};
+
+export type ComplianceSummaryFindingsBySourceItem = {
+  sourceId: string;
+  sourceName: string;
+  openFindings: number;
+};
+
+export interface ComplianceSummary {
+  /** Score computed exclusively by computeComplianceScore (single source of policy; currently 100 with zero open findings, 0 otherwise). Always present, 0..100. */
+  complianceScore: number;
+  /** Count of canonical active findings (status <> 'resolved' AND superseded = false). */
+  openFindings: number;
+  /** Active canonical findings by severity. All four keys are always present (0 when empty) — same convention as Dashboard. */
+  findingsBySeverity: ComplianceSummaryFindingsBySeverity;
+  /** Active canonical findings grouped by dataType. Keys come from the Finding.dataType enum (email, phone, national_id, credit_card, health, address, password); only dataTypes with at least one active finding appear. Empty object when there are no active findings. Named byDataType, never byRule — no finding→rule relation is persisted; per-rule metrics are a later phase if that relation is ever persisted. */
+  findingsByDataType: ComplianceSummaryFindingsByDataType;
+  /** Active canonical findings grouped by source. Findings whose source was deleted (sourceId NULL) are EXCLUDED — no "unknown" bucket; their historical attribution survives in sourceName but they do not appear here. Ordered by openFindings DESC, then sourceName ASC (deterministic). Not paginated: acceptable at the current scale of monitored sources (documented decision). */
+  findingsBySource: ComplianceSummaryFindingsBySourceItem[];
+}
+
+export interface ComplianceTrendPoint {
+  /**
+     * UTC calendar day (YYYY-MM-DD). Deliberately not a date-time: bucket identity, no timezone ambiguity.
+     * @pattern ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
+     */
+  date: string;
+  /** Canonical findings (superseded = false) whose firstSeenAt falls on this UTC day. */
+  newFindings: number;
+  /** Findings currently in status 'resolved' whose updatedAt falls on this UTC day. updatedAt is the persisted resolution instant for resolved rows (the only write that leaves a row in resolved). Under the current model a row can only contribute its latest resolution (no status history by design). */
+  resolvedFindings: number;
+  /** Scans with status 'completed' whose completedAt falls on this UTC day. */
+  completedScans: number;
+  /** Sum of recordsRead of the completed scans attributed to this day (completedAt). */
+  recordsScanned: number;
+}
+
+export interface ComplianceTrend {
+  /** The effective number of days in the response (equals the requested days, or the default 30). */
+  days: number;
+  /** Exactly `days` points, one per UTC calendar day, oldest first. */
+  points: ComplianceTrendPoint[];
+}
+
 export interface SourceDetail {
   id: string;
   name: string;
@@ -476,6 +533,15 @@ limit?: number;
  * @minimum 0
  */
 offset?: number;
+};
+
+export type GetComplianceTrendParams = {
+/**
+ * Number of UTC calendar days to include, counting back from today (inclusive). Values outside 1..90 are rejected with 400.
+ * @minimum 1
+ * @maximum 90
+ */
+days?: number;
 };
 
 export type GetActivityParams = {

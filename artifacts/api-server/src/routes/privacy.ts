@@ -4,7 +4,14 @@ import {
   CancelScanResponse,
   CreateReportBody,
   GetActivityResponse,
+  GetComplianceResponse,
+  GetComplianceTrendQueryParams,
+  GetComplianceTrendResponse,
   GetDashboardResponse,
+  GetReportParams,
+  GetReportResponse,
+  DownloadReportParams,
+  DownloadReportResponse,
   GetScanParams,
   GetScanResponse,
   ListFindingsQueryParams,
@@ -31,6 +38,8 @@ import { parsePagination } from "../lib/pagination";
 import { logger } from "../lib/logger";
 import {
   mapActivity,
+  mapComplianceSummary,
+  mapComplianceTrend,
   mapFinding,
   mapReport,
   mapRule,
@@ -59,6 +68,23 @@ router.get("/dashboard", async (_req, res) => {
     scanStatus: data.scanStatus,
     findingsBySeverity: data.countsBySeverity,
   }));
+});
+
+// FASE 7.2 (M2.c): métricas de compliance. Mismo modelo que /dashboard:
+// sesión requerida por el middleware global de /api; el repositorio
+// recalcula en cada lectura con el criterio canónico D8.
+router.get("/compliance", async (_req, res) => {
+  const data = await repos.compliance.getComplianceSummary();
+  res.json(GetComplianceResponse.parse(mapComplianceSummary(data)));
+});
+
+// Trend diario UTC. `days` se valida con el zod del contrato (coerce +
+// 1..90 + default 30; fuera de rango → ZodError → 400 problem+json).
+// La ventana SQL se acota dentro del repositorio.
+router.get("/compliance/trend", async (req, res) => {
+  const params = GetComplianceTrendQueryParams.parse(req.query);
+  const data = await repos.compliance.getComplianceTrend(params.days);
+  res.json(GetComplianceTrendResponse.parse(mapComplianceTrend(data)));
 });
 
 router.get("/activity", async (req, res) => {
@@ -187,6 +213,25 @@ router.post("/reports", requireRole("admin"), async (req, res) => {
   const { name, period } = CreateReportBody.parse(req.body);
   const report = await repos.reports.create({ name, period, at: new Date() });
   res.status(201).json(ListReportsResponseItem.parse(mapReport(report)));
+});
+
+router.get("/reports/:id", async (req, res) => {
+  const { id } = GetReportParams.parse(req.params);
+  const report = await repos.reports.getById(id);
+  if (!report) {
+    throw notFound("Report not found");
+  }
+  res.json(GetReportResponse.parse(mapReport(report)));
+});
+
+router.get("/reports/:id/download", async (req, res) => {
+  const { id } = DownloadReportParams.parse(req.params);
+  const report = await repos.reports.getById(id);
+  if (!report) {
+    throw notFound("Report not found");
+  }
+  res.attachment(`report-${report.id}.json`);
+  res.json(DownloadReportResponse.parse(mapReport(report)));
 });
 
 router.post("/masking/preview", requireRole("admin"), async (req, res) => {

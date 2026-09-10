@@ -1,4 +1,5 @@
 import type { Activity, Finding, Report, Rule, Scan, Source } from "@workspace/db";
+import type { ComplianceSummaryData, ComplianceTrendData } from "./repositories/compliance.repo";
 
 /**
  * Mapeadores fila-BaseDeDatos → contrato de la API (@workspace/api-zod).
@@ -98,5 +99,40 @@ export function mapActivity(activity: Activity) {
     description: activity.description,
     createdAt: activity.createdAt.toISOString(),
     severity: activity.severity,
+  };
+}
+
+/**
+ * Contrato `ComplianceSummary` (FASE 7.2, M2.c): el repositorio ya entrega los
+ * valores agregados con el criterio canónico D8 (`activeFindingsWhere`); el
+ * mapper es la frontera dominio→API y no transforma nada (todo son números y
+ * claves ya contractuales). La validación final la hace la ruta con el zod
+ * generado (`GetComplianceResponse`).
+ */
+export function mapComplianceSummary(data: ComplianceSummaryData) {
+  return {
+    complianceScore: data.complianceScore,
+    openFindings: data.openFindings,
+    findingsBySeverity: data.findingsBySeverity,
+    findingsByDataType: data.findingsByDataType,
+    findingsBySource: data.findingsBySource,
+  };
+}
+
+/**
+ * Contrato `ComplianceTrend`: los puntos ya son días calendario UTC
+ * (`YYYY-MM-DD`, cadenas — identidad de bucket por diseño del contrato, no
+ * timestamps), así que el mapper es passthrough tipado.
+ */
+export function mapComplianceTrend(data: ComplianceTrendData) {
+  return {
+    days: data.days,
+    points: data.points.map((point) => ({
+      date: point.date,
+      newFindings: point.newFindings,
+      resolvedFindings: point.resolvedFindings,
+      completedScans: point.completedScans,
+      recordsScanned: point.recordsScanned,
+    })),
   };
 }

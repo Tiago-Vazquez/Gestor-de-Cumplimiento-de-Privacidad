@@ -59,12 +59,24 @@ export async function updateStatus({ id, status, at }: { id: string; status: str
   });
 }
 
-/** Hallazgos pendientes (`status <> "resolved"`), base de métricas del
- * dashboard y de los informes. */
+/**
+ * Definición canónica de "finding activo" (D8, FASE 7.2 M2.b):
+ * `status <> 'resolved'` AND `superseded = false`.
+ *
+ * Única fuente del predicado: `countOpen`, las agregaciones de
+ * `compliance.repo`, `dashboard.repo`, `reports.repo` y la reconciliación
+ * del scanner (M2.b.1) la reutilizan para que ninguna métrica cuente los
+ * duplicados legacy (`superseded = true`, evidencia histórica conservada).
+ */
+export function activeFindingsWhere(): SQL | undefined {
+  return and(ne(findingsTable.status, "resolved"), eq(findingsTable.superseded, false));
+}
+
+/** Hallazgos pendientes según la definición canónica de D8 (base de métricas). */
 export async function countOpen(): Promise<number> {
   const [row] = await db
     .select({ total: count() })
     .from(findingsTable)
-    .where(ne(findingsTable.status, "resolved"));
+    .where(activeFindingsWhere());
   return row?.total ?? 0;
 }

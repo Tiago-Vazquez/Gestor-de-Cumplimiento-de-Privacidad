@@ -24,11 +24,14 @@ import type {
   AdminUser,
   AuthLoginInput,
   AuthUser,
+  ComplianceSummary,
+  ComplianceTrend,
   Dashboard,
   DataSource,
   Finding,
   FindingUpdate,
   GetActivityParams,
+  GetComplianceTrendParams,
   HealthStatus,
   ListFindingsParams,
   ListReportsParams,
@@ -819,6 +822,169 @@ export function useGetDashboard<TData = Awaited<ReturnType<typeof getDashboard>>
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetDashboardQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetComplianceUrl = () => {
+
+
+
+
+  return `/api/compliance`
+}
+
+/**
+ * Aggregated compliance metrics computed from persisted findings and sources (canonical findings only: superseded rows are excluded). Computed on demand; no metric tables are involved.
+ * @summary Get compliance metrics snapshot
+ */
+export const getCompliance = async ( options?: Parameters<typeof customFetch>[1]): Promise<ComplianceSummary> => {
+
+  return customFetch<ComplianceSummary>(getGetComplianceUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetComplianceQueryKey = () => {
+    return [
+    `/api/compliance`
+    ] as const;
+    }
+
+
+export const getGetComplianceQueryOptions = <TData = Awaited<ReturnType<typeof getCompliance>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCompliance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetComplianceQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCompliance>>> = ({ signal }) => getCompliance({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCompliance>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetComplianceQueryResult = NonNullable<Awaited<ReturnType<typeof getCompliance>>>
+export type GetComplianceQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get compliance metrics snapshot
+ */
+
+export function useGetCompliance<TData = Awaited<ReturnType<typeof getCompliance>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCompliance>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetComplianceQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetComplianceTrendUrl = (params?: GetComplianceTrendParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/compliance/trend?${stringifiedParams}` : `/api/compliance/trend`
+}
+
+/**
+ * Daily event-based metrics (UTC calendar days) for the last `days` days, including today. Exactly `days` points are returned, oldest first; days without activity are included with zero counts. Resolution counts use the persisted resolution instant (updatedAt of findings currently in status resolved); intermediate re-resolutions are not historically trackable (no status history).
+ * @summary Get compliance trend for the last N days
+ */
+export const getComplianceTrend = async (params?: GetComplianceTrendParams, options?: Parameters<typeof customFetch>[1]): Promise<ComplianceTrend> => {
+
+  return customFetch<ComplianceTrend>(getGetComplianceTrendUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetComplianceTrendQueryKey = (params?: GetComplianceTrendParams,) => {
+    return [
+    `/api/compliance/trend`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetComplianceTrendQueryOptions = <TData = Awaited<ReturnType<typeof getComplianceTrend>>, TError = ErrorType<void>>(params?: GetComplianceTrendParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getComplianceTrend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetComplianceTrendQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getComplianceTrend>>> = ({ signal }) => getComplianceTrend(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getComplianceTrend>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetComplianceTrendQueryResult = NonNullable<Awaited<ReturnType<typeof getComplianceTrend>>>
+export type GetComplianceTrendQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get compliance trend for the last N days
+ */
+
+export function useGetComplianceTrend<TData = Awaited<ReturnType<typeof getComplianceTrend>>, TError = ErrorType<void>>(
+ params?: GetComplianceTrendParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getComplianceTrend>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetComplianceTrendQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
@@ -2066,6 +2232,160 @@ export const useCreateReport = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getCreateReportMutationOptions(options));
     }
+
+export const getGetReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/reports/${id}`
+}
+
+/**
+ * @summary Get a single audit report
+ */
+export const getReport = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<Report> => {
+
+  return customFetch<Report>(getGetReportUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetReportQueryKey = (id: string,) => {
+    return [
+    `/api/reports/${id}`
+    ] as const;
+    }
+
+
+export const getGetReportQueryOptions = <TData = Awaited<ReturnType<typeof getReport>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetReportQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getReport>>> = ({ signal }) => getReport(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getReport>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetReportQueryResult = NonNullable<Awaited<ReturnType<typeof getReport>>>
+export type GetReportQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a single audit report
+ */
+
+export function useGetReport<TData = Awaited<ReturnType<typeof getReport>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetReportQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDownloadReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/reports/${id}/download`
+}
+
+/**
+ * @summary Download an audit report as JSON attachment
+ */
+export const downloadReport = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<Report> => {
+
+  return customFetch<Report>(getDownloadReportUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDownloadReportQueryKey = (id: string,) => {
+    return [
+    `/api/reports/${id}/download`
+    ] as const;
+    }
+
+
+export const getDownloadReportQueryOptions = <TData = Awaited<ReturnType<typeof downloadReport>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDownloadReportQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof downloadReport>>> = ({ signal }) => downloadReport(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof downloadReport>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type DownloadReportQueryResult = NonNullable<Awaited<ReturnType<typeof downloadReport>>>
+export type DownloadReportQueryError = ErrorType<void>
+
+
+/**
+ * @summary Download an audit report as JSON attachment
+ */
+
+export function useDownloadReport<TData = Awaited<ReturnType<typeof downloadReport>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadReport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getDownloadReportQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getPreviewMaskingUrl = () => {
 
