@@ -24,6 +24,7 @@ const labels: Record<string, string> = {
   completed: 'Completado',
   generating: 'Generando',
   ready: 'Listo',
+  failed: 'Fallido',
   production: 'Producción',
   staging: 'Staging',
   development: 'Desarrollo',
@@ -31,7 +32,7 @@ const labels: Record<string, string> = {
 
 const iconFor = (value: string) => {
   if (value === 'resolved' || value === 'healthy' || value === 'ready' || value === 'completed') return CheckCircle2;
-  if (value === 'critical' || value === 'high' || value === 'warning' || value === 'offline') return CircleAlert;
+  if (value === 'critical' || value === 'high' || value === 'warning' || value === 'offline' || value === 'failed') return CircleAlert;
   if (value === 'in_review' || value === 'medium' || value === 'running' || value === 'scanning') return CircleDot;
   if (value === 'queued' || value === 'generating') return Clock3;
   if (value === 'paused') return Pause;
@@ -42,7 +43,7 @@ const iconFor = (value: string) => {
 
 export function StatusBadge({ value, kind = 'generic' }: StatusBadgeProps) {
   const Icon = iconFor(value);
-  const tone = value === 'critical' || value === 'high' || value === 'offline'
+  const tone = value === 'critical' || value === 'high' || value === 'offline' || value === 'failed'
     ? 'status-danger'
     : value === 'medium' || value === 'warning' || value === 'in_review' || value === 'scanning' || value === 'running'
       ? 'status-warn'
