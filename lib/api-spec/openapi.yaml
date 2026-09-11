@@ -730,6 +730,106 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MaskingPreview"
+
+  /masking/jobs:
+    get:
+      operationId: listMaskingJobs
+      tags: [masking]
+      summary: List masking jobs
+      description: >-
+        Masking jobs, newest first. Same pagination pattern as the other list
+        endpoints (limit default 50, max 100; offset >= 0).
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Masking jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MaskingJob"
+        "401":
+          description: Authentication required
+    post:
+      operationId: createMaskingJob
+      tags: [masking]
+      summary: Create a masking job (admin only)
+      description: >-
+        Generates an anonymized dataset for the given source, tokenizing the
+        requested fields deterministically: same value + same key always yields
+        the same token, preserving the original format.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaskingInput"
+      responses:
+        "201":
+          description: Masking job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaskingJob"
+        "400":
+          description: Invalid input
+        "401":
+          description: Authentication required
+        "403":
+          description: Admin role required
+        "404":
+          description: Source not found
+  /masking/jobs/{id}:
+    get:
+      operationId: getMaskingJob
+      tags: [masking]
+      summary: Get a single masking job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Masking job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaskingJob"
+        "404":
+          description: Masking job not found
+  /masking/jobs/{id}/download:
+    get:
+      operationId: downloadMaskingJob
+      tags: [masking]
+      summary: Download an anonymized dataset as JSON attachment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Anonymized dataset delivered as a downloadable attachment
+          headers:
+            Content-Disposition:
+              description: Instructs the browser to download the response as a file
+              schema: { type: string, example: 'attachment; filename="masking-job-mj_001.json"' }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MaskingDataset"
+        "404":
+          description: Masking job not found
 components:
   securitySchemes:
     bearerAuth:
@@ -1127,7 +1227,44 @@ components:
         rows:
           type: array
           items:
-            type: object
-            additionalProperties:
-              type: string
+            $ref: "#/components/schemas/MaskingRow"
+    MaskingRow:
+      type: object
+      additionalProperties:
+        type: string
+      description: >-
+        One anonymized record as a flat object keyed by column name. Values are
+        strings (non-string payloads are stringified before masking).
+    MaskingJob:
+      type: object
+      required: [id, sourceId, fields, status, createdAt]
+      properties:
+        id: { type: string }
+        sourceId: { type: string }
+        fields:
+          type: array
+          items: { type: string }
+        status: { type: string, enum: [queued, running, ready, failed] }
+        createdAt: { type: string }
+        completedAt: { type: ["string", "null"] }
+        records: { type: number }
+        error: { type: ["string", "null"] }
+      description: >-
+        Job de anonimización: tokeniza los campos solicitados de una fuente con
+        tokenización determinista (mismo valor + misma clave = mismo token).
+        `records` acumula los registros procesados; solo es definitivo cuando
+        status = `ready`.
+    MaskingDataset:
+      type: object
+      required: [jobId, records, fields, rows]
+      properties:
+        jobId: { type: string }
+        records: { type: number }
+        fields:
+          type: array
+          items: { type: string }
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/MaskingRow"
 

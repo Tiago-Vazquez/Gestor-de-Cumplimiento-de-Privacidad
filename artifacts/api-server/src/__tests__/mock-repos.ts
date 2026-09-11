@@ -1,6 +1,7 @@
 import type {
   Activity,
   Finding,
+  MaskingJob,
   Report,
   Rule,
   Scan,
@@ -9,8 +10,18 @@ import type {
   UserRole,
   Session,
 } from "@workspace/db";
-import { forbidden } from "../lib/errors";
+import { badRequest, forbidden, notFound } from "../lib/errors";
 import { decodeJwt } from "jose";
+import {
+  MASKABLE_FIELDS,
+  deriveMaskerKey,
+  maskValue,
+  type MaskableField,
+} from "../lib/masker";
+import {
+  MAX_MASKING_DATASET_BYTES,
+  MAX_MASKING_RECORDS,
+} from "../lib/masking-limits";
 import { computeComplianceScore } from "../repositories/compliance-score";
 import { buildTrendDayKeys, buildTrendPoints } from "../lib/trend-buckets";
 
@@ -37,6 +48,8 @@ export type MockState = {
   scans: Scan[];
   activity: Activity[];
   reports: Report[];
+  /** M5.c: se inicializa perezosamente en createMockRepos. */
+  maskingJobs?: MaskingJob[];
 };
 
 const SOURCE_NAMES: Record<string, string> = {
@@ -54,6 +67,123 @@ const SOURCE_NAMES: Record<string, string> = {
  */
 function isActiveFinding(finding: Finding): boolean {
   return finding.status !== "resolved" && finding.superseded === false;
+}
+
+// ---- FASE 7.3 (M5.c): espejo in-memory de masking.repo ----
+// Réplica EXACTA de la semántica del repo real: validación de campos contra
+// MASKABLE_FIELDS, 404 de fuente inexistente, job `failed` auditable sin
+// dataset (nunca persistencia parcial), límites 1000 filas / ~2 MB, uso del
+// masker REAL (M5.b) y actividad `masking` solo en éxito.
+let maskingMockSeq = 0;
+
+function stripDataset<T extends { dataset?: unknown }>(job: T): Omit<T, "dataset"> {
+  const { dataset: _dataset, ...rest } = job;
+  return rest;
+}
+
+function createMockMaskingRepos(state: MockState) {
+  const jobs = () => (state.maskingJobs ??= []);
+  const RAW_VALUES: Record<MaskableField, (i: number) => string> = {
+    email: (i) => `user${i}@demo.com`,
+    phone: (i) => `+54 9 11 5555 ${String(1000 + i).slice(-4)}`,
+    national_id: (i) => `27.442.918-${i % 10}`,
+    credit_card: (i) => `4539 0213 4567 ${String(8000 + (i % 10000)).padStart(4, "0")}`,
+  };
+
+  return {
+    async list(pagination?: { limit: number; offset: number }) {
+      const sorted = [...jobs()].sort(
+        (a, b) =>
+          b.createdAt.getTime() - a.createdAt.getTime() ||
+          b.id.localeCompare(a.id),
+      );
+      const page = pagination
+        ? sorted.slice(pagination.offset, pagination.offset + pagination.limit)
+        : sorted;
+      return page.map(stripDataset);
+    },
+
+    async getById(id: string) {
+      const job = jobs().find((j) => j.id === id);
+      return job ? stripDataset(job) : null;
+    },
+
+    /** Única vía de salida del dataset (usada por /download). */
+    async getByIdWithDataset(id: string) {
+      const job = jobs().find((j) => j.id === id);
+      return job ? { ...job } : null;
+    },
+
+    async create(input: { sourceId: string; fields: string[]; at: Date }) {
+      const unique = [...new Set(input.fields)];
+      if (unique.length === 0) throw badRequest("At least one field is required");
+      const unsupported = unique.filter(
+        (f) => !(MASKABLE_FIELDS as readonly string[]).includes(f),
+      );
+      if (unsupported.length > 0) {
+        throw badRequest(`Unsupported masking fields: ${unsupported.join(", ")}`);
+      }
+      const source = state.sources.find((s) => s.id === input.sourceId);
+      if (!source) throw notFound("Source not found");
+
+      const completedAt = new Date(input.at.getTime() + 1);
+      const base = {
+        id: `mj-mock-${++maskingMockSeq}`,
+        sourceId: input.sourceId,
+        fields: unique,
+        createdAt: input.at,
+        completedAt,
+      };
+      const failWith = (error: string) => {
+        const row = { ...base, status: "failed" as const, records: 0, error, dataset: null };
+        jobs().push(row);
+        return { ...row };
+      };
+
+      // Centinelas de fallo controlados por los tests (mismos códigos que el
+      // repo real clasifica).
+      if (source.name === "Unreachable PostgreSQL") return failWith("source_unreachable");
+      if (!source.connectionConfig) return failWith("source_not_configured");
+      if (source.name === "Oversized PostgreSQL") {
+        const dataset = {
+          fields: unique,
+          rows: [{ [unique[0]!]: "x".repeat(MAX_MASKING_DATASET_BYTES + 1) }],
+        };
+        if (Buffer.byteLength(JSON.stringify(dataset), "utf8") > MAX_MASKING_DATASET_BYTES) {
+          return failWith("dataset_too_large");
+        }
+      }
+
+      const key = deriveMaskerKey("mock-master-key");
+      const count = Math.min(source.records ?? 0, MAX_MASKING_RECORDS);
+      const rows = Array.from({ length: count }, (_, i) =>
+        Object.fromEntries(
+          unique.map((t) => [
+            t,
+            maskValue(RAW_VALUES[t as MaskableField]!(i), t as MaskableField, key),
+          ]),
+        ),
+      );
+      const row = {
+        ...base,
+        status: "ready" as const,
+        records: count,
+        error: null,
+        dataset: { fields: unique, rows },
+      };
+      jobs().push(row);
+      // Actividad SOLO en éxito (igual que el repo real).
+      state.activity.unshift({
+        id: `a-mock-${++maskingMockSeq}`,
+        type: "masking",
+        title: "Datos anonimizados",
+        description: `${count} registros preparados para testing`,
+        createdAt: completedAt,
+        severity: null,
+      });
+      return { ...row };
+    },
+  };
 }
 
 export function createMockRepos() {
@@ -819,5 +949,7 @@ export function createMockRepos() {
     },
   };
 
-  return { repos, state };
+  state.maskingJobs ??= [];
+  const reposWithMasking = { ...repos, masking: createMockMaskingRepos(state) };
+  return { repos: reposWithMasking, state };
 }

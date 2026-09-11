@@ -514,13 +514,49 @@ export interface MaskingInput {
   fields: string[];
 }
 
-export type MaskingPreviewRowsItem = {[key: string]: string};
+/**
+ * One anonymized record as a flat object keyed by column name. Values are strings (non-string payloads are stringified before masking).
+ */
+export interface MaskingRow {[key: string]: string}
 
 export interface MaskingPreview {
   sourceId: string;
   records: number;
   maskedFields: string[];
-  rows: MaskingPreviewRowsItem[];
+  rows: MaskingRow[];
+}
+
+export type MaskingJobStatus = typeof MaskingJobStatus[keyof typeof MaskingJobStatus];
+
+
+export const MaskingJobStatus = {
+  queued: 'queued',
+  running: 'running',
+  ready: 'ready',
+  failed: 'failed',
+} as const;
+
+/**
+ * Job de anonimización: tokeniza los campos solicitados de una fuente con tokenización determinista (mismo valor + misma clave = mismo token). `records` acumula los registros procesados; solo es definitivo cuando status = `ready`.
+ */
+export interface MaskingJob {
+  id: string;
+  sourceId: string;
+  fields: string[];
+  status: MaskingJobStatus;
+  createdAt: string;
+  /** @nullable */
+  completedAt?: string | null;
+  records?: number;
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface MaskingDataset {
+  jobId: string;
+  records: number;
+  fields: string[];
+  rows: MaskingRow[];
 }
 
 export type ListUsersParams = {
@@ -638,6 +674,18 @@ export const ListScansStatus = {
 } as const;
 
 export type ListReportsParams = {
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListMaskingJobsParams = {
 /**
  * @minimum 1
  * @maximum 100

@@ -5,6 +5,7 @@ import * as activity from "./activity.repo";
 import * as compliance from "./compliance.repo";
 import * as dashboard from "./dashboard.repo";
 import * as findings from "./findings.repo";
+import * as masking from "./masking.repo";
 import * as reports from "./reports.repo";
 import * as rules from "./rules.repo";
 import * as scans from "./scans.repo";
@@ -18,6 +19,7 @@ export const repos = {
   compliance,
   dashboard,
   findings,
+  masking,
   reports,
   rules,
   scans,

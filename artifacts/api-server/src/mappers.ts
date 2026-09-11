@@ -1,4 +1,4 @@
-import type { Activity, Finding, Report, Rule, Scan, Source } from "@workspace/db";
+import type { Activity, Finding, MaskingJob, Report, Rule, Scan, Source } from "@workspace/db";
 import type { ComplianceSummaryData, ComplianceTrendData } from "./repositories/compliance.repo";
 
 /**
@@ -116,6 +116,30 @@ export function mapComplianceSummary(data: ComplianceSummaryData) {
     findingsBySeverity: data.findingsBySeverity,
     findingsByDataType: data.findingsByDataType,
     findingsBySource: data.findingsBySource,
+  };
+}
+
+/**
+ * Contrato `MaskingJob` (FASE 7.3, M5.c): metadatos del job SIN el dataset.
+ * `dataset` (jsonb con las filas anonimizadas) NUNCA sale por aquí — solo el
+ * handler de `/download` lo lee y serializa. El mapper es la frontera que lo
+ * garantiza: el tipo de entrada ni siquiera incluye la columna.
+ */
+export function mapMaskingJob(
+  job: Pick<
+    MaskingJob,
+    "id" | "sourceId" | "fields" | "status" | "records" | "error" | "createdAt" | "completedAt"
+  >,
+) {
+  return {
+    id: job.id,
+    sourceId: job.sourceId,
+    fields: job.fields,
+    status: job.status,
+    createdAt: job.createdAt.toISOString(),
+    completedAt: job.completedAt ? job.completedAt.toISOString() : null,
+    records: job.records,
+    error: job.error,
   };
 }
 

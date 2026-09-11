@@ -725,7 +725,92 @@ export const PreviewMaskingResponse = zod.object({
   "sourceId": zod.string(),
   "records": zod.number(),
   "maskedFields": zod.array(zod.string()),
-  "rows": zod.array(zod.record(zod.string(), zod.string()))
+  "rows": zod.array(zod.record(zod.string(), zod.string()).describe('One anonymized record as a flat object keyed by column name. Values are strings (non-string payloads are stringified before masking).'))
+})
+
+
+/**
+ * Masking jobs, newest first. Same pagination pattern as the other list endpoints (limit default 50, max 100; offset >= 0).
+ * @summary List masking jobs
+ */
+export const listMaskingJobsQueryLimitDefault = 50;
+export const listMaskingJobsQueryLimitMax = 100;
+
+export const listMaskingJobsQueryOffsetDefault = 0;
+export const listMaskingJobsQueryOffsetMin = 0;
+
+
+
+export const ListMaskingJobsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(listMaskingJobsQueryLimitMax).default(listMaskingJobsQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listMaskingJobsQueryOffsetMin).default(listMaskingJobsQueryOffsetDefault)
+})
+
+export const ListMaskingJobsResponseItem = zod.object({
+  "id": zod.string(),
+  "sourceId": zod.string(),
+  "fields": zod.array(zod.string()),
+  "status": zod.enum(['queued', 'running', 'ready', 'failed']),
+  "createdAt": zod.string(),
+  "completedAt": zod.string().nullish(),
+  "records": zod.number().optional(),
+  "error": zod.string().nullish()
+}).describe('Job de anonimización: tokeniza los campos solicitados de una fuente con tokenización determinista (mismo valor + misma clave = mismo token). `records` acumula los registros procesados; solo es definitivo cuando status = `ready`.')
+export const ListMaskingJobsResponse = zod.array(ListMaskingJobsResponseItem)
+
+
+/**
+ * Generates an anonymized dataset for the given source, tokenizing the requested fields deterministically: same value + same key always yields the same token, preserving the original format.
+ * @summary Create a masking job (admin only)
+ */
+export const CreateMaskingJobBody = zod.object({
+  "sourceId": zod.string(),
+  "fields": zod.array(zod.string())
+})
+
+export const CreateMaskingJobResponse = zod.object({
+  "id": zod.string(),
+  "sourceId": zod.string(),
+  "fields": zod.array(zod.string()),
+  "status": zod.enum(['queued', 'running', 'ready', 'failed']),
+  "createdAt": zod.string(),
+  "completedAt": zod.string().nullish(),
+  "records": zod.number().optional(),
+  "error": zod.string().nullish()
+}).describe('Job de anonimización: tokeniza los campos solicitados de una fuente con tokenización determinista (mismo valor + misma clave = mismo token). `records` acumula los registros procesados; solo es definitivo cuando status = `ready`.')
+
+
+/**
+ * @summary Get a single masking job
+ */
+export const GetMaskingJobParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const GetMaskingJobResponse = zod.object({
+  "id": zod.string(),
+  "sourceId": zod.string(),
+  "fields": zod.array(zod.string()),
+  "status": zod.enum(['queued', 'running', 'ready', 'failed']),
+  "createdAt": zod.string(),
+  "completedAt": zod.string().nullish(),
+  "records": zod.number().optional(),
+  "error": zod.string().nullish()
+}).describe('Job de anonimización: tokeniza los campos solicitados de una fuente con tokenización determinista (mismo valor + misma clave = mismo token). `records` acumula los registros procesados; solo es definitivo cuando status = `ready`.')
+
+
+/**
+ * @summary Download an anonymized dataset as JSON attachment
+ */
+export const DownloadMaskingJobParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const DownloadMaskingJobResponse = zod.object({
+  "jobId": zod.string(),
+  "records": zod.number(),
+  "fields": zod.array(zod.string()),
+  "rows": zod.array(zod.record(zod.string(), zod.string()).describe('One anonymized record as a flat object keyed by column name. Values are strings (non-string payloads are stringified before masking).'))
 })
 
 

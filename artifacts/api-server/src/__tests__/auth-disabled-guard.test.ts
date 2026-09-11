@@ -7,7 +7,23 @@ import { assertAuthConfigForEnv, authDisabled } from "../auth/tokens";
 // producción (fail-closed), pero se conserva intacto en development/test.
 // Los helpers leen el entorno en cada llamada, así que basta con stubEnv.
 
-vi.mock("@workspace/db", () => ({ pool: { query: vi.fn(), end: vi.fn() } }));
+vi.mock("@workspace/db", () => ({
+  pool: { query: vi.fn(), end: vi.fn() },
+  // Stubs de tablas: el middleware importa el índice real de repositorios y
+  // los módulos de repo acceden a sus tablas al evaluarse (M5.c añadió
+  // maskingJobsTable). Misma técnica que compliance-repo.test.ts.
+  db: {},
+  findingsTable: {},
+  scansTable: {},
+  activityTable: {},
+  sourcesTable: {},
+  reportsTable: {},
+  rulesTable: {},
+  usersTable: {},
+  userRolesTable: {},
+  sessionsTable: {},
+  maskingJobsTable: {},
+}));
 
 afterEach(() => {
   vi.unstubAllEnvs();

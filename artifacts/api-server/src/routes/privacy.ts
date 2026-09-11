@@ -2,20 +2,28 @@ import { Router, type IRouter } from "express";
 import {
   CancelScanParams,
   CancelScanResponse,
+  CreateMaskingJobBody,
+  CreateMaskingJobResponse,
   CreateReportBody,
   GetActivityResponse,
   GetComplianceResponse,
   GetComplianceTrendQueryParams,
   GetComplianceTrendResponse,
   GetDashboardResponse,
+  GetMaskingJobParams,
+  GetMaskingJobResponse,
   GetReportParams,
   GetReportResponse,
+  DownloadMaskingJobParams,
+  DownloadMaskingJobResponse,
   DownloadReportParams,
   DownloadReportResponse,
   GetScanParams,
   GetScanResponse,
   ListFindingsQueryParams,
   ListFindingsResponse,
+  ListMaskingJobsQueryParams,
+  ListMaskingJobsResponse,
   ListReportsResponse,
   ListReportsResponseItem,
   ListRulesResponse,
@@ -41,6 +49,7 @@ import {
   mapComplianceSummary,
   mapComplianceTrend,
   mapFinding,
+  mapMaskingJob,
   mapReport,
   mapRule,
   mapScan,
@@ -257,6 +266,55 @@ router.post("/masking/preview", requireRole("admin"), async (req, res) => {
     records: source.records,
     maskedFields: fields,
     rows,
+  }));
+});
+
+// FASE 7.3 (M5.c): trabajos de anonimización. Flujo SÍNCRONO: el POST ejecuta
+// el job completo (validación de campos → lectura paginada de la fuente con
+// el conector existente → masker determinista M5.b → persistencia atómica del
+// dataset) y responde 201 con el job ya `ready` o `failed` (auditable; los
+// estados queued/running quedan reservados por el contrato). El dataset vive
+// en masking_jobs.dataset y SOLO sale por /download: el listado y el detalle
+// lo omiten porque mapMaskingJob ni siquiera acepta la columna.
+router.get("/masking/jobs", async (req, res) => {
+  const params = ListMaskingJobsQueryParams.parse(req.query);
+  const rows = await repos.masking.list(params);
+  res.json(ListMaskingJobsResponse.parse(rows.map(mapMaskingJob)));
+});
+
+router.post("/masking/jobs", requireRole("admin"), async (req, res) => {
+  const body = CreateMaskingJobBody.parse(req.body);
+  const job = await repos.masking.create({
+    sourceId: body.sourceId,
+    fields: body.fields,
+    at: new Date(),
+  });
+  res.status(201).json(CreateMaskingJobResponse.parse(mapMaskingJob(job)));
+});
+
+router.get("/masking/jobs/:id", async (req, res) => {
+  const { id } = GetMaskingJobParams.parse(req.params);
+  const job = await repos.masking.getById(id);
+  if (!job) {
+    throw notFound("Masking job not found");
+  }
+  res.json(GetMaskingJobResponse.parse(mapMaskingJob(job)));
+});
+
+// El download devuelve EXACTAMENTE el dataset persistido por ese job: nunca
+// relee la fuente ni re-anonimiza (patrón downloadReport de M4).
+router.get("/masking/jobs/:id/download", async (req, res) => {
+  const { id } = DownloadMaskingJobParams.parse(req.params);
+  const job = await repos.masking.getByIdWithDataset(id);
+  if (!job || job.status !== "ready" || !job.dataset) {
+    throw notFound("Masking dataset not available");
+  }
+  res.attachment(`masking-job-${job.id}.json`);
+  res.json(DownloadMaskingJobResponse.parse({
+    jobId: job.id,
+    records: job.records,
+    fields: job.dataset.fields,
+    rows: job.dataset.rows,
   }));
 });
 

@@ -34,12 +34,15 @@ import type {
   GetComplianceTrendParams,
   HealthStatus,
   ListFindingsParams,
+  ListMaskingJobsParams,
   ListReportsParams,
   ListRulesParams,
   ListScansParams,
   ListSourcesParams,
   ListUsersParams,
+  MaskingDataset,
   MaskingInput,
+  MaskingJob,
   MaskingPreview,
   RegisterInput,
   Report,
@@ -2458,3 +2461,307 @@ export const usePreviewMasking = <TError = ErrorType<unknown>,
       return useMutation(getPreviewMaskingMutationOptions(options));
     }
 
+export const getListMaskingJobsUrl = (params?: ListMaskingJobsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/masking/jobs?${stringifiedParams}` : `/api/masking/jobs`
+}
+
+/**
+ * Masking jobs, newest first. Same pagination pattern as the other list endpoints (limit default 50, max 100; offset >= 0).
+ * @summary List masking jobs
+ */
+export const listMaskingJobs = async (params?: ListMaskingJobsParams, options?: Parameters<typeof customFetch>[1]): Promise<MaskingJob[]> => {
+
+  return customFetch<MaskingJob[]>(getListMaskingJobsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListMaskingJobsQueryKey = (params?: ListMaskingJobsParams,) => {
+    return [
+    `/api/masking/jobs`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListMaskingJobsQueryOptions = <TData = Awaited<ReturnType<typeof listMaskingJobs>>, TError = ErrorType<void>>(params?: ListMaskingJobsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listMaskingJobs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMaskingJobsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMaskingJobs>>> = ({ signal }) => listMaskingJobs(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMaskingJobs>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListMaskingJobsQueryResult = NonNullable<Awaited<ReturnType<typeof listMaskingJobs>>>
+export type ListMaskingJobsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List masking jobs
+ */
+
+export function useListMaskingJobs<TData = Awaited<ReturnType<typeof listMaskingJobs>>, TError = ErrorType<void>>(
+ params?: ListMaskingJobsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listMaskingJobs>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListMaskingJobsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateMaskingJobUrl = () => {
+
+
+
+
+  return `/api/masking/jobs`
+}
+
+/**
+ * Generates an anonymized dataset for the given source, tokenizing the requested fields deterministically: same value + same key always yields the same token, preserving the original format.
+ * @summary Create a masking job (admin only)
+ */
+export const createMaskingJob = async (maskingInput: MaskingInput, options?: Parameters<typeof customFetch>[1]): Promise<MaskingJob> => {
+
+  return customFetch<MaskingJob>(getCreateMaskingJobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(maskingInput)
+  }
+);}
+
+
+
+
+
+export const getCreateMaskingJobMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMaskingJob>>, TError,{data: BodyType<MaskingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createMaskingJob>>, TError,{data: BodyType<MaskingInput>}, TContext> => {
+
+const mutationKey = ['createMaskingJob'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createMaskingJob>>, {data: BodyType<MaskingInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createMaskingJob(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateMaskingJobMutationResult = NonNullable<Awaited<ReturnType<typeof createMaskingJob>>>
+    export type CreateMaskingJobMutationBody = BodyType<MaskingInput>
+    export type CreateMaskingJobMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a masking job (admin only)
+ */
+export const useCreateMaskingJob = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createMaskingJob>>, TError,{data: BodyType<MaskingInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createMaskingJob>>,
+        TError,
+        {data: BodyType<MaskingInput>},
+        TContext
+      > => {
+      return useMutation(getCreateMaskingJobMutationOptions(options));
+    }
+
+export const getGetMaskingJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/masking/jobs/${id}`
+}
+
+/**
+ * @summary Get a single masking job
+ */
+export const getMaskingJob = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<MaskingJob> => {
+
+  return customFetch<MaskingJob>(getGetMaskingJobUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMaskingJobQueryKey = (id: string,) => {
+    return [
+    `/api/masking/jobs/${id}`
+    ] as const;
+    }
+
+
+export const getGetMaskingJobQueryOptions = <TData = Awaited<ReturnType<typeof getMaskingJob>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMaskingJob>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMaskingJobQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMaskingJob>>> = ({ signal }) => getMaskingJob(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMaskingJob>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMaskingJobQueryResult = NonNullable<Awaited<ReturnType<typeof getMaskingJob>>>
+export type GetMaskingJobQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get a single masking job
+ */
+
+export function useGetMaskingJob<TData = Awaited<ReturnType<typeof getMaskingJob>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMaskingJob>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMaskingJobQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDownloadMaskingJobUrl = (id: string,) => {
+
+
+
+
+  return `/api/masking/jobs/${id}/download`
+}
+
+/**
+ * @summary Download an anonymized dataset as JSON attachment
+ */
+export const downloadMaskingJob = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<MaskingDataset> => {
+
+  return customFetch<MaskingDataset>(getDownloadMaskingJobUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDownloadMaskingJobQueryKey = (id: string,) => {
+    return [
+    `/api/masking/jobs/${id}/download`
+    ] as const;
+    }
+
+
+export const getDownloadMaskingJobQueryOptions = <TData = Awaited<ReturnType<typeof downloadMaskingJob>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadMaskingJob>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDownloadMaskingJobQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof downloadMaskingJob>>> = ({ signal }) => downloadMaskingJob(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof downloadMaskingJob>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type DownloadMaskingJobQueryResult = NonNullable<Awaited<ReturnType<typeof downloadMaskingJob>>>
+export type DownloadMaskingJobQueryError = ErrorType<void>
+
+
+/**
+ * @summary Download an anonymized dataset as JSON attachment
+ */
+
+export function useDownloadMaskingJob<TData = Awaited<ReturnType<typeof downloadMaskingJob>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadMaskingJob>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getDownloadMaskingJobQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}

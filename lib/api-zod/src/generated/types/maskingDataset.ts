@@ -7,9 +7,9 @@
  */
 import type { MaskingRow } from './maskingRow';
 
-export interface MaskingPreview {
-  sourceId: string;
+export interface MaskingDataset {
+  jobId: string;
   records: number;
-  maskedFields: string[];
+  fields: string[];
   rows: MaskingRow[];
 }

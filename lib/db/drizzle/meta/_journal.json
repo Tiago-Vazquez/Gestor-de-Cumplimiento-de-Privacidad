@@ -55,6 +55,13 @@
       "when": 1788903482077,
       "tag": "0007_gorgeous_greymalkin",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789045774074,
+      "tag": "0008_classy_chronomancer",
+      "breakpoints": true
     }
   ],
   "version": "7",
