@@ -10,6 +10,7 @@ import {
   recoverStaleRunningScans,
   SCAN_REAPER_INTERVAL_MS,
 } from "./services/scan-recovery";
+import { startScanScheduler, stopScanScheduler } from "./services/scan-scheduler";
 
 // Fail-fast (hardening 6.3B.7): AUTH_DISABLED=true está prohibido en
 // producción — aborta el startup antes de abrir el puerto en lugar de
@@ -89,6 +90,11 @@ const scanReaperTimer = setInterval(() => {
 }, SCAN_REAPER_INTERVAL_MS);
 scanReaperTimer.unref();
 
+// M10.4: scheduler de escaneos automáticos — reclama horarios vencidos vía
+// claimDue (transaccional) y despacha por el pipeline estándar. Una sola
+// instancia por proceso; unref() igual que el reaper.
+startScanScheduler();
+
 // Graceful shutdown: stop accepting new connections, drain the HTTP server,
 // close the PostgreSQL pool and then exit. A watchdog force-exits if draining
 // takes too long (e.g. an open keep-alive connection with 10s idle timeout).
@@ -102,6 +108,9 @@ function shutdown(signal: NodeJS.Signals): void {
 
   // FASE 7.0.4: detener el reaper antes de drenar el servidor.
   clearInterval(scanReaperTimer);
+
+  // M10.4: detener el scheduler antes de drenar — no deja timers activos.
+  stopScanScheduler();
 
   const watchdog = setTimeout(() => {
     logger.error("Graceful shutdown timed out; forcing exit");

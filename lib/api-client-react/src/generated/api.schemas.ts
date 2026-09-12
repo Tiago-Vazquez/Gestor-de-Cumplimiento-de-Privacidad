@@ -445,6 +445,43 @@ export interface ScanInput {
   sourceId: string;
 }
 
+/**
+ * @nullable
+ */
+export type SourceScheduleLastStatus = typeof SourceScheduleLastStatus[keyof typeof SourceScheduleLastStatus] | null;
+
+
+export const SourceScheduleLastStatus = {
+  ok: 'ok',
+  skipped: 'skipped',
+  error: 'error',
+} as const;
+
+export interface SourceSchedule {
+  sourceId: string;
+  enabled: boolean;
+  /**
+     * @minimum 15
+     * @maximum 10080
+     */
+  intervalMinutes: number;
+  /** @nullable */
+  nextRunAt?: string | null;
+  /** @nullable */
+  lastRunAt?: string | null;
+  /** @nullable */
+  lastStatus?: SourceScheduleLastStatus;
+}
+
+export interface SourceScheduleUpdate {
+  enabled: boolean;
+  /**
+     * @minimum 15
+     * @maximum 10080
+     */
+  intervalMinutes?: number;
+}
+
 export type ScanStatus = typeof ScanStatus[keyof typeof ScanStatus];
 
 

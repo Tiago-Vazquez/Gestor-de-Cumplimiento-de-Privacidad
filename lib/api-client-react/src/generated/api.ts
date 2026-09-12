@@ -54,6 +54,8 @@ import type {
   ScanInput,
   SourceCreate,
   SourceDetail,
+  SourceSchedule,
+  SourceScheduleUpdate,
   SourceUpdate,
   UserUpdateInput
 } from './api.schemas';
@@ -1617,6 +1619,157 @@ export const useDeleteSource = <TError = ErrorType<void>,
       return useMutation(getDeleteSourceMutationOptions(options));
     }
 
+export const getGetSourceScheduleUrl = (id: string,) => {
+
+
+
+
+  return `/api/sources/${id}/schedule`
+}
+
+/**
+ * Returns the scan schedule for a source. When no schedule exists yet, a default disabled schedule (intervalMinutes 1440) is returned.
+ * @summary Get the scan schedule of a data source
+ */
+export const getSourceSchedule = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<SourceSchedule> => {
+
+  return customFetch<SourceSchedule>(getGetSourceScheduleUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSourceScheduleQueryKey = (id: string,) => {
+    return [
+    `/api/sources/${id}/schedule`
+    ] as const;
+    }
+
+
+export const getGetSourceScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getSourceSchedule>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSourceSchedule>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSourceScheduleQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSourceSchedule>>> = ({ signal }) => getSourceSchedule(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSourceSchedule>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSourceScheduleQueryResult = NonNullable<Awaited<ReturnType<typeof getSourceSchedule>>>
+export type GetSourceScheduleQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the scan schedule of a data source
+ */
+
+export function useGetSourceSchedule<TData = Awaited<ReturnType<typeof getSourceSchedule>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSourceSchedule>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSourceScheduleQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateSourceScheduleUrl = (id: string,) => {
+
+
+
+
+  return `/api/sources/${id}/schedule`
+}
+
+/**
+ * Admin only. Upsert the scan schedule of a source. When enabled is true, intervalMinutes is required (400 when missing or out of range 15-10080). Enabling sets nextRunAt to now + intervalMinutes. Backend enforces this rule (M10.5).
+ * @summary Create or update the scan schedule of a data source
+ */
+export const updateSourceSchedule = async (id: string,
+    sourceScheduleUpdate: SourceScheduleUpdate, options?: Parameters<typeof customFetch>[1]): Promise<SourceSchedule> => {
+
+  return customFetch<SourceSchedule>(getUpdateSourceScheduleUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(sourceScheduleUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateSourceScheduleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSourceSchedule>>, TError,{id: string;data: BodyType<SourceScheduleUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSourceSchedule>>, TError,{id: string;data: BodyType<SourceScheduleUpdate>}, TContext> => {
+
+const mutationKey = ['updateSourceSchedule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSourceSchedule>>, {id: string;data: BodyType<SourceScheduleUpdate>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateSourceSchedule(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateSourceScheduleMutationResult = NonNullable<Awaited<ReturnType<typeof updateSourceSchedule>>>
+    export type UpdateSourceScheduleMutationBody = BodyType<SourceScheduleUpdate>
+    export type UpdateSourceScheduleMutationError = ErrorType<void>
+
+    /**
+ * @summary Create or update the scan schedule of a data source
+ */
+export const useUpdateSourceSchedule = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSourceSchedule>>, TError,{id: string;data: BodyType<SourceScheduleUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateSourceSchedule>>,
+        TError,
+        {id: string;data: BodyType<SourceScheduleUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateSourceScheduleMutationOptions(options));
+    }
+
 export const getListRulesUrl = (params?: ListRulesParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -2765,3 +2918,10 @@ export function useDownloadMaskingJob<TData = Awaited<ReturnType<typeof download
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+

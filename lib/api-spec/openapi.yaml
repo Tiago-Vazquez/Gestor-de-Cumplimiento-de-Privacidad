@@ -473,6 +473,59 @@ paths:
           description: Source deleted
         "404":
           description: Source not found
+  /sources/{id}/schedule:
+    get:
+      operationId: getSourceSchedule
+      tags: [sources]
+      summary: Get the scan schedule of a data source
+      description: >-
+        Returns the scan schedule for a source. When no schedule exists yet, a
+        default disabled schedule (intervalMinutes 1440) is returned.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Scan schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSchedule"
+        "404":
+          description: Source not found
+    put:
+      operationId: updateSourceSchedule
+      tags: [sources]
+      summary: Create or update the scan schedule of a data source
+      description: >-
+        Admin only. Upsert the scan schedule of a source. When enabled is true,
+        intervalMinutes is required (400 when missing or out of range
+        15-10080). Enabling sets nextRunAt to now + intervalMinutes. Backend
+        enforces this rule (M10.5).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceScheduleUpdate"
+      responses:
+        "200":
+          description: Updated scan schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSchedule"
+        "400":
+          description: Invalid schedule input
+        "404":
+          description: Source not found
   /rules:
     get:
       operationId: listRules
@@ -1177,6 +1230,22 @@ components:
       required: [sourceId]
       properties:
         sourceId: { type: string }
+    SourceSchedule:
+      type: object
+      required: [sourceId, enabled, intervalMinutes]
+      properties:
+        sourceId: { type: string }
+        enabled: { type: boolean }
+        intervalMinutes: { type: number, minimum: 15, maximum: 10080 }
+        nextRunAt: { type: ["string", "null"] }
+        lastRunAt: { type: ["string", "null"] }
+        lastStatus: { type: ["string", "null"], enum: [ok, skipped, error] }
+    SourceScheduleUpdate:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        intervalMinutes: { type: number, minimum: 15, maximum: 10080 }
     Scan:
       type: object
       required: [id, sourceId, status, startedAt, tablesScanned, recordsRead]

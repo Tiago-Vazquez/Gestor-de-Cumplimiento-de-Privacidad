@@ -5,6 +5,7 @@ import type {
   Report,
   Rule,
   Scan,
+  ScanSchedule,
   Source,
   User,
   UserRole,
@@ -41,6 +42,7 @@ import { buildTrendDayKeys, buildTrendPoints } from "../lib/trend-buckets";
 export type MockState = {
   users: User[];
   userRoles: UserRole[];
+  scanSchedules: ScanSchedule[];
   sessions: Session[];
   findings: Finding[];
   sources: (Source & { findingsCount: number })[];
@@ -197,6 +199,7 @@ export function createMockRepos() {
     users: [],
     userRoles: [],
   sessions: [],
+  scanSchedules: [],
     findings: [
       { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
       { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
@@ -900,6 +903,54 @@ export function createMockRepos() {
       },
     },
 
+    scanSchedules: {
+      async upsert(input: { sourceId: string; enabled: boolean; intervalMinutes?: number; at: Date }) {
+        // Semántica del repo real: la fuente debe existir (lock FOR UPDATE
+        // dentro de la transacción); si no, { ok: false, source_not_found }.
+        const source = state.sources.find((item) => item.id === input.sourceId);
+        if (!source) return { ok: false, reason: "source_not_found" as const };
+        const nextRunAt = input.enabled
+          ? new Date(input.at.getTime() + (input.intervalMinutes ?? 1440) * 60_000)
+          : null;
+        const existing = state.scanSchedules.find((item) => item.sourceId === input.sourceId);
+        const row = {
+          id: existing?.id ?? `sched-${state.scanSchedules.length + 1}`,
+          sourceId: input.sourceId,
+          enabled: input.enabled,
+          intervalMinutes: input.intervalMinutes ?? 1440,
+          nextRunAt,
+          lastRunAt: existing?.lastRunAt ?? null,
+          lastStatus: existing?.lastStatus ?? null,
+          lastError: existing?.lastError ?? null,
+          createdAt: existing?.createdAt ?? input.at,
+          updatedAt: input.at,
+        };
+        if (existing) Object.assign(existing, row);
+        else state.scanSchedules.push(row);
+        return { ok: true, schedule: row };
+      },
+      async getBySourceId(sourceId: string) {
+        return state.scanSchedules.find((item) => item.sourceId === sourceId) ?? null;
+      },
+      async claimDue({ now, limit }: { now: Date; limit: number }) {
+        const due = state.scanSchedules
+          .filter((row) => row.enabled && row.nextRunAt !== null && row.nextRunAt <= now)
+          .slice(0, limit);
+        const claimed = due.map((row) => {
+          row.nextRunAt = new Date(now.getTime() + row.intervalMinutes * 60_000);
+          row.lastRunAt = now;
+          return { schedule: row };
+        });
+        return claimed;
+      },
+      async markResult(input: { id: string; status: "ok" | "skipped" | "error"; error?: string | null; at: Date }) {
+        const row = state.scanSchedules.find((item) => item.id === input.id);
+        if (row) {
+          row.lastStatus = input.status;
+          row.lastError = input.error ?? null;
+        }
+      },
+    },
     sessions: {
       /**
        * [6.3B.12] Contrato transaccional del login (equivalente al repo real:

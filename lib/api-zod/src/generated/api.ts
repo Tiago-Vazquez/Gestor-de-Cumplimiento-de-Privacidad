@@ -484,6 +484,62 @@ export const DeleteSourceResponse = zod.void()
 
 
 /**
+ * Returns the scan schedule for a source. When no schedule exists yet, a default disabled schedule (intervalMinutes 1440) is returned.
+ * @summary Get the scan schedule of a data source
+ */
+export const GetSourceScheduleParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const getSourceScheduleResponseIntervalMinutesMin = 15;
+export const getSourceScheduleResponseIntervalMinutesMax = 10080;
+
+
+
+export const GetSourceScheduleResponse = zod.object({
+  "sourceId": zod.string(),
+  "enabled": zod.boolean(),
+  "intervalMinutes": zod.number().min(getSourceScheduleResponseIntervalMinutesMin).max(getSourceScheduleResponseIntervalMinutesMax),
+  "nextRunAt": zod.string().nullish(),
+  "lastRunAt": zod.string().nullish(),
+  "lastStatus": zod.enum(['ok', 'skipped', 'error']).nullish()
+})
+
+
+/**
+ * Admin only. Upsert the scan schedule of a source. When enabled is true, intervalMinutes is required (400 when missing or out of range 15-10080). Enabling sets nextRunAt to now + intervalMinutes. Backend enforces this rule (M10.5).
+ * @summary Create or update the scan schedule of a data source
+ */
+export const UpdateSourceScheduleParams = zod.object({
+  "id": zod.coerce.string()
+})
+
+export const updateSourceScheduleBodyIntervalMinutesMin = 15;
+export const updateSourceScheduleBodyIntervalMinutesMax = 10080;
+
+
+
+export const UpdateSourceScheduleBody = zod.object({
+  "enabled": zod.boolean(),
+  "intervalMinutes": zod.coerce.number().min(updateSourceScheduleBodyIntervalMinutesMin).max(updateSourceScheduleBodyIntervalMinutesMax).optional()
+})
+
+export const updateSourceScheduleResponseIntervalMinutesMin = 15;
+export const updateSourceScheduleResponseIntervalMinutesMax = 10080;
+
+
+
+export const UpdateSourceScheduleResponse = zod.object({
+  "sourceId": zod.string(),
+  "enabled": zod.boolean(),
+  "intervalMinutes": zod.number().min(updateSourceScheduleResponseIntervalMinutesMin).max(updateSourceScheduleResponseIntervalMinutesMax),
+  "nextRunAt": zod.string().nullish(),
+  "lastRunAt": zod.string().nullish(),
+  "lastStatus": zod.enum(['ok', 'skipped', 'error']).nullish()
+})
+
+
+/**
  * @summary List detection rules
  */
 export const listRulesQueryLimitDefault = 50;

@@ -62,6 +62,13 @@
       "when": 1789045774074,
       "tag": "0008_classy_chronomancer",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789223601774,
+      "tag": "0009_flat_payback",
+      "breakpoints": true
     }
   ],
   "version": "7",

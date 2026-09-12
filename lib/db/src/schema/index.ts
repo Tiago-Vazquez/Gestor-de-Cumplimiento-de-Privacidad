@@ -6,6 +6,7 @@ export * from "./findings";
 export * from "./masking-jobs";
 export * from "./reports";
 export * from "./rules";
+export * from "./scan-schedules";
 export * from "./scans";
 export * from "./sessions";
 export * from "./sources";
