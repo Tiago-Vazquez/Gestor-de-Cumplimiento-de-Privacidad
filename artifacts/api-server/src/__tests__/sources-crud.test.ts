@@ -14,6 +14,7 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { fetchCsrfToken } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
@@ -64,6 +65,8 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
   let server: ReturnType<Express["listen"]>;
   let adminCookie: string;
   let auditorCookie: string;
+  let adminCsrf: string;
+  let auditorCsrf: string;
 
   beforeAll(async () => {
     server = app.listen(0);
@@ -74,6 +77,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
       .send({ token: "bootstrap-token-for-tests-only" });
     expect(boot.status).toBe(200);
     adminCookie = cookieOf(boot);
+    adminCsrf = await fetchCsrfToken(server, adminCookie);
 
     const reg = await request(server)
       .post("/api/auth/register")
@@ -86,6 +90,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
       .send({ email: "auditor-src@example.com", password: "secure-password-123" });
     expect(login.status).toBe(200);
     auditorCookie = cookieOf(login);
+    auditorCsrf = await fetchCsrfToken(server, auditorCookie);
   });
 
   afterAll(() => {
@@ -104,6 +109,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .post("/api/sources")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send(validBody);
     expect(res.status).toBe(201);
     expect(res.body.id).toBeDefined();
@@ -121,6 +127,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .post("/api/sources")
       .set("Cookie", auditorCookie)
+      .set("X-CSRF-Token", auditorCsrf)
       .send(validBody);
     expect(res.status).toBe(403);
     expect(state().sources.length).toBe(before);
@@ -131,6 +138,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .post("/api/sources")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send({ name: "Source Placeholder", kind: "postgresql", environment: "development" });
     expect(res.status).toBe(201);
     expect(res.body.name).toBe("Source Placeholder");
@@ -145,6 +153,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .post("/api/sources")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send({ name: "X", kind: "postgresql" }); // falta environment
     expect(res.status).toBe(400);
     expect(state().sources.length).toBe(before);
@@ -170,6 +179,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .patch("/api/sources/src-002")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send({ name: "Warehouse Renombrado" });
     expect(res.status).toBe(200);
     expect(res.body.name).toBe("Warehouse Renombrado");
@@ -183,6 +193,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .patch("/api/sources/src-003")
       .set("Cookie", auditorCookie)
+      .set("X-CSRF-Token", auditorCsrf)
       .send({ name: "Hacked" });
     expect(res.status).toBe(403);
     expect(state().sources.find((s) => s.id === "src-003")?.name).toBe(beforeName);
@@ -192,7 +203,8 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const before = state().sources.length;
     const res = await request(server)
       .delete("/api/sources/src-004")
-      .set("Cookie", adminCookie);
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf);
     expect(res.status).toBe(204);
     expect(state().sources.length).toBe(before - 1);
     expect(state().sources.some((s) => s.id === "src-004")).toBe(false);
@@ -202,7 +214,8 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const before = state().sources.length;
     const res = await request(server)
       .delete("/api/sources/src-001")
-      .set("Cookie", auditorCookie);
+      .set("Cookie", auditorCookie)
+      .set("X-CSRF-Token", auditorCsrf);
     expect(res.status).toBe(403);
     expect(state().sources.length).toBe(before);
     expect(state().sources.some((s) => s.id === "src-001")).toBe(true);

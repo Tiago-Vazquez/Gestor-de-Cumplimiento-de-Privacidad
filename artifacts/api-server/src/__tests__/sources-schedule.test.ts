@@ -17,6 +17,7 @@ import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
 import { repos } from "../repositories";
+import { fetchCsrfToken } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
@@ -56,6 +57,8 @@ describe("Sources schedule API (M10.5)", () => {
   let server: ReturnType<Express["listen"]>;
   let adminCookie: string;
   let auditorCookie: string;
+  let adminCsrf: string;
+  let auditorCsrf: string;
 
   beforeAll(async () => {
     server = app.listen(0);
@@ -66,6 +69,7 @@ describe("Sources schedule API (M10.5)", () => {
       .send({ token: "bootstrap-token-for-tests-only" });
     expect(boot.status).toBe(200);
     adminCookie = cookieOf(boot);
+    adminCsrf = await fetchCsrfToken(server, adminCookie);
 
     const reg = await request(server)
       .post("/api/auth/register")
@@ -78,6 +82,7 @@ describe("Sources schedule API (M10.5)", () => {
       .send({ email: "auditor-sched@example.com", password: "secure-password-123" });
     expect(login.status).toBe(200);
     auditorCookie = cookieOf(login);
+    auditorCsrf = await fetchCsrfToken(server, auditorCookie);
   });
 
   afterAll(() => {
@@ -156,6 +161,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-004"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: true, intervalMinutes: 60 });
       expect(res.status).toBe(200);
       expect(res.body.sourceId).toBe("src-004");
@@ -178,6 +184,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-004"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: false });
       expect(res.status).toBe(200);
       expect(res.body.enabled).toBe(false);
@@ -193,6 +200,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-004"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: false, intervalMinutes: 15 });
       expect(res.status).toBe(200);
       expect(res.body.enabled).toBe(false);
@@ -205,6 +213,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-004"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: true, intervalMinutes: 14 });
       expect(res.status).toBe(400);
       expect(state().scanSchedules.length).toBe(before);
@@ -215,6 +224,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-004"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: true, intervalMinutes: 10081 });
       expect(res.status).toBe(400);
       expect(state().scanSchedules.length).toBe(before);
@@ -225,6 +235,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-004"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: true });
       expect(res.status).toBe(400);
       expect(state().scanSchedules.length).toBe(before);
@@ -235,6 +246,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-004"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: "yes", intervalMinutes: 60 });
       expect(res.status).toBe(400);
       expect(state().scanSchedules.length).toBe(before);
@@ -245,6 +257,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-004"))
         .set("Cookie", auditorCookie)
+        .set("X-CSRF-Token", auditorCsrf)
         .send({ enabled: true, intervalMinutes: 60 });
       expect(res.status).toBe(403);
       expect(state().scanSchedules.length).toBe(before);
@@ -254,6 +267,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-404"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: true, intervalMinutes: 60 });
       expect(res.status).toBe(404);
       expect(state().scanSchedules.find((s) => s.sourceId === "src-404")).toBeUndefined();
@@ -264,6 +278,7 @@ describe("Sources schedule API (M10.5)", () => {
       const res = await request(server)
         .put(SCHEDULE_PATH("src-001"))
         .set("Cookie", adminCookie)
+        .set("X-CSRF-Token", adminCsrf)
         .send({ enabled: true, intervalMinutes: 30 });
       expect(res.status).toBe(200);
       expect(spy).toHaveBeenCalledTimes(1);

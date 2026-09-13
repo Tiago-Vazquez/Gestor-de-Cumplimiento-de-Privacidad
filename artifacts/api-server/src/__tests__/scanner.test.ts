@@ -18,6 +18,7 @@ import {
 } from "../services/scanner";
 import { connectPg, listTables, readPage, type PgConnector, type PgConnection } from "../connectors/postgres";
 import type { MockState } from "./mock-repos";
+import { fetchCsrfToken } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
@@ -384,6 +385,7 @@ describe("runScan ciclo de vida — scans nunca stuck en running (HIGH #2, 7.0.2
 describe("Integración HTTP: POST /api/scans dispara el scanner real", () => {
   let server: ReturnType<Express["listen"]>;
   let adminCookie: string;
+  let adminCsrf: string;
 
   beforeAll(async () => {
     server = app.listen(0);
@@ -393,6 +395,7 @@ describe("Integración HTTP: POST /api/scans dispara el scanner real", () => {
       .send({ token: "bootstrap-token-for-tests-only" });
     expect(boot.status).toBe(200);
     adminCookie = boot.headers["set-cookie"][0].split(";")[0];
+    adminCsrf = await fetchCsrfToken(server, adminCookie);
   });
 
   afterAll(() => {
@@ -415,6 +418,7 @@ describe("Integración HTTP: POST /api/scans dispara el scanner real", () => {
     const res = await request(server)
       .post("/api/scans")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send({ sourceId: "src-scan-http" });
     expect(res.status).toBe(202);
     expect(res.body.status).toBe("running");

@@ -14,6 +14,7 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { fetchCsrfToken } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
@@ -66,6 +67,8 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
   let server: ReturnType<Express["listen"]>;
   let adminCookie: string;
   let auditorCookie: string;
+  let adminCsrf: string;
+  let auditorCsrf: string;
 
   beforeAll(async () => {
     server = app.listen(0);
@@ -76,6 +79,7 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
       .send({ token: "bootstrap-token-for-tests-only" });
     expect(boot.status).toBe(200);
     adminCookie = cookieOf(boot);
+    adminCsrf = await fetchCsrfToken(server, adminCookie);
 
     const reg = await request(server)
       .post("/api/auth/register")
@@ -88,6 +92,7 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
       .send({ email: "auditor-cancel@example.com", password: "secure-password-123" });
     expect(login.status).toBe(200);
     auditorCookie = cookieOf(login);
+    auditorCsrf = await fetchCsrfToken(server, auditorCookie);
   });
 
   afterAll(() => {
@@ -103,7 +108,8 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
     addScan("scan-cancel-1", "running");
     const res = await request(server)
       .post("/api/scans/scan-cancel-1/cancel")
-      .set("Cookie", auditorCookie);
+      .set("Cookie", auditorCookie)
+      .set("X-CSRF-Token", auditorCsrf);
     expect(res.status).toBe(403);
     expect(state().scans.find((item) => item.id === "scan-cancel-1")?.cancelRequested).toBe(false);
   });
@@ -111,7 +117,8 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
   it("202 admin sobre running: flag marcado, status sigue running y SIN cancelRequested (D4)", async () => {
     const res = await request(server)
       .post("/api/scans/scan-cancel-1/cancel")
-      .set("Cookie", adminCookie);
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf);
     expect(res.status).toBe(202);
     expect(res.body).toMatchObject({ id: "scan-cancel-1", status: "running" });
     // D4: el contrato Scan público NO expone el flag interno.
@@ -125,7 +132,8 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
   it("202 idempotente en doble cancelación mientras sigue running", async () => {
     const res = await request(server)
       .post("/api/scans/scan-cancel-1/cancel")
-      .set("Cookie", adminCookie);
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf);
     expect(res.status).toBe(202);
     expect(res.body).toMatchObject({ id: "scan-cancel-1", status: "running" });
   });
@@ -133,7 +141,8 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
   it("404 scan inexistente", async () => {
     const res = await request(server)
       .post("/api/scans/scan-ghost/cancel")
-      .set("Cookie", adminCookie);
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf);
     expect(res.status).toBe(404);
     expect(res.body.title).toBe("Not Found");
   });
@@ -143,12 +152,14 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
     addScan("scan-cancel-fail", "failed");
     const done = await request(server)
       .post("/api/scans/scan-cancel-done/cancel")
-      .set("Cookie", adminCookie);
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf);
     expect(done.status).toBe(409);
     expect(done.body.title).toBe("Conflict");
     const failed = await request(server)
       .post("/api/scans/scan-cancel-fail/cancel")
-      .set("Cookie", adminCookie);
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf);
     expect(failed.status).toBe(409);
     // El flag de un scan terminal nunca se marca vía endpoint.
     expect(state().scans.find((item) => item.id === "scan-cancel-done")?.cancelRequested).toBe(false);

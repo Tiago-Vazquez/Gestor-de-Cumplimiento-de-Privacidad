@@ -12,6 +12,7 @@ import {
 } from "../auth/cookies";
 import { badRequest, conflict, unauthorized } from "../lib/errors";
 import { sendProblemJson } from "../lib/problem-json";
+import { generateCsrfToken } from "../auth/csrf";
 import { hashPassword, verifyPassword } from "@workspace/auth";
 import {
   isValidName,
@@ -270,6 +271,8 @@ async function handleBootstrapLogin(
   // la fila del usuario + lectura de roles reales + firma + alta de sesion en
   // UNA transaccion, para no emitir un JWT admin stale tras una demosion
   // concurrente (cierre del riesgo U3).
+  // M11.1: el JWT emite el claim `csrf` (synchronizer token ligado a esta
+  // sesión) generado una única vez por sesión; nunca se regenera por request.
   const { jwt, roles } = await repos.sessions.createSessionForUser(
     user.sub,
     async (roles) =>
@@ -278,6 +281,7 @@ async function handleBootstrapLogin(
         email: user.email,
         name: user.name,
         roles,
+        csrf: generateCsrfToken(),
       }),
   );
 
@@ -323,6 +327,8 @@ async function handleLocalLogin(
   // [6.3B.12] Login transaccional: lock de users(sub) FOR UPDATE + lectura
   // de roles + firma + alta de sesion en UNA tx (cierra U3: carrera login +
   // role-change que podia emitir un JWT con roles stale y sesion activa).
+  // M11.1: el JWT emite el claim `csrf` (synchronizer token ligado a esta
+  // sesión) generado una única vez por sesión; nunca se regenera por request.
   const { jwt, roles } = await repos.sessions.createSessionForUser(
     user.sub,
     async (roles) =>
@@ -331,6 +337,7 @@ async function handleLocalLogin(
         email: user.email,
         name: user.name,
         roles,
+        csrf: generateCsrfToken(),
       }),
   );
 
