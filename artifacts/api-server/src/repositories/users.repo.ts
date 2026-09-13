@@ -1,5 +1,5 @@
-import { asc, eq } from "drizzle-orm";
-import { db, usersTable, type User } from "@workspace/db";
+import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { db, sessionsTable, usersTable, type User } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 
 export async function getBySub(sub: string): Promise<User | null> {
@@ -47,6 +47,51 @@ export async function updatePasswordHash(
     .update(usersTable)
     .set({ passwordHash, updatedAt: new Date() })
     .where(eq(usersTable.sub, sub));
+}
+
+/**
+ * Cambio de contraseña autenticado (M11.2.1), atómico con la invalidación de
+ * sesiones. En una MISMA transacción:
+ *  1. lockea la fila del usuario (mismo orden de locks que createSessionForUser
+ *     y setRolesAndRevokeSessions: users(sub) → sessions, evita deadlock);
+ *  2. actualiza el password hash;
+ *  3. revoca todas las sesiones activas del usuario EXCEPTO `exceptJti` (la
+ *     sesión desde la que se realizó el cambio, que debe seguir válida).
+ *
+ * Ante cualquier error la transacción hace ROLLBACK: no queda hash nuevo con
+ * sesiones viejas activas ni hash viejo con sesiones ya revocadas. Devuelve el
+ * número de sesiones revocadas (0 si no había otras).
+ */
+export async function changePasswordAndRevokeOtherSessions(
+  sub: string,
+  passwordHash: string,
+  exceptJti: string | null,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    await tx
+      .select({ sub: usersTable.sub })
+      .from(usersTable)
+      .where(eq(usersTable.sub, sub))
+      .for("update");
+
+    await tx
+      .update(usersTable)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(usersTable.sub, sub));
+
+    const conditions = [
+      eq(sessionsTable.userSub, sub),
+      isNull(sessionsTable.revokedAt),
+    ];
+    if (exceptJti) conditions.push(ne(sessionsTable.jti, exceptJti));
+
+    const rows = await tx
+      .update(sessionsTable)
+      .set({ revokedAt: new Date() })
+      .where(and(...conditions))
+      .returning({ jti: sessionsTable.jti });
+    return rows.length;
+  });
 }
 
 /** Actualiza el timestamp del último login exitoso. */

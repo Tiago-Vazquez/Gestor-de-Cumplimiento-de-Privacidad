@@ -100,6 +100,39 @@ paths:
       responses:
         "204":
           description: Session cleared
+  /auth/password/change:
+    post:
+      operationId: authPasswordChange
+      tags: [auth]
+      summary: Change own password (revokes all other active sessions; current session stays valid)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, format: password }
+                newPassword: { type: string, format: password, minLength: 12 }
+      responses:
+        "200":
+          description: Password changed; other sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  revokedSessions: { type: integer, minimum: 0 }
+        "400":
+          description: Invalid request (missing fields, password policy or account without local password)
+        "401":
+          description: Not authenticated or current password incorrect
+        "403":
+          description: Missing/invalid CSRF token (cookie-based sessions)
+        "429":
+          description: Too many password change attempts (rate limited)
   /auth/me:
     get:
       operationId: authMe

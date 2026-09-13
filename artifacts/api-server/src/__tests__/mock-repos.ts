@@ -787,6 +787,33 @@ export function createMockRepos() {
         const user = state.users.find((u) => u.sub === sub);
         if (user) { user.passwordHash = passwordHash; user.updatedAt = new Date(); }
       },
+      /**
+       * M11.2.1: contrato del repo real, versión in-memory. Actualiza el hash
+       * y revoca en un único paso todas las sesiones activas del usuario
+       * EXCEPTO `exceptJti` (sesión actual, que debe sobrevivir al cambio).
+       */
+      async changePasswordAndRevokeOtherSessions(
+        sub: string,
+        passwordHash: string,
+        exceptJti: string | null,
+      ) {
+        const user = state.users.find((u) => u.sub === sub);
+        if (!user) return 0;
+        user.passwordHash = passwordHash;
+        user.updatedAt = new Date();
+        let revoked = 0;
+        for (const session of state.sessions) {
+          if (
+            session.userSub === sub &&
+            session.revokedAt === null &&
+            session.jti !== exceptJti
+          ) {
+            session.revokedAt = new Date();
+            revoked += 1;
+          }
+        }
+        return revoked;
+      },
       async updateLastLogin(sub: string) {
         const user = state.users.find((u) => u.sub === sub);
         if (user) { user.lastLoginAt = new Date(); }

@@ -5,6 +5,7 @@ import { logger } from "../lib/logger";
 import { repos } from "../repositories";
 import { isProductionEnv, signToken, verifyToken } from "../auth/tokens";
 import { requireAuth, type AuthedRequest } from "../auth/middleware";
+import { requireCsrf } from "../auth/csrf";
 import {
   extractSessionToken,
   sessionCookieName,
@@ -421,6 +422,117 @@ router.post("/register", registerLimiter, async (req, res) => {
     roles: ["auditor"],
   });
 });
+
+/**
+ * Rate limit dedicado al cambio de contraseña (M11.2.1): 5 intentos / 15 min,
+ * clave compuesta IP + sub autenticado. Es una operación sensible (verifica la
+ * contraseña actual y revoca sesiones) y costosa (scrypt): bucket propio para
+ * que agotarlo no afecte al login ni al registro, y viceversa. Los limiters
+ * globales de app.ts actúan como segunda capa.
+ */
+const passwordChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    sendProblemJson(res, {
+      type: "about:blank",
+      title: "Too Many Requests",
+      status: 429,
+      detail: "Too many password change attempts, please try again later.",
+    });
+  },
+  keyGenerator: (req) => {
+    const ip = req.ip ?? "unknown";
+    const sub = (req as AuthedRequest).user?.sub ?? "anonymous";
+    return `${ip}:${sub}`;
+  },
+});
+
+/**
+ * POST /api/auth/password/change (M11.2.1)
+ *
+ * Cambio de contraseña autenticado. Requiere sesión activa (requireAuth) y,
+ * cuando la sesión viaja por cookie, el header `X-CSRF-Token` (requireCsrf de
+ * M11.1 — el router /auth se monta antes del guard global, así que el middleware
+ * se aplica a nivel de ruta; misma implementación, cero modificaciones).
+ *
+ * Flujo:
+ *  1. verifica la contraseña actual contra el hash almacenado (scrypt);
+ *  2. valida la nueva contraseña con la MISMA política del registro
+ *     (isValidPassword: mínimo 12 caracteres);
+ *  3. hashea y actualiza en la misma transacción que revoca todas las demás
+ *     sesiones activas del usuario; la sesión actual (exceptJti) permanece.
+ *
+ * Nunca registra ni devuelve: contraseñas, hash, JWT ni tokens CSRF.
+ */
+router.post(
+  "/password/change",
+  requireAuth(),
+  passwordChangeLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const authed = (req as AuthedRequest).user;
+    if (!authed?.sub) throw unauthorized("Missing or invalid session");
+
+    const body = req.body ?? {};
+    const { currentPassword, newPassword } = body;
+    if (typeof currentPassword !== "string" || currentPassword.length === 0) {
+      throw badRequest("currentPassword is required");
+    }
+    if (typeof newPassword !== "string" || newPassword.length === 0) {
+      throw badRequest("newPassword is required");
+    }
+
+    const account = await repos.users.getBySub(authed.sub);
+    if (!account) {
+      throw unauthorized("Missing or invalid session");
+    }
+    if (!account.passwordHash) {
+      // Cuentas sin contraseña local (bootstrap-admin, futuros OIDC): no hay
+      // hash contra el que verificar la contraseña actual.
+      throw badRequest("Password change is not available for this account");
+    }
+
+    // Verificación de la contraseña actual (scrypt, tiempo constante interno).
+    const currentValid = await verifyPassword(
+      currentPassword,
+      account.passwordHash,
+    );
+    if (!currentValid) {
+      throw unauthorized("Invalid credentials");
+    }
+
+    // MISMA política que el registro — no se inventa una nueva.
+    if (!isValidPassword(newPassword)) {
+      throw badRequest("Password must be at least 12 characters");
+    }
+
+    // La nueva contraseña debe diferir de la actual (evita "rotaciones" no-op).
+    if (newPassword === currentPassword) {
+      throw badRequest("New password must differ from the current password");
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+
+    // Transacción única: hash nuevo + revocación del resto de sesiones.
+    const revokedSessions =
+      await repos.users.changePasswordAndRevokeOtherSessions(
+        authed.sub,
+        passwordHash,
+        authed.jti ?? null,
+      );
+
+    // Auditoría mínima: evento sin secretos (nunca password/hash/JWT/CSRF).
+    logger.info(
+      { event: "password-change", sub: authed.sub, revokedSessions },
+      "Password changed; other sessions revoked",
+    );
+
+    res.status(200).json({ ok: true, revokedSessions });
+  },
+);
 
 /**
  * POST /api/auth/logout
