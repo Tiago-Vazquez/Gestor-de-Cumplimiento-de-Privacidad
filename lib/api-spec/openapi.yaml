@@ -133,6 +133,72 @@ paths:
           description: Missing/invalid CSRF token (cookie-based sessions)
         "429":
           description: Too many password change attempts (rate limited)
+  /auth/sessions:
+    get:
+      operationId: authListSessions
+      tags: [auth]
+      summary: List own active sessions
+      description: Returns metadata (jti, createdAt, expiresAt, current) of all active sessions for the authenticated user. Never exposes CSRF tokens or secrets.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionListResponse"
+        "401":
+          description: Not authenticated
+  /auth/sessions/{jti}:
+    delete:
+      operationId: authRevokeSession
+      tags: [auth]
+      summary: Revoke one own session
+      description: Revokes a single session by jti. Returns 404 (not 403) for non-existent, already-revoked, or other users' sessions to prevent enumeration. Revoking the current session is allowed.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: jti
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Session revoked (idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: boolean, example: true }
+        "401":
+          description: Not authenticated
+        "403":
+          description: Missing/invalid CSRF token (cookie-based sessions)
+        "404":
+          description: Session not found or does not belong to current user
+  /auth/logout-all:
+    post:
+      operationId: authLogoutAll
+      tags: [auth]
+      summary: Revoke all own sessions (including current)
+      description: Revokes every active session of the authenticated user. The current session becomes invalid for subsequent requests (401 via allowlist). Other users' sessions are unaffected.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: All sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: integer, minimum: 0 }
+        "401":
+          description: Not authenticated
+        "403":
+          description: Missing/invalid CSRF token (cookie-based sessions)
   /auth/me:
     get:
       operationId: authMe
@@ -949,6 +1015,34 @@ components:
           description: User email (normalized to lowercase server-side)
         password: { type: string, minLength: 12 }
         name: { type: string }
+    SessionSummary:
+      type: object
+      required: [jti, createdAt, expiresAt, current]
+      description: Metadata of a single active session (never exposes secrets).
+      properties:
+        jti:
+          type: string
+          format: uuid
+          description: Session allowlist identifier.
+        createdAt:
+          type: string
+          format: date-time
+          description: When the session was issued (issued_at).
+        expiresAt:
+          type: string
+          format: date-time
+          description: Session expiration (mirrors JWT exp).
+        current:
+          type: boolean
+          description: "True when this session is the one making the request."
+    SessionListResponse:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionSummary"
     AuthUser:
       type: object
       required: [sub, roles]

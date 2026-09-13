@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { db, sessionsTable, usersTable, userRolesTable, type Session } from "@workspace/db";
 import { decodeJwt } from "jose";
 
@@ -78,6 +78,42 @@ export async function revokeByJti(jti: string): Promise<boolean> {
     .where(and(eq(sessionsTable.jti, jti), isNull(sessionsTable.revokedAt)))
     .returning({ jti: sessionsTable.jti });
   return rows.length > 0;
+}
+
+/**
+ * Lista las sesiones ACTIVAS de un usuario (no revocadas y no expiradas),
+ * ordenadas por emisión descendente. Para `GET /api/auth/sessions` (M11.2.2):
+ * devuelve solo metadatos propios de la fila — jti, fechas — nunca el claim
+ * csrf (que vive en el JWT, no en la fila) ni ningún secreto.
+ */
+export async function listActiveByUser(userSub: string): Promise<Session[]> {
+  return db
+    .select()
+    .from(sessionsTable)
+    .where(
+      and(
+        eq(sessionsTable.userSub, userSub),
+        isNull(sessionsTable.revokedAt),
+        gt(sessionsTable.expiresAt, new Date()),
+      ),
+    )
+    .orderBy(desc(sessionsTable.issuedAt));
+}
+
+/**
+ * Revoca TODAS las sesiones activas de un usuario (incluida la actual).
+ * Para `POST /api/auth/logout-all` (M11.2.2). No transaccional: la revocación
+ * es idempotente (re-chequea revoked_at IS NULL) y un fallo a mitad de camino
+ * solo deja sesiones activas que la expiración del JWT invalidará igualmente.
+ * Devuelve el número de sesiones revocadas en esta llamada.
+ */
+export async function revokeAllForUser(userSub: string): Promise<number> {
+  const rows = await db
+    .update(sessionsTable)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(sessionsTable.userSub, userSub), isNull(sessionsTable.revokedAt)))
+    .returning({ jti: sessionsTable.jti });
+  return rows.length;
 }
 
 /**

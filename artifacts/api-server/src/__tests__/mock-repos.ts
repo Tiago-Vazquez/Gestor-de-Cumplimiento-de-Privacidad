@@ -1024,6 +1024,30 @@ export function createMockRepos() {
         session.revokedAt = new Date();
         return true;
       },
+      /** M11.2.2 — lista sesiones activas del usuario, emisión descendente. */
+      async listActiveByUser(userSub: string) {
+        const now = new Date();
+        return state.sessions
+          .filter(
+            (s) =>
+              s.userSub === userSub &&
+              s.revokedAt === null &&
+              s.expiresAt > now,
+          )
+          .sort((a, b) => b.issuedAt.getTime() - a.issuedAt.getTime())
+          .map((s) => ({ ...s }));
+      },
+      /** M11.2.2 — revoca TODAS las sesiones activas del usuario (incluida actual). */
+      async revokeAllForUser(userSub: string) {
+        let revoked = 0;
+        for (const session of state.sessions) {
+          if (session.userSub === userSub && session.revokedAt === null) {
+            session.revokedAt = new Date();
+            revoked += 1;
+          }
+        }
+        return revoked;
+      },
     },
   };
 

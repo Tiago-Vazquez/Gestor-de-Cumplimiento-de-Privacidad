@@ -11,7 +11,7 @@ import {
   sessionCookieName,
   sessionCookieOptions,
 } from "../auth/cookies";
-import { badRequest, conflict, unauthorized } from "../lib/errors";
+import { badRequest, conflict, notFound, unauthorized } from "../lib/errors";
 import { sendProblemJson } from "../lib/problem-json";
 import { generateCsrfToken } from "../auth/csrf";
 import { hashPassword, verifyPassword } from "@workspace/auth";
@@ -531,6 +531,118 @@ router.post(
     );
 
     res.status(200).json({ ok: true, revokedSessions });
+  },
+);
+
+/**
+ * Rate limit dedicado a la gestión de sesiones (M11.2.2): 30 peticiones /
+ * 15 min, clave compuesta IP + sub autenticado. Cubre GET /sessions,
+ * DELETE /sessions/:jti y POST /logout-all: operaciones autenticadas de baja
+ * frecuencia; bucket propio para que un abuso no agote el bucket global ni el
+ * de login. Los limiters globales de app.ts actúan como segunda capa.
+ */
+const sessionManagementLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    sendProblemJson(res, {
+      type: "about:blank",
+      title: "Too Many Requests",
+      status: 429,
+      detail: "Too many session management requests, please try again later.",
+    });
+  },
+  keyGenerator: (req) => {
+    const ip = req.ip ?? "unknown";
+    const sub = (req as AuthedRequest).user?.sub ?? "anonymous";
+    return `${ip}:${sub}`;
+  },
+});
+
+/**
+ * GET /api/auth/sessions (M11.2.2)
+ *
+ * Lista las sesiones activas del usuario autenticado. Solo metadatos de la
+ * fila (jti, fechas); NUNCA el claim csrf (vive en el JWT), tokens ni hashes.
+ * `current: true` marca la sesión que realiza la petición (por jti).
+ */
+router.get("/sessions", requireAuth(), sessionManagementLimiter, async (req, res) => {
+  const authed = (req as AuthedRequest).user;
+  if (!authed?.sub) throw unauthorized("Missing or invalid session");
+
+  const rows = await repos.sessions.listActiveByUser(authed.sub);
+  res.status(200).json({
+    sessions: rows.map((s) => ({
+      jti: s.jti,
+      createdAt: s.issuedAt.toISOString(),
+      expiresAt: s.expiresAt.toISOString(),
+      current: s.jti === authed.jti,
+    })),
+  });
+});
+
+/**
+ * DELETE /api/auth/sessions/:jti (M11.2.2)
+ *
+ * Revoca UNA sesión propia. Aislamiento: si el jti no existe o pertenece a
+ * OTRO usuario, responde 404 idéntico (nunca 403) para no permitir enumerar
+ * sesiones ajenas. Idempotente: una sesión ya revocada responde 200.
+ * Revocar la sesión actual está permitido: la siguiente petición con esa
+ * sesión recibirá 401 (invalidación por jti en requireAuth).
+ *
+ * CSRF: cookie sin X-CSRF-Token → 403 (requireCsrf, M11.1). Bearer puro no
+ * usa cookies, así que no hay CSRF posible y queda exento por diseño.
+ */
+router.delete(
+  "/sessions/:jti",
+  requireAuth(),
+  sessionManagementLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const authed = (req as AuthedRequest).user;
+    if (!authed?.sub) throw unauthorized("Missing or invalid session");
+
+    const jti = req.params.jti;
+    const session = jti ? await repos.sessions.findActiveByJti(jti) : null;
+    // 404 uniforme para: inexistente, ajena o ya revocada (no filtramos cuál).
+    if (!session || session.userSub !== authed.sub) {
+      throw notFound("Session not found");
+    }
+
+    await repos.sessions.revokeByJti(jti as string);
+    res.status(200).json({ revoked: true });
+  },
+);
+
+/**
+ * POST /api/auth/logout-all (M11.2.2)
+ *
+ * Revoca TODAS las sesiones activas del usuario, INCLUIDA la actual.
+ * Respuesta 200 { revoked } emitida con la sesión ya muerta: la siguiente
+ * petición con la sesión actual recibirá 401. No limpia la cookie aquí —
+ * el cliente debe tratarlo como un logout y redirigir a login (mismo
+ * comportamiento que /logout, que sí limpia; el JWT revocado no sirve de
+ * todos modos gracias al allowlist).
+ *
+ * No afecta sesiones de otros usuarios (filtra por userSub).
+ */
+router.post(
+  "/logout-all",
+  requireAuth(),
+  sessionManagementLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const authed = (req as AuthedRequest).user;
+    if (!authed?.sub) throw unauthorized("Missing or invalid session");
+
+    const revoked = await repos.sessions.revokeAllForUser(authed.sub);
+    logger.info(
+      { event: "logout-all", sub: authed.sub, revoked },
+      "All sessions revoked by user",
+    );
+    res.status(200).json({ revoked });
   },
 );
 
