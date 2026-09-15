@@ -69,6 +69,13 @@
       "when": 1789223601774,
       "tag": "0009_flat_payback",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789223700000,
+      "tag": "0010_session_idle",
+      "breakpoints": true
     }
   ],
   "version": "7",

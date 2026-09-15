@@ -14,6 +14,7 @@ import {
 import { badRequest, conflict, notFound, unauthorized } from "../lib/errors";
 import { sendProblemJson } from "../lib/problem-json";
 import { generateCsrfToken } from "../auth/csrf";
+import { sessionIdleSeconds } from "../lib/env";
 import { hashPassword, verifyPassword } from "@workspace/auth";
 import {
   isValidName,
@@ -604,8 +605,11 @@ router.delete(
     const authed = (req as AuthedRequest).user;
     if (!authed?.sub) throw unauthorized("Missing or invalid session");
 
-    const jti = req.params.jti;
-    const session = jti ? await repos.sessions.findActiveByJti(jti) : null;
+    const rawJti = req.params.jti;
+    const jti = Array.isArray(rawJti) ? rawJti[0] : rawJti;
+    const session = jti
+      ? await repos.sessions.findActiveByJti(jti, sessionIdleSeconds())
+      : null;
     // 404 uniforme para: inexistente, ajena o ya revocada (no filtramos cuál).
     if (!session || session.userSub !== authed.sub) {
       throw notFound("Session not found");

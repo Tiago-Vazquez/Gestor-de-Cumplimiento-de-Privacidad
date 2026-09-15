@@ -3,6 +3,8 @@ import { forbidden, unauthorized } from "./errors";
 import { extractSessionToken } from "./cookies";
 import { authDisabled, JWT_ISSUER, verifyToken, type AuthTokenPayload } from "./tokens";
 import { repos } from "../repositories";
+import { sessionIdleSeconds } from "../lib/env";
+import { logger } from "../lib/logger";
 
 /** Request autenticado: lleva el payload del JWT verificado en `req.user`. */
 export interface AuthedRequest extends Request {
@@ -64,7 +66,8 @@ export function requireAuth() {
       res.set("WWW-Authenticate", WWW_AUTHENTICATE);
       throw unauthorized("Missing or invalid session");
     }
-    const activeSession = await repos.sessions.findActiveByJti(payload.jti);
+    const idleSeconds = sessionIdleSeconds();
+    const activeSession = await repos.sessions.findActiveByJti(payload.jti, idleSeconds);
     if (!activeSession) {
       res.set("WWW-Authenticate", WWW_AUTHENTICATE);
       throw unauthorized("Missing or invalid session");
@@ -82,6 +85,20 @@ export function requireAuth() {
     }
 
     (req as AuthedRequest).user = payload;
+
+    // M11.2.3 — refrescar timestamp de última actividad. Fallo no rompe el
+    // request: si no podemos actualizar, es mejor dejar al usuario continuar
+    // que bloquearlo. La expiración eventual manejará el cierre si la sesión
+    // realmente está inactiva.
+    try {
+      await repos.sessions.touchLastUsed(payload.jti);
+    } catch (err) {
+      logger.warn(
+        { jti: payload.jti, err },
+        "Failed to update last_used_at",
+      );
+    }
+
     next();
   };
 }

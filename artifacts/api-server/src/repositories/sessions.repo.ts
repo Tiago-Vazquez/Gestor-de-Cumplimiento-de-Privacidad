@@ -55,8 +55,11 @@ export async function createSessionForUser(
   });
 }
 
-/** Devuelve la sesión solo si está activa (no revocada y no expirada). */
-export async function findActiveByJti(jti: string): Promise<Session | null> {
+/** Devuelve la sesión solo si está activa (no revocada, no expirada y sin idle). */
+export async function findActiveByJti(
+  jti: string,
+  idleSeconds: number,
+): Promise<Session | null> {
   const [row] = await db
     .select()
     .from(sessionsTable)
@@ -65,9 +68,21 @@ export async function findActiveByJti(jti: string): Promise<Session | null> {
         eq(sessionsTable.jti, jti),
         isNull(sessionsTable.revokedAt),
         gt(sessionsTable.expiresAt, new Date()),
+        gt(
+          sessionsTable.lastUsedAt,
+          new Date(Date.now() - idleSeconds * 1000),
+        ),
       ),
     );
   return row ?? null;
+}
+
+/** Actualiza el timestamp de última actividad de la sesión. */
+export async function touchLastUsed(jti: string): Promise<void> {
+  await db
+    .update(sessionsTable)
+    .set({ lastUsedAt: new Date() })
+    .where(eq(sessionsTable.jti, jti));
 }
 
 /** Revoca la sesión si estaba activa; true si la revocación fue efectiva. */

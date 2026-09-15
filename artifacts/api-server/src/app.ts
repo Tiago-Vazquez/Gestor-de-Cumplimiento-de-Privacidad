@@ -8,19 +8,12 @@ import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { numberFromEnv } from "./lib/env";
 import { sendProblemJson } from "./lib/problem-json";
 import { notFoundHandler } from "./middlewares/not-found";
 import { errorHandler } from "./middlewares/error-handler";
 
 const isProduction = process.env.NODE_ENV === "production";
-
-/** Positive number from an env var, falling back to `fallback` when unset/invalid. */
-function numberFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
 
 /**
  * Trusted proxy hops in front of this server. Hardening 6.3B.23 (F23-01,

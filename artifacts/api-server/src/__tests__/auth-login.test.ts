@@ -39,6 +39,7 @@ function seedSessionFor(token: string) {
     issuedAt: new Date(),
     expiresAt: new Date((exp ?? 0) * 1000),
     revokedAt: null,
+    lastUsedAt: new Date(),
   });
 }
 

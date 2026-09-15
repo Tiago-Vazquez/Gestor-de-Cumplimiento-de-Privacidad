@@ -1005,16 +1005,31 @@ export function createMockRepos() {
           issuedAt: new Date(),
           expiresAt: new Date(exp * 1000),
           revokedAt: null,
+          lastUsedAt: new Date(),
         };
         state.sessions.push(created);
         return { jwt, roles };
       },
-      async findActiveByJti(jti: string) {
+      async findActiveByJti(jti: string, idleSeconds: number) {
         const now = new Date();
-        const session = state.sessions.find(
-          (s) => s.jti === jti && s.revokedAt === null && s.expiresAt > now,
-        );
+        const idleThreshold = new Date(now.getTime() - idleSeconds * 1000);
+        const session = state.sessions.find((s) => {
+          // `lastUsedAt` ausente (sesiones creadas manualmente en tests de
+          // M11.2.2 y anteriores) equivale a la migración con DEFAULT NOW():
+          // se trata como actividad reciente, igual que en producción.
+          const lastUsed = s.lastUsedAt ?? now;
+          return (
+            s.jti === jti &&
+            s.revokedAt === null &&
+            s.expiresAt > now &&
+            lastUsed > idleThreshold
+          );
+        });
         return session ? { ...session } : null;
+      },
+      async touchLastUsed(jti: string) {
+        const session = state.sessions.find((s) => s.jti === jti);
+        if (session) session.lastUsedAt = new Date();
       },
       async revokeByJti(jti: string) {
         const session = state.sessions.find(
@@ -1023,6 +1038,17 @@ export function createMockRepos() {
         if (!session) return false;
         session.revokedAt = new Date();
         return true;
+      },
+      /** M11.2.1 — variante transaccional: mismo comportamiento, firma de tx. */
+      async revokeAllSessionsForUserTx(_tx: unknown, userSub: string) {
+        let revoked = 0;
+        for (const session of state.sessions) {
+          if (session.userSub === userSub && session.revokedAt === null) {
+            session.revokedAt = new Date();
+            revoked += 1;
+          }
+        }
+        return revoked;
       },
       /** M11.2.2 — lista sesiones activas del usuario, emisión descendente. */
       async listActiveByUser(userSub: string) {
