@@ -5,6 +5,7 @@ import {
   ApiError,
   getGetDashboardQueryKey,
   getGetSourceQueryKey,
+  getGetSourceScheduleQueryKey,
   getListScansQueryKey,
   getListSourcesQueryKey,
   SourceCreateEnvironment,
@@ -12,14 +13,16 @@ import {
   useCreateSource,
   useDeleteSource,
   useGetSource,
+  useGetSourceSchedule,
   useListSources,
   useStartScan,
   useUpdateSource,
 } from '@workspace/api-client-react';
-import type { DataSource, SourceConnectionInput, SourceCreate, SourceDetail, SourceUpdate } from '@workspace/api-client-react';
+import type { DataSource, SourceConnectionInput, SourceCreate, SourceDetail, SourceSchedule, SourceUpdate } from '@workspace/api-client-react';
 import { useAuth } from '@/auth/auth-context';
 import { PageHeading } from '@/components/app-shell';
 import { StatusBadge } from '@/components/status-badge';
+import { SourceScheduleDialog } from '@/components/SourceScheduleDialog';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -436,13 +439,21 @@ function DeleteSourceDialog({ source }: { source: DataSource }) {
   );
 }
 
-function SourceRow({ source, canAdmin, onEdit }: { source: DataSource; canAdmin: boolean; onEdit: (sourceId: string) => void }) {
+function formatInterval(minutes: number): string {
+  if (minutes >= 1440) return `cada ${minutes / 1440} d`;
+  if (minutes % 60 === 0) return `cada ${minutes / 60} h`;
+  return `cada ${minutes} min`;
+}
+
+function SourceRow({ source, canAdmin, onEdit, onSchedule }: { source: DataSource; canAdmin: boolean; onEdit: (sourceId: string) => void; onSchedule: (source: DataSource) => void }) {
+  const scheduleQuery = useGetSourceSchedule(source.id);
+  const schedule = scheduleQuery.data;
   const queryClient = useQueryClient();
   const scan = useStartScan();
   const Icon = sourceIcons[source.kind] ?? Database;
   const scanSource = () => scan.mutate({ data: { sourceId: source.id } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListSourcesQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() }); } });
   return <div className={rowActionsGrid} data-testid={`row-source-${source.id}`}>
-    <div className="flex min-w-0 items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e9eef5] text-[#45617d]"><Icon size={19} /></div><div className="min-w-0"><p className="truncate text-sm font-bold">{source.name}</p><p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><span>{sourceNames[source.kind] ?? source.kind}</span><span>·</span><span>{source.tables} tablas</span></p></div></div>
+    <div className="flex min-w-0 items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e9eef5] text-[#45617d]"><Icon size={19} /></div><div className="min-w-0"><p className="truncate text-sm font-bold">{source.name}</p><p className="mt-1 text-[10px] font-medium text-[#267a6d]" data-testid={`chip-schedule-${source.id}`} title={schedule?.nextRunAt ? `Próxima ejecución: ${new Date(schedule.nextRunAt).toLocaleString('es-ES')}` : undefined}>{schedule?.enabled ? `Programado · ${formatInterval(schedule.intervalMinutes)}` : 'Escaneo manual'}</p></div></div>
     <StatusBadge value={source.environment} kind="generic" />
     <StatusBadge value={source.status} kind="status" />
     <div><p className="font-mono text-xs font-medium">{source.records.toLocaleString('es-ES')}</p><p className="mt-1 text-[10px] text-muted-foreground">registros</p></div>
@@ -450,6 +461,7 @@ function SourceRow({ source, canAdmin, onEdit }: { source: DataSource; canAdmin:
     {canAdmin ? <div className="flex flex-wrap items-center gap-1.5 md:justify-end">
       <button disabled={scan.isPending} onClick={scanSource} className={rowActionButton} data-testid={`button-scan-source-${source.id}`}>{scan.isPending ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> : <Play size={13} aria-hidden="true" />} Escanear</button>
       <button type="button" onClick={() => onEdit(source.id)} className={rowActionButton} data-testid={`button-edit-source-${source.id}`} aria-haspopup="dialog"><Pencil size={13} aria-hidden="true" /> Editar</button>
+      <button type="button" onClick={() => onSchedule(source)} className={rowActionButton} data-testid={`button-schedule-${source.id}`} aria-haspopup="dialog">Configurar</button>
       <DeleteSourceDialog source={source} />
     </div> : <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">solo lectura</span>}
   </div>;
@@ -460,7 +472,12 @@ export default function SourcesPage() {
   const { isAdmin } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [scheduleSource, setScheduleSource] = useState<DataSource | null>(null);
   const sources = sourcesQuery.data ?? [];
+  const scheduleId = scheduleSource?.id ?? '';
+  const scheduleQuery = useGetSourceSchedule(scheduleId, {
+    query: { queryKey: getGetSourceScheduleQueryKey(scheduleId), enabled: scheduleSource !== null },
+  });
   const scannedRecently = sources.filter((source) => {
     try { const age = Date.now() - new Date(source.lastScanAt).getTime(); return age < 7 * 24 * 60 * 60 * 1000; } catch { return false; }
   }).length;
@@ -477,6 +494,14 @@ export default function SourcesPage() {
     {createOpen && isAdmin && <SourceCreatePanel onDone={() => setCreateOpen(false)} />}
     {editingId !== null && isAdmin && <SourceEditPanel sourceId={editingId} onDone={() => setEditingId(null)} />}
     <div className="mb-6 grid gap-4 sm:grid-cols-3"><div className="rounded-2xl border border-card-border bg-card p-5 shadow-[var(--shadow-card)]"><p className="label-caps">Cobertura total</p><p className="mt-2 font-display text-2xl font-bold">{coverage === null ? '—' : `${coverage}%`}</p><p className="mt-1 text-xs text-muted-foreground">{coverage === null ? 'sin fuentes conectadas' : `${scannedRecently} de ${sources.length} fuentes con escaneo en los últimos 7 días`}</p></div><div className="rounded-2xl border border-card-border bg-card p-5 shadow-[var(--shadow-card)]"><p className="label-caps">Registros bajo control</p><p className="mt-2 font-display text-2xl font-bold">{sources.reduce((sum, source) => sum + source.records, 0).toLocaleString('es-ES')}</p><p className="mt-1 text-xs text-muted-foreground">entre todos los entornos</p></div><div className="rounded-2xl border border-card-border bg-card p-5 shadow-[var(--shadow-card)]"><p className="label-caps">Última actualización</p><p className="mt-2 font-display text-2xl font-bold">{lastScanAt ? relative(lastScanAt) : '—'}</p><p className="mt-1 flex items-center gap-1.5 text-xs text-primary"><RefreshCw size={12} /> último scan registrado en la conexión</p></div></div>
-    {sourcesQuery.isLoading ? <div className="rounded-2xl border border-card-border bg-card p-5" data-testid="sources-loading">{[1, 2, 3].map((row) => <div className="flex gap-3 border-b border-border py-5" key={row}><div className="skeleton h-10 w-10 rounded-xl" /><div className="flex-1"><div className="skeleton h-4 w-1/3 rounded" /><div className="mt-2 skeleton h-3 w-1/4 rounded" /></div></div>)}</div> : sourcesQuery.isError ? <div className="rounded-2xl border border-[#edc5bd] bg-[#fff8f6] p-10 text-center" data-testid="list-error" role="alert"><p className="font-display font-bold">No pudimos conectar con las fuentes.</p><button onClick={() => sourcesQuery.refetch()} className="mt-4 text-xs font-bold text-primary underline" data-testid="button-retry-sources">Reintentar</button></div> : sourcesQuery.data?.length ? <div className="overflow-hidden rounded-2xl border border-card-border bg-card shadow-[var(--shadow-card)]"><div className="hidden grid-cols-[1.55fr_.8fr_.75fr_.72fr_.8fr_190px] gap-4 border-b border-border bg-[#f8fafb] px-5 py-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground md:grid"><span>Fuente</span><span>Entorno</span><span>Estado</span><span>Registros</span><span>Hallazgos</span><span /></div>{sourcesQuery.data.map((source) => <SourceRow key={source.id} source={source} canAdmin={isAdmin} onEdit={setEditingId} />)}</div> : <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center" data-testid="empty-state"><ShieldCheck className="mx-auto mb-3 text-muted-foreground/50" size={30} /><p className="font-display text-lg font-bold">Aún no hay fuentes conectadas</p><p className="mt-1 text-sm text-muted-foreground">Cuando añadas una conexión aparecerá aquí su cobertura.</p></div>}
+    {sourcesQuery.isLoading ? <div className="rounded-2xl border border-card-border bg-card p-5" data-testid="sources-loading">{[1, 2, 3].map((row) => <div className="flex gap-3 border-b border-border py-5" key={row}><div className="skeleton h-10 w-10 rounded-xl" /><div className="flex-1"><div className="skeleton h-4 w-1/3 rounded" /><div className="mt-2 skeleton h-3 w-1/4 rounded" /></div></div>)}</div> : sourcesQuery.isError ? <div className="rounded-2xl border border-[#edc5bd] bg-[#fff8f6] p-10 text-center" data-testid="list-error" role="alert"><p className="font-display font-bold">No pudimos conectar con las fuentes.</p><button onClick={() => sourcesQuery.refetch()} className="mt-4 text-xs font-bold text-primary underline" data-testid="button-retry-sources">Reintentar</button></div> : sourcesQuery.data?.length ? <div className="overflow-hidden rounded-2xl border border-card-border bg-card shadow-[var(--shadow-card)]"><div className="hidden grid-cols-[1.55fr_.8fr_.75fr_.72fr_.8fr_190px] gap-4 border-b border-border bg-[#f8fafb] px-5 py-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground md:grid"><span>Fuente</span><span>Entorno</span><span>Estado</span><span>Registros</span><span>Hallazgos</span><span /></div>{sourcesQuery.data.map((source) => <SourceRow key={source.id} source={source} canAdmin={isAdmin} onEdit={setEditingId} onSchedule={setScheduleSource} />)}</div> : <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center" data-testid="empty-state"><ShieldCheck className="mx-auto mb-3 text-muted-foreground/50" size={30} /><p className="font-display text-lg font-bold">Aún no hay fuentes conectadas</p><p className="mt-1 text-sm text-muted-foreground">Cuando añadas una conexión aparecerá aquí su cobertura.</p></div>}
+    {scheduleSource && (
+      <SourceScheduleDialog
+        sourceId={scheduleSource.id}
+        schedule={scheduleQuery.data ?? null}
+        open
+        onOpenChange={(open) => { if (!open) setScheduleSource(null); }}
+      />
+    )}
   </section>;
 }
