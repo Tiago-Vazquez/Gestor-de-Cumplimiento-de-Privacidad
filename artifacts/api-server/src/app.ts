@@ -64,6 +64,17 @@ const jsonBodyLimit = process.env.JSON_BODY_LIMIT ?? "16kb";
 
 const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
+// Probes de infraestructura (Fase C): nunca se limitan por rate limit porque un
+// orquestador los consulta con frecuencia y un 429 haría reiniciar un proceso
+// sano. `express-rate-limit` corre montado en `/api`, así que se compara el path
+// con ese prefijo ya removido sobre `originalUrl` (estable ante el montaje).
+const UNTHROTTLED_PATHS = new Set(["/healthz", "/livez", "/readyz"]);
+
+function isProbeRequest(req: express.Request): boolean {
+  const path = req.originalUrl.split("?")[0].replace(/^\/api(?=\/)/, "");
+  return UNTHROTTLED_PATHS.has(path);
+}
+
 // Respond with problem+json so every error body in the API shares one format.
 function rateLimitHandler(
   _req: express.Request,
@@ -85,8 +96,8 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  // Keep the health endpoint unthrottled for monitoring probes.
-  skip: (req) => req.path === "/healthz",
+  // Health/liveness/readiness quedan fuera del bucket general.
+  skip: isProbeRequest,
 });
 
 const mutationsLimiter = rateLimit({
