@@ -150,10 +150,10 @@ beforeEach(() => {
 });
 
 describe('SourcesPage — chip de programación (M10.6)', () => {
-  it('1. sin programación muestra «Escaneo manual» y no expone tooltip', () => {
+  it('1. sin programación muestra «Manual» y no expone tooltip', () => {
     arrange();
     const chip = screen.getByTestId('chip-schedule-src-1');
-    expect(chip).toHaveTextContent('Escaneo manual');
+    expect(chip).toHaveTextContent('Manual');
     expect(chip).not.toHaveAttribute('title');
   });
 
@@ -190,6 +190,32 @@ describe('SourcesPage — chip de programación (M10.6)', () => {
       'title',
       `Próxima ejecución: ${new Date(nextRunAt).toLocaleString('es-ES')}`,
     );
+  });
+
+  it('4b. programación deshabilitada con historial muestra «Pausado» y tooltip con última ejecución y último resultado', () => {
+    arrange({
+      schedules: {
+        'src-1': scheduleFixture({
+          enabled: false,
+          intervalMinutes: 360,
+          lastRunAt: '2026-11-30T08:00:00.000Z',
+          lastStatus: 'ok',
+        }),
+      },
+    });
+    expect(screen.getByTestId('chip-schedule-src-1')).toHaveTextContent('Pausado');
+    expect(screen.getByTestId('chip-schedule-src-1')).toHaveAttribute(
+      'title',
+      expect.stringContaining(`Última ejecución: ${new Date('2026-11-30T08:00:00.000Z').toLocaleString('es-ES')}`),
+    );
+    expect(screen.getByTestId('chip-schedule-src-1')).toHaveAttribute('title', expect.stringContaining('Último resultado: OK'));
+  });
+
+  it('4c. fila pausada recién creada (sin historial, intervalo por defecto) se muestra «Manual»', () => {
+    // Limitación del contrato: GET no distingue «sin fila» de una fila pausada
+    // con defaults; ambas muestran «Manual» (comportamiento efectivo).
+    arrange({ schedules: { 'src-1': scheduleFixture({ enabled: false }) } });
+    expect(screen.getByTestId('chip-schedule-src-1')).toHaveTextContent('Manual');
   });
 });
 
@@ -255,7 +281,34 @@ describe('SourceScheduleDialog — guardado (M10.6)', () => {
   it('11. el diálogo respeta los límites y el default del contrato (15 / 10080 / 1440)', () => {
     expect([MIN_INTERVAL, MAX_INTERVAL]).toEqual([15, 10080]);
     expect(SCAN_SCHEDULE_DEFAULT_MINUTES).toBe(1440);
-    expect(INTERVAL_OPTIONS.map((option) => option.value)).toEqual([60, 360, 720, 1440, 10080]);
+    expect(INTERVAL_OPTIONS.map((option) => option.value)).toEqual([15, 30, 60, 360, 720, 1440, 10080]);
+  });
+});
+
+describe('SourceScheduleDialog — estado de ejecución (M15)', () => {
+  it('muestra próxima ejecución, última ejecución y último resultado cuando existen', () => {
+    renderDialog({
+      schedule: scheduleFixture({
+        enabled: true,
+        intervalMinutes: 360,
+        nextRunAt: '2026-12-01T09:30:00.000Z',
+        lastRunAt: '2026-11-30T08:00:00.000Z',
+        lastStatus: 'error',
+      }),
+    });
+    expect(screen.getByTestId('schedule-info')).toBeInTheDocument();
+    expect(screen.getByTestId('schedule-next-run')).toHaveTextContent(
+      `Próxima ejecución: ${new Date('2026-12-01T09:30:00.000Z').toLocaleString('es-ES')}`,
+    );
+    expect(screen.getByTestId('schedule-last-run')).toHaveTextContent(
+      `Última ejecución: ${new Date('2026-11-30T08:00:00.000Z').toLocaleString('es-ES')}`,
+    );
+    expect(screen.getByTestId('schedule-last-status')).toHaveTextContent('Último resultado: Error');
+  });
+
+  it('no muestra el bloque de estado cuando el schedule no tiene historial', () => {
+    renderDialog();
+    expect(screen.queryByTestId('schedule-info')).not.toBeInTheDocument();
   });
 });
 

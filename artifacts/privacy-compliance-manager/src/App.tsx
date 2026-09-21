@@ -22,6 +22,8 @@ import ReportsPage from '@/pages/reports';
 import ScansPage from '@/pages/scans';
 import CompliancePage from '@/pages/compliance';
 import UsersPage from '@/pages/users';
+import SessionsPage from '@/pages/sessions';
+import AuditPage from '@/pages/audit';
 import NotFound from '@/pages/not-found';
 import {
   Route,
@@ -127,6 +129,8 @@ function Router() {
         <Route path="/scans" component={ScansPage} />
         <Route path="/compliance" component={CompliancePage} />
         <Route path="/users" component={UsersPage} />
+        <Route path="/sessions" component={SessionsPage} />
+        <Route path="/audit" component={AuditPage} />
         <Route component={NotFound} />
       </Switch>
     </AppShell>

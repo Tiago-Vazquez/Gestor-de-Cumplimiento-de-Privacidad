@@ -20,7 +20,15 @@ const SCAN_SCHEDULE_DEFAULT_MINUTES = 1440;
 const MIN_INTERVAL = 15;
 const MAX_INTERVAL = 10080;
 
+/** Etiqueta legible de `lastStatus` (contrato SourceSchedule). */
+const LAST_STATUS_LABEL: Record<string, string> = { ok: "OK", error: "Error", skipped: "Omitido" };
+
+const formatWhen = (value: string | null | undefined): string =>
+  value ? new Date(value).toLocaleString("es-ES") : "—";
+
 const INTERVAL_OPTIONS = [
+  { label: "15 minutos", value: 15 },
+  { label: "30 minutos", value: 30 },
   { label: "1 hora", value: 60 },
   { label: "6 horas", value: 360 },
   { label: "12 horas", value: 720 },
@@ -111,6 +119,19 @@ export function SourceScheduleDialog({ sourceId, schedule, open, onOpenChange }:
             </div>
           )}
 
+          {(schedule?.nextRunAt || schedule?.lastRunAt || schedule?.lastStatus) && (
+            <div
+              className="space-y-1 rounded-lg border border-border bg-muted/50 p-3 text-xs text-muted-foreground"
+              data-testid="schedule-info"
+            >
+              <p data-testid="schedule-next-run">Próxima ejecución: {formatWhen(schedule?.nextRunAt)}</p>
+              <p data-testid="schedule-last-run">Última ejecución: {formatWhen(schedule?.lastRunAt)}</p>
+              <p data-testid="schedule-last-status">
+                Último resultado: {schedule?.lastStatus ? (LAST_STATUS_LABEL[schedule.lastStatus] ?? schedule.lastStatus) : "—"}
+              </p>
+            </div>
+          )}
+
           {error && (
             <p className="text-sm text-destructive" data-testid="error-message">{error}</p>
           )}
@@ -131,4 +152,4 @@ export function SourceScheduleDialog({ sourceId, schedule, open, onOpenChange }:
   );
 }
 
-export { SCAN_SCHEDULE_DEFAULT_MINUTES, MIN_INTERVAL, MAX_INTERVAL, INTERVAL_OPTIONS };
+export { SCAN_SCHEDULE_DEFAULT_MINUTES, MIN_INTERVAL, MAX_INTERVAL, INTERVAL_OPTIONS, LAST_STATUS_LABEL };

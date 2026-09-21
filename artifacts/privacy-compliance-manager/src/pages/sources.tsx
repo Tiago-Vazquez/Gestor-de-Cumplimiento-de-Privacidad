@@ -22,7 +22,7 @@ import type { DataSource, SourceConnectionInput, SourceCreate, SourceDetail, Sou
 import { useAuth } from '@/auth/auth-context';
 import { PageHeading } from '@/components/app-shell';
 import { StatusBadge } from '@/components/status-badge';
-import { SourceScheduleDialog } from '@/components/SourceScheduleDialog';
+import { LAST_STATUS_LABEL, SCAN_SCHEDULE_DEFAULT_MINUTES, SourceScheduleDialog } from '@/components/SourceScheduleDialog';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -445,6 +445,39 @@ function formatInterval(minutes: number): string {
   return `cada ${minutes} min`;
 }
 
+/**
+ * Etiqueta del chip de programación (M15):
+ * - enabled=true → «Programado · cada X».
+ * - enabled=false con evidencia de configuración previa (historial o
+ *   intervalo propio) → «Pausado».
+ * - resto → «Manual».
+ *
+ * Limitación del contrato: GET devuelve el default disabled (intervalo
+ * `SCAN_SCHEDULE_DEFAULT_MINUTES`, sin historial) tanto para fuentes sin fila
+ * de schedule como para una fila pausada recién creada con el intervalo por
+ * defecto; ambos muestran «Manual», que describe el comportamiento efectivo.
+ */
+function scheduleChipLabel(schedule: SourceSchedule | null | undefined): string {
+  if (!schedule) return 'Manual';
+  if (schedule.enabled) return `Programado · ${formatInterval(schedule.intervalMinutes)}`;
+  const configured =
+    schedule.lastRunAt !== null ||
+    schedule.lastStatus !== null ||
+    schedule.intervalMinutes !== SCAN_SCHEDULE_DEFAULT_MINUTES;
+  return configured ? 'Pausado' : 'Manual';
+}
+
+/** Tooltip del chip: próxima ejecución, última ejecución y último resultado. */
+function scheduleTooltip(schedule: SourceSchedule | null | undefined): string | undefined {
+  if (!schedule) return undefined;
+  const parts = [
+    schedule.nextRunAt ? `Próxima ejecución: ${new Date(schedule.nextRunAt).toLocaleString('es-ES')}` : null,
+    schedule.lastRunAt ? `Última ejecución: ${new Date(schedule.lastRunAt).toLocaleString('es-ES')}` : null,
+    schedule.lastStatus ? `Último resultado: ${LAST_STATUS_LABEL[schedule.lastStatus] ?? schedule.lastStatus}` : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join('\n') : undefined;
+}
+
 function SourceRow({ source, canAdmin, onEdit, onSchedule }: { source: DataSource; canAdmin: boolean; onEdit: (sourceId: string) => void; onSchedule: (source: DataSource) => void }) {
   const scheduleQuery = useGetSourceSchedule(source.id);
   const schedule = scheduleQuery.data;
@@ -453,7 +486,7 @@ function SourceRow({ source, canAdmin, onEdit, onSchedule }: { source: DataSourc
   const Icon = sourceIcons[source.kind] ?? Database;
   const scanSource = () => scan.mutate({ data: { sourceId: source.id } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListSourcesQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() }); } });
   return <div className={rowActionsGrid} data-testid={`row-source-${source.id}`}>
-    <div className="flex min-w-0 items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e9eef5] text-[#45617d]"><Icon size={19} /></div><div className="min-w-0"><p className="truncate text-sm font-bold">{source.name}</p><p className="mt-1 text-[10px] font-medium text-[#267a6d]" data-testid={`chip-schedule-${source.id}`} title={schedule?.nextRunAt ? `Próxima ejecución: ${new Date(schedule.nextRunAt).toLocaleString('es-ES')}` : undefined}>{schedule?.enabled ? `Programado · ${formatInterval(schedule.intervalMinutes)}` : 'Escaneo manual'}</p></div></div>
+    <div className="flex min-w-0 items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e9eef5] text-[#45617d]"><Icon size={19} /></div><div className="min-w-0"><p className="truncate text-sm font-bold">{source.name}</p><p className="mt-1 text-[10px] font-medium text-[#267a6d]" data-testid={`chip-schedule-${source.id}`} title={scheduleTooltip(schedule)}>{scheduleChipLabel(schedule)}</p></div></div>
     <StatusBadge value={source.environment} kind="generic" />
     <StatusBadge value={source.status} kind="status" />
     <div><p className="font-mono text-xs font-medium">{source.records.toLocaleString('es-ES')}</p><p className="mt-1 text-[10px] text-muted-foreground">registros</p></div>
