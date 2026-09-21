@@ -10,6 +10,8 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { numberFromEnv } from "./lib/env";
 import { sendProblemJson } from "./lib/problem-json";
+import { REQUEST_ID_HEADER, resolveRequestId } from "./lib/request-id";
+import { httpRequestDurationMs, httpRequestsTotal } from "./lib/metrics";
 import { notFoundHandler } from "./middlewares/not-found";
 import { errorHandler } from "./middlewares/error-handler";
 
@@ -116,6 +118,12 @@ app.set("trust proxy", resolveTrustProxy());
 app.use(
   pinoHttp({
     logger,
+    // M16.1 — correlation id: reutiliza `X-Request-Id` del cliente (validado)
+    // o genera un UUID v4. El id queda en `req.id`, se serializa en los logs
+    // (serializador req() de abajo) y se devuelve en el header de respuesta.
+    genReqId(req) {
+      return resolveRequestId(req.headers[REQUEST_ID_HEADER]);
+    },
     serializers: {
       req(req) {
         return {
@@ -132,6 +140,30 @@ app.use(
     },
   }),
 );
+
+// M16.1 — todo response lleva el correlation id del request.
+app.use((req, res, next) => {
+  res.setHeader(REQUEST_ID_HEADER, String(req.id));
+  next();
+});
+
+// M16.4 — métricas HTTP (contador + duración). Label `route` = plantilla de
+// ruta de Express (baja cardinalidad): paths sin match → "unmatched" (404,
+// static), assets del SPA → "static".
+app.use((req, res, next) => {
+  const startedAt = process.hrtime.bigint();
+  res.on("finish", () => {
+    const route = req.route
+      ? `${req.baseUrl}${req.route.path}`
+      : req.path.startsWith("/api/")
+        ? "unmatched"
+        : "static";
+    const labels = { method: req.method, route, status: String(res.statusCode) };
+    httpRequestsTotal.inc(labels);
+    httpRequestDurationMs.observe(labels, Number(process.hrtime.bigint() - startedAt) / 1e6);
+  });
+  next();
+});
 
 app.use(helmet());
 
@@ -178,7 +210,11 @@ const frontendDir = process.env.STATIC_ROOT
       "public",
     );
 const frontendIndex = path.join(frontendDir, "index.html");
-const serveFrontend = existsSync(frontendIndex);
+// M20.2-A — SERVE_STATIC=false desactiva el serving del SPA compilado aunque
+// exista en disco (en compose lo sirve nginx (servicio `web`); la API queda
+// API-only a propósito). Default (unset/"true"): comportamiento histórico.
+const serveStatic = process.env.SERVE_STATIC !== "false";
+const serveFrontend = serveStatic && existsSync(frontendIndex);
 
 if (serveFrontend) {
   logger.info({ frontendDir }, "Serving compiled React frontend");
@@ -200,6 +236,12 @@ if (serveFrontend) {
       }
     });
   });
+} else if (!serveStatic) {
+  // M20.2-A — desactivado a propósito por config: informativo, no un warning.
+  logger.info(
+    { frontendIndex },
+    "Static frontend serving disabled (SERVE_STATIC=false); running in API-only mode",
+  );
 } else {
   logger.warn(
     { frontendIndex },

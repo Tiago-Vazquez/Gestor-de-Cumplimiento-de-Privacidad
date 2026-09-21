@@ -2,10 +2,12 @@
 // importan `repos` desde aquí, lo que permite sustituir toda la capa por un
 // stub in-memory con un único vi.mock("../repositories") en los tests HTTP.
 import * as activity from "./activity.repo";
+import * as auditEvents from "./audit-events.repo";
 import * as compliance from "./compliance.repo";
 import * as dashboard from "./dashboard.repo";
 import * as findings from "./findings.repo";
 import * as masking from "./masking.repo";
+import * as rateLimits from "./rate-limits.repo";
 import * as reports from "./reports.repo";
 import * as rules from "./rules.repo";
 import * as scans from "./scans.repo";
@@ -17,10 +19,12 @@ import * as users from "./users.repo";
 
 export const repos = {
   activity,
+  auditEvents,
   compliance,
   dashboard,
   findings,
   masking,
+  rateLimits,
   reports,
   rules,
   scans,
@@ -30,5 +34,6 @@ export const repos = {
   userRoles,
   users,
 } as const;
+
 
 export type Repos = typeof repos;

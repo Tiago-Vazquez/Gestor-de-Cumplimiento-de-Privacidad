@@ -11,6 +11,7 @@ import {
   SCAN_REAPER_INTERVAL_MS,
 } from "./services/scan-recovery";
 import { startScanScheduler, stopScanScheduler } from "./services/scan-scheduler";
+import { startSessionCleanup } from "./services/session-cleanup";
 
 // Fail-fast (hardening 6.3B.7): AUTH_DISABLED=true está prohibido en
 // producción — aborta el startup antes de abrir el puerto en lugar de
@@ -95,6 +96,10 @@ scanReaperTimer.unref();
 // instancia por proceso; unref() igual que el reaper.
 startScanScheduler();
 
+// M18 Fase 3 — barrido periódico de sesiones expiradas/revocadas y contadores
+// de rate limiting vencidos (mismo patrón `unref()` del reaper).
+const sessionCleanupTimer = startSessionCleanup();
+
 // Graceful shutdown: stop accepting new connections, drain the HTTP server,
 // close the PostgreSQL pool and then exit. A watchdog force-exits if draining
 // takes too long (e.g. an open keep-alive connection with 10s idle timeout).
@@ -111,6 +116,8 @@ function shutdown(signal: NodeJS.Signals): void {
 
   // M10.4: detener el scheduler antes de drenar — no deja timers activos.
   stopScanScheduler();
+  // M18 Fase 3: detener también el barrido de sesiones.
+  clearInterval(sessionCleanupTimer);
 
   const watchdog = setTimeout(() => {
     logger.error("Graceful shutdown timed out; forcing exit");

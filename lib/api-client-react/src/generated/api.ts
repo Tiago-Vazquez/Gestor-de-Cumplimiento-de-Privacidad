@@ -22,7 +22,11 @@ import type {
 import type {
   Activity,
   AdminUser,
+  AuditEvent,
   AuthLoginInput,
+  AuthLogoutAll200,
+  AuthPasswordChange200,
+  AuthRevokeSession200,
   AuthUser,
   ComplianceSummary,
   ComplianceTrend,
@@ -33,6 +37,7 @@ import type {
   GetActivityParams,
   GetComplianceTrendParams,
   HealthStatus,
+  ListAuditEventsParams,
   ListFindingsParams,
   ListMaskingJobsParams,
   ListReportsParams,
@@ -44,6 +49,7 @@ import type {
   MaskingInput,
   MaskingJob,
   MaskingPreview,
+  PasswordChangeInput,
   RegisterInput,
   Report,
   ReportInput,
@@ -52,6 +58,7 @@ import type {
   RuleInput,
   Scan,
   ScanInput,
+  SessionListResponse,
   SourceCreate,
   SourceDetail,
   SourceSchedule,
@@ -376,6 +383,299 @@ export const useAuthLogout = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getAuthLogoutMutationOptions(options));
+    }
+
+export const getAuthPasswordChangeUrl = () => {
+
+
+
+
+  return `/api/auth/password/change`
+}
+
+/**
+ * @summary Change own password (revokes all other active sessions; current session stays valid)
+ */
+export const authPasswordChange = async (passwordChangeInput: PasswordChangeInput, options?: Parameters<typeof customFetch>[1]): Promise<AuthPasswordChange200> => {
+
+  return customFetch<AuthPasswordChange200>(getAuthPasswordChangeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(passwordChangeInput)
+  }
+);}
+
+
+
+
+
+export const getAuthPasswordChangeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authPasswordChange>>, TError,{data: BodyType<PasswordChangeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authPasswordChange>>, TError,{data: BodyType<PasswordChangeInput>}, TContext> => {
+
+const mutationKey = ['authPasswordChange'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authPasswordChange>>, {data: BodyType<PasswordChangeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authPasswordChange(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthPasswordChangeMutationResult = NonNullable<Awaited<ReturnType<typeof authPasswordChange>>>
+    export type AuthPasswordChangeMutationBody = BodyType<PasswordChangeInput>
+    export type AuthPasswordChangeMutationError = ErrorType<void>
+
+    /**
+ * @summary Change own password (revokes all other active sessions; current session stays valid)
+ */
+export const useAuthPasswordChange = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authPasswordChange>>, TError,{data: BodyType<PasswordChangeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authPasswordChange>>,
+        TError,
+        {data: BodyType<PasswordChangeInput>},
+        TContext
+      > => {
+      return useMutation(getAuthPasswordChangeMutationOptions(options));
+    }
+
+export const getAuthListSessionsUrl = () => {
+
+
+
+
+  return `/api/auth/sessions`
+}
+
+/**
+ * Returns metadata (jti, createdAt, expiresAt, current) of all active sessions for the authenticated user. Never exposes CSRF tokens or secrets.
+ * @summary List own active sessions
+ */
+export const authListSessions = async ( options?: Parameters<typeof customFetch>[1]): Promise<SessionListResponse> => {
+
+  return customFetch<SessionListResponse>(getAuthListSessionsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getAuthListSessionsQueryKey = () => {
+    return [
+    `/api/auth/sessions`
+    ] as const;
+    }
+
+
+export const getAuthListSessionsQueryOptions = <TData = Awaited<ReturnType<typeof authListSessions>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof authListSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getAuthListSessionsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof authListSessions>>> = ({ signal }) => authListSessions({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof authListSessions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type AuthListSessionsQueryResult = NonNullable<Awaited<ReturnType<typeof authListSessions>>>
+export type AuthListSessionsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List own active sessions
+ */
+
+export function useAuthListSessions<TData = Awaited<ReturnType<typeof authListSessions>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof authListSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getAuthListSessionsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getAuthRevokeSessionUrl = (jti: string,) => {
+
+
+
+
+  return `/api/auth/sessions/${jti}`
+}
+
+/**
+ * Revokes a single session by jti. Returns 404 (not 403) for non-existent, already-revoked, or other users' sessions to prevent enumeration. Revoking the current session is allowed.
+ * @summary Revoke one own session
+ */
+export const authRevokeSession = async (jti: string, options?: Parameters<typeof customFetch>[1]): Promise<AuthRevokeSession200> => {
+
+  return customFetch<AuthRevokeSession200>(getAuthRevokeSessionUrl(jti),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getAuthRevokeSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authRevokeSession>>, TError,{jti: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authRevokeSession>>, TError,{jti: string}, TContext> => {
+
+const mutationKey = ['authRevokeSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authRevokeSession>>, {jti: string}> = (props) => {
+          const {jti} = props ?? {};
+
+          return  authRevokeSession(jti,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthRevokeSessionMutationResult = NonNullable<Awaited<ReturnType<typeof authRevokeSession>>>
+
+    export type AuthRevokeSessionMutationError = ErrorType<void>
+
+    /**
+ * @summary Revoke one own session
+ */
+export const useAuthRevokeSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authRevokeSession>>, TError,{jti: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authRevokeSession>>,
+        TError,
+        {jti: string},
+        TContext
+      > => {
+      return useMutation(getAuthRevokeSessionMutationOptions(options));
+    }
+
+export const getAuthLogoutAllUrl = () => {
+
+
+
+
+  return `/api/auth/logout-all`
+}
+
+/**
+ * Revokes every active session of the authenticated user. The current session becomes invalid for subsequent requests (401 via allowlist). Other users' sessions are unaffected.
+ * @summary Revoke all own sessions (including current)
+ */
+export const authLogoutAll = async ( options?: Parameters<typeof customFetch>[1]): Promise<AuthLogoutAll200> => {
+
+  return customFetch<AuthLogoutAll200>(getAuthLogoutAllUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getAuthLogoutAllMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authLogoutAll>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authLogoutAll>>, TError,void, TContext> => {
+
+const mutationKey = ['authLogoutAll'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authLogoutAll>>, void> = () => {
+
+
+          return  authLogoutAll(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthLogoutAllMutationResult = NonNullable<Awaited<ReturnType<typeof authLogoutAll>>>
+
+    export type AuthLogoutAllMutationError = ErrorType<void>
+
+    /**
+ * @summary Revoke all own sessions (including current)
+ */
+export const useAuthLogoutAll = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authLogoutAll>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authLogoutAll>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getAuthLogoutAllMutationOptions(options));
     }
 
 export const getAuthMeUrl = () => {
@@ -761,6 +1061,91 @@ export const useUpdateUserRoles = <TError = ErrorType<void>,
       > => {
       return useMutation(getUpdateUserRolesMutationOptions(options));
     }
+
+export const getListAuditEventsUrl = (params?: ListAuditEventsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/audit-events?${stringifiedParams}` : `/api/audit-events`
+}
+
+/**
+ * Trazabilidad administrativa (M17), eventos más recientes primero. Solo rol `admin` (403 para cualquier otro rol). Filtros opcionales combinables; la consulta SIEMPRE está paginada (limit/offset aplicados en SQL) y nunca devuelve la tabla completa. `metadata` contiene exclusivamente información operacional segura: nunca contraseñas, JWT, cookies, tokens CSRF, claves de cifrado ni credenciales de conexión.
+ * @summary List administrative audit events (admin only)
+ */
+export const listAuditEvents = async (params?: ListAuditEventsParams, options?: Parameters<typeof customFetch>[1]): Promise<AuditEvent[]> => {
+
+  return customFetch<AuditEvent[]>(getListAuditEventsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAuditEventsQueryKey = (params?: ListAuditEventsParams,) => {
+    return [
+    `/api/audit-events`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAuditEventsQueryOptions = <TData = Awaited<ReturnType<typeof listAuditEvents>>, TError = ErrorType<void>>(params?: ListAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAuditEventsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAuditEvents>>> = ({ signal }) => listAuditEvents(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAuditEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listAuditEvents>>>
+export type ListAuditEventsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List administrative audit events (admin only)
+ */
+
+export function useListAuditEvents<TData = Awaited<ReturnType<typeof listAuditEvents>>, TError = ErrorType<void>>(
+ params?: ListAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAuditEventsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetDashboardUrl = () => {
 

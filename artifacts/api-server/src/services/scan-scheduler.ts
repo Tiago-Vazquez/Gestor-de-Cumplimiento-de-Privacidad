@@ -1,6 +1,8 @@
 import { repos } from "../repositories";
 import { logger } from "../lib/logger";
+import { schedulerDispatchTotal, schedulerErrorsTotal } from "../lib/metrics";
 import { runScan } from "./scanner";
+import { recordAuditEvent } from "../lib/audit";
 
 /**
  * M10.4 — Servicio scheduler de escaneos automáticos.
@@ -78,6 +80,12 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
         // La fuente ya tiene un scan en curso (o fue eliminada): el
         // vencimiento ya fue consumido por el claim → "corrida saltada".
         summary.skipped += 1;
+        // M16.3 — evento de ciclo de vida del scheduler (sin scanId: no llegó
+        // a crearse el scan).
+        logger.info(
+          { event: "scheduler_skipped", scheduleId: schedule.id, sourceId: schedule.sourceId, reason: result.reason },
+          "Scheduled scan skipped (source busy or missing)",
+        );
         await repos.scanSchedules.markResult({ id: schedule.id, status: "skipped", at: now });
         continue;
       }
@@ -86,7 +94,33 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
       // errores del escaneo se registran en `scans` (runScan garantiza el
       // estado terminal); aquí solo se registra el resultado del despacho.
       summary.dispatched += 1;
+      // M16.3 — despacho aceptado: evento + métrica. El ciclo de vida del scan
+      // en sí (started/completed/failed) lo registra el scanner.
+      schedulerDispatchTotal.inc();
+      logger.info(
+        { event: "scheduler_dispatch", scanId: result.scan.id, sourceId: schedule.sourceId, intervalMinutes: schedule.intervalMinutes },
+        "Scheduled scan dispatched to the standard pipeline",
+      );
       await repos.scanSchedules.markResult({ id: schedule.id, status: "ok", at: now });
+
+      // M17 — escaneo disparado por el scheduler: no hay usuario humano, así
+      // que `actor_user_id` queda null y el origen se marca en metadata
+      // (`origin: "scheduler"`). Mismo vocabulario de acción que el manual.
+      await recordAuditEvent({
+        actorUserId: null,
+        action: "scan_started",
+        resourceType: "scan",
+        resourceId: result.scan.id,
+        result: "success",
+        origin: "scheduler",
+        metadata: {
+          sourceId: schedule.sourceId,
+          scheduleId: schedule.id,
+          intervalMinutes: schedule.intervalMinutes,
+          trigger: "scheduler",
+        },
+      });
+
       void runScan({ scanId: result.scan.id, sourceId: schedule.sourceId }).catch((error) => {
         logger.error({ err: error, scanId: result.scan.id }, "Scheduled scan crashed");
       });
@@ -94,7 +128,11 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
       // Fallo del despacho (p. ej. startScan lanzó por BD): queda registrado
       // y NO detiene el resto del tick ni el scheduler.
       summary.failed += 1;
-      logger.error({ err: error, scheduleId: schedule.id }, "Scheduled scan dispatch failed");
+      schedulerErrorsTotal.inc();
+      logger.error(
+        { event: "scheduler_error", err: error, scheduleId: schedule.id, sourceId: schedule.sourceId },
+        "Scheduled scan dispatch failed",
+      );
       try {
         await repos.scanSchedules.markResult({
           id: schedule.id,
@@ -105,6 +143,23 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
       } catch (markError) {
         logger.error({ err: markError, scheduleId: schedule.id }, "Failed to record dispatch error");
       }
+
+      // M17 — el despacho falló: se audita el INTENTO (scan_started/failure)
+      // con el origen scheduler. No se persiste el mensaje del error: puede
+      // contener detalles de conexión (credenciales incluidas).
+      await recordAuditEvent({
+        actorUserId: null,
+        action: "scan_started",
+        resourceType: "scan",
+        result: "failure",
+        origin: "scheduler",
+        metadata: {
+          sourceId: schedule.sourceId,
+          scheduleId: schedule.id,
+          trigger: "scheduler",
+          reason: "dispatch_error",
+        },
+      });
     }
   }
 
@@ -151,4 +206,9 @@ export function stopScanScheduler(): void {
   clearInterval(schedulerTimer);
   schedulerTimer = null;
   logger.info("Scan scheduler stopped");
+}
+
+/** M16.5 — estado del scheduler para los health probes (sin secretos). */
+export function isScanSchedulerRunning(): boolean {
+  return schedulerTimer !== null;
 }

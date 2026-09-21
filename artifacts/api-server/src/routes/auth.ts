@@ -1,6 +1,7 @@
 import { timingSafeEqual, randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { rateLimit } from "express-rate-limit";
+import { optionalPersistentStore } from "../lib/rate-limit-store";
 import { logger } from "../lib/logger";
 import { repos } from "../repositories";
 import { isProductionEnv, signToken, verifyToken } from "../auth/tokens";
@@ -15,11 +16,13 @@ import { badRequest, conflict, notFound, unauthorized } from "../lib/errors";
 import { sendProblemJson } from "../lib/problem-json";
 import { generateCsrfToken } from "../auth/csrf";
 import { sessionIdleSeconds } from "../lib/env";
+import { recordAuditEvent } from "../lib/audit";
 import { hashPassword, verifyPassword } from "@workspace/auth";
 import {
   isValidName,
   isValidPassword,
   normalizeEmail,
+  PASSWORD_MAX_LENGTH,
 } from "../auth/validation";
 
 const router: IRouter = Router();
@@ -114,7 +117,21 @@ export function registrationEnabled(): boolean {
  * Misma lógica que loginLimiter — evasión por rotación de XFF y bucket
  * aislado por víctima.
  */
+// M18 Fase 2 — store persistente (PostgreSQL) para los limiters sensibles.
+// `AUTH_RATE_LIMIT_STORE=postgres` activa el contador en BD (supervive
+// reinicios y es consistente multi-instancia); default `memory` preserva el
+// comportamiento en tests/desarrollo. `undefined` ⇒ MemoryStore builtin.
+// Cada limiter recibe su PROPIO store con namespace: al compartir una única
+// tabla, dos limiters con la misma fórmula de clave (register y login usan
+// `${ip}:${email}`) sumarían en el mismo contador y se sabotearían entre sí.
+// El namespace replica el aislamiento que MemoryStore daba gratis.
+const registerStore = optionalPersistentStore("register");
+const loginStore = optionalPersistentStore("login");
+const bootstrapStore = optionalPersistentStore("bootstrap");
+const passwordChangeStore = optionalPersistentStore("password-change");
+
 const registerLimiter = rateLimit({
+  store: registerStore,
   windowMs: 15 * 60 * 1000,
   limit: 10,
   standardHeaders: true,
@@ -136,6 +153,7 @@ const registerLimiter = rateLimit({
 });
 
 const loginLimiter = rateLimit({
+  store: loginStore,
   windowMs: 15 * 60 * 1000,
   limit: 5,
   standardHeaders: true,
@@ -178,6 +196,7 @@ const loginLimiter = rateLimit({
  * globales de `app.ts` como segunda capa de defensa.
  */
 const bootstrapLimiter = rateLimit({
+  store: bootstrapStore,
   windowMs: 15 * 60 * 1000,
   limit: 5,
   standardHeaders: true,
@@ -254,10 +273,28 @@ async function handleBootstrapLogin(
   if (!bootstrapEnabled()) {
     // Auditoría del intento (sin exponer el token ni estado interno).
     logger.info({ event: "bootstrap_login_rejected" }, "Bootstrap login disabled by flag");
+    // M17 — intento fallido registrado con actor desconocido y sin el token.
+    await recordAuditEvent({
+      req,
+      actorUserId: null,
+      action: "login_failure",
+      resourceType: "session",
+      result: "failure",
+      metadata: { method: "bootstrap", reason: "bootstrap_disabled" },
+    });
     throw unauthorized("Invalid credentials");
   }
 
   if (!compareBootstrapToken(provided)) {
+    // M17 — mismo registro para credencial inválida (respuesta uniforme).
+    await recordAuditEvent({
+      req,
+      actorUserId: null,
+      action: "login_failure",
+      resourceType: "session",
+      result: "failure",
+      metadata: { method: "bootstrap", reason: "invalid_credentials" },
+    });
     throw unauthorized("Invalid credentials");
   }
 
@@ -292,6 +329,16 @@ async function handleBootstrapLogin(
   // Auditoría: se registra el login exitoso, NUNCA el token/JWT.
   logger.info({ sub: user.sub, event: "login", method: "bootstrap" }, "User logged in");
 
+  // M17 — trazabilidad administrativa del login (método + actor, sin secretos).
+  await recordAuditEvent({
+    req,
+    actorUserId: user.sub,
+    action: "login_success",
+    resourceType: "session",
+    result: "success",
+    metadata: { method: "bootstrap", roles },
+  });
+
   res.status(200).json({
     sub: user.sub,
     email: user.email,
@@ -311,6 +358,30 @@ async function handleLocalLogin(
 ): Promise<void> {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) {
+    // M17 — intento fallido: se registra el motivo, NUNCA el email/contraseña.
+    await recordAuditEvent({
+      req,
+      actorUserId: null,
+      action: "login_failure",
+      resourceType: "session",
+      result: "failure",
+      metadata: { method: "local", reason: "invalid_email" },
+    });
+    throw unauthorized("Invalid credentials");
+  }
+
+  // Fase 6 (M18): rechazo temprano de credenciales de tamaño imposible, antes
+  // de tocar la BD y sobre todo antes de scrypt (verificación costosa: con
+  // entradas desmedidas cada intento amplifica CPU/RAM). Respuesta uniforme.
+  if (typeof password !== "string" || password.length > PASSWORD_MAX_LENGTH) {
+    await recordAuditEvent({
+      req,
+      actorUserId: null,
+      action: "login_failure",
+      resourceType: "session",
+      result: "failure",
+      metadata: { method: "local", reason: "password_too_long" },
+    });
     throw unauthorized("Invalid credentials");
   }
 
@@ -318,11 +389,27 @@ async function handleLocalLogin(
 
   // Respuesta uniforme: no revela si el usuario existe o no
   if (!user || !user.passwordHash) {
+    await recordAuditEvent({
+      req,
+      actorUserId: null,
+      action: "login_failure",
+      resourceType: "session",
+      result: "failure",
+      metadata: { method: "local", reason: "unknown_account" },
+    });
     throw unauthorized("Invalid credentials");
   }
 
   const passwordValid = await verifyPassword(password, user.passwordHash);
   if (!passwordValid) {
+    await recordAuditEvent({
+      req,
+      actorUserId: null,
+      action: "login_failure",
+      resourceType: "session",
+      result: "failure",
+      metadata: { method: "local", reason: "invalid_password" },
+    });
     throw unauthorized("Invalid credentials");
   }
 
@@ -352,6 +439,16 @@ async function handleLocalLogin(
 
   // Auditoría: se registra el login exitoso, NUNCA password/hash.
   logger.info({ sub: user.sub, event: "login", method: "local" }, "User logged in");
+
+  // M17 — trazabilidad administrativa del login (método + actor, sin secretos).
+  await recordAuditEvent({
+    req,
+    actorUserId: user.sub,
+    action: "login_success",
+    resourceType: "session",
+    result: "success",
+    metadata: { method: "local", roles },
+  });
 
   res.status(200).json({
     sub: user.sub,
@@ -384,6 +481,12 @@ router.post("/register", registerLimiter, async (req, res) => {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) {
     throw badRequest("A valid email is required");
+  }
+
+  // Fase 6 (M18): tope superior explícito. El body ya está acotado a 16kb, pero
+  // un password desmedido se pasaría íntegro a scrypt (coste amplificable).
+  if (typeof password === "string" && password.length > PASSWORD_MAX_LENGTH) {
+    throw badRequest(`Password must be at most ${PASSWORD_MAX_LENGTH} characters`);
   }
 
   // Validar contraseña (mínimo 12 caracteres)
@@ -432,6 +535,7 @@ router.post("/register", registerLimiter, async (req, res) => {
  * globales de app.ts actúan como segunda capa.
  */
 const passwordChangeLimiter = rateLimit({
+  store: passwordChangeStore,
   windowMs: 15 * 60 * 1000,
   limit: 5,
   standardHeaders: true,
@@ -485,6 +589,18 @@ router.post(
     if (typeof newPassword !== "string" || newPassword.length === 0) {
       throw badRequest("newPassword is required");
     }
+    // Fase 6 (M18): topes superiores antes de scrypt. `verifyPassword` y
+    // `hashPassword` son costosos, así que un valor desmedido multiplica
+    // CPU/RAM por request. La actual responde 401 uniforme (no revela que el
+    // rechazo fue por tamaño); la nueva, 400 con el tope explícito.
+    if (currentPassword.length > PASSWORD_MAX_LENGTH) {
+      throw unauthorized("Invalid credentials");
+    }
+    if (newPassword.length > PASSWORD_MAX_LENGTH) {
+      throw badRequest(
+        `Password must be at most ${PASSWORD_MAX_LENGTH} characters`,
+      );
+    }
 
     const account = await repos.users.getBySub(authed.sub);
     if (!account) {
@@ -524,6 +640,18 @@ router.post(
         passwordHash,
         authed.jti ?? null,
       );
+
+    // M17 — trazabilidad del cambio de contraseña: solo el conteo de sesiones
+    // revocadas (nunca contraseñas, hash, JWT ni tokens CSRF).
+    await recordAuditEvent({
+      req,
+      actorUserId: authed.sub,
+      action: "password_changed",
+      resourceType: "user",
+      resourceId: authed.sub,
+      result: "success",
+      metadata: { revokedSessions },
+    });
 
     // Auditoría mínima: evento sin secretos (nunca password/hash/JWT/CSRF).
     logger.info(
@@ -616,6 +744,17 @@ router.delete(
     }
 
     await repos.sessions.revokeByJti(jti as string);
+
+    // M17 — revocación individual: el recurso es la sesión (jti) revocada.
+    await recordAuditEvent({
+      req,
+      actorUserId: authed.sub,
+      action: "session_revoked",
+      resourceType: "session",
+      resourceId: jti as string,
+      result: "success",
+    });
+
     res.status(200).json({ revoked: true });
   },
 );
@@ -642,6 +781,17 @@ router.post(
     if (!authed?.sub) throw unauthorized("Missing or invalid session");
 
     const revoked = await repos.sessions.revokeAllForUser(authed.sub);
+
+    // M17 — trazabilidad administrativa (contador de sesiones revocadas).
+    await recordAuditEvent({
+      req,
+      actorUserId: authed.sub,
+      action: "logout_all",
+      resourceType: "session",
+      result: "success",
+      metadata: { revoked },
+    });
+
     logger.info(
       { event: "logout-all", sub: authed.sub, revoked },
       "All sessions revoked by user",
@@ -670,6 +820,16 @@ router.post("/logout", async (req, res) => {
       const payload = await verifyToken(token);
       if (payload?.jti) {
         await repos.sessions.revokeByJti(payload.jti);
+        // M17 — logout de una sesión identificable: actor tomado del JWT ya
+        // verificado (este endpoint es público a propósito). Sin tokens.
+        await recordAuditEvent({
+          req,
+          actorUserId: payload.sub ?? null,
+          action: "logout",
+          resourceType: "session",
+          resourceId: payload.jti,
+          result: "success",
+        });
       }
     }
   } catch {

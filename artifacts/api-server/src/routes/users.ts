@@ -24,6 +24,7 @@ import { normalizeEmail, isValidName } from "../auth/validation";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { parsePagination } from "../lib/pagination";
 import { logger } from "../lib/logger";
+import { recordAuditEvent } from "../lib/audit";
 
 const router: ReturnType<typeof Router> = Router();
 
@@ -109,6 +110,18 @@ router.patch("/:sub", async (req, res) => {
   if (!updated) throw notFound("User not found");
   const roles = await repos.userRoles.listRolesForUser(updated.sub);
   logger.info({ sub: updated.sub, event: "user_updated" }, "User updated by admin");
+
+  // M17 — acción administrativa sobre una cuenta: se auditan los CAMPOS
+  // modificados (nombres), nunca sus valores (el email es dato personal).
+  await recordAuditEvent({
+    req,
+    action: "user_updated",
+    resourceType: "user",
+    resourceId: updated.sub,
+    result: "success",
+    metadata: { fields: Object.keys(updates) },
+  });
+
   res.status(200).json(toPublicUser(updated, roles));
 });
 
@@ -142,6 +155,23 @@ router.patch("/:sub/roles", async (req, res) => {
     },
     "User roles changed",
   );
+
+  // M17 — cambio de privilegios: el evento registra el conjunto EFECTIVO de
+  // roles y cuántas sesiones se revocaron (el estado anterior queda en el
+  // evento previo del mismo recurso).
+  await recordAuditEvent({
+    req,
+    action: "user_roles_updated",
+    resourceType: "user",
+    resourceId: user.sub,
+    result: "success",
+    metadata: {
+      roles: result.applied,
+      changed: result.changed,
+      revokedSessions: result.revokedSessions,
+    },
+  });
+
   res.status(200).json(toPublicUser(user, result.applied));
 });
 

@@ -19,12 +19,36 @@ export interface LocalLoginInput {
 
 export type AuthLoginInput = BootstrapLoginInput | LocalLoginInput;
 
+export interface PasswordChangeInput {
+  currentPassword: string;
+  /** @minLength 12 */
+  newPassword: string;
+}
+
 export interface RegisterInput {
   /** User email (normalized to lowercase server-side) */
   email: string;
   /** @minLength 12 */
   password: string;
   name?: string;
+}
+
+/**
+ * Metadata of a single active session (never exposes secrets).
+ */
+export interface SessionSummary {
+  /** Session allowlist identifier (UUID). */
+  jti: string;
+  /** When the session was issued (issued_at). */
+  createdAt: string;
+  /** Session expiration (mirrors JWT exp). */
+  expiresAt: string;
+  /** True when this session is the one making the request. */
+  current: boolean;
+}
+
+export interface SessionListResponse {
+  sessions: SessionSummary[];
 }
 
 export interface AuthUser {
@@ -596,6 +620,68 @@ export interface MaskingDataset {
   rows: MaskingRow[];
 }
 
+/**
+ * Resultado de la acción intentada.
+ */
+export type AuditEventResult = typeof AuditEventResult[keyof typeof AuditEventResult];
+
+
+export const AuditEventResult = {
+  success: 'success',
+  failure: 'failure',
+} as const;
+
+/**
+ * Información operacional segura (ids, contadores, tipos, estados, nombres de campos). NUNCA contraseñas, JWT, cookies, tokens CSRF, claves de cifrado, credenciales de conexión ni datos descubiertos por los scans.
+ */
+export type AuditEventMetadata = { [key: string]: unknown };
+
+/**
+ * Evento de auditoría administrativa (M17): quién hizo qué, cuándo y sobre qué recurso. Historia deliberadamente desacoplada de `users` (sin foreign key): sobrevive al borrado de la cuenta referenciada en `actorUserId`. La acción y el tipo de recurso son texto libre con vocabulario cerrado en la capa de dominio.
+ */
+export interface AuditEvent {
+  id: string;
+  /**
+     * `sub` del actor autenticado que ejecutó la acción; `null` en acciones internas (scheduler de escaneos, recovery de scans huérfanos) donde no hay usuario humano.
+     * @nullable
+     */
+  actorUserId?: string | null;
+  /** Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled. */
+  action: string;
+  /** Tipo de recurso afectado: session, user, source, schedule, scan, report, masking_job o rule. */
+  resourceType: string;
+  /**
+     * Identificador del recurso afectado (`null` si no aplica).
+     * @nullable
+     */
+  resourceId?: string | null;
+  /** Resultado de la acción intentada. */
+  result: AuditEventResult;
+  /**
+     * Correlation id del request (M16, header `X-Request-Id`); `null` en acciones internas sin request HTTP.
+     * @nullable
+     */
+  requestId?: string | null;
+  /** Información operacional segura (ids, contadores, tipos, estados, nombres de campos). NUNCA contraseñas, JWT, cookies, tokens CSRF, claves de cifrado, credenciales de conexión ni datos descubiertos por los scans. */
+  metadata?: AuditEventMetadata;
+  createdAt: string;
+}
+
+export type AuthPasswordChange200 = {
+  ok?: boolean;
+  /** @minimum 0 */
+  revokedSessions?: number;
+};
+
+export type AuthRevokeSession200 = {
+  revoked?: boolean;
+};
+
+export type AuthLogoutAll200 = {
+  /** @minimum 0 */
+  revoked?: number;
+};
+
 export type ListUsersParams = {
 /**
  * @minimum 1
@@ -607,6 +693,51 @@ limit?: number;
  */
 offset?: number;
 };
+
+export type ListAuditEventsParams = {
+/**
+ * actor_user_id exacto (sub del actor autenticado).
+ */
+actor?: string;
+/**
+ * Acción exacta (p. ej. login_success, source_created).
+ */
+action?: string;
+/**
+ * Tipo de recurso exacto (session, source, scan, user, rule, report, masking_job, schedule).
+ */
+resourceType?: string;
+/**
+ * Identificador exacto del recurso afectado.
+ */
+resourceId?: string;
+result?: ListAuditEventsResult;
+/**
+ * Límite inferior inclusivo, ISO-8601 (comparado contra created_at). Valor inválido → 400.
+ */
+from?: string;
+/**
+ * Límite superior inclusivo, ISO-8601. Valor inválido → 400.
+ */
+to?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListAuditEventsResult = typeof ListAuditEventsResult[keyof typeof ListAuditEventsResult];
+
+
+export const ListAuditEventsResult = {
+  success: 'success',
+  failure: 'failure',
+} as const;
 
 export type GetComplianceTrendParams = {
 /**

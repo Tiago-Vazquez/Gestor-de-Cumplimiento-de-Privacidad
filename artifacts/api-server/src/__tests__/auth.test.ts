@@ -126,9 +126,14 @@ describe("Auth middleware (JWT)", () => {
   });
 
   it("returns 401 for a tampered JWT", async () => {
-    // Token manipulado: alteramos la firma cambiando el último caracter
+    // Token manipulado: alteramos un carácter de la firma. OJO: el ÚLTIMO
+    // carácter base64url de una firma HS256 (43 chars = 256 bits) solo aporta
+    // 4 bits significativos; cambiarlo por 'A' puede ser un no-op (los bits
+    // alterados se descartan al decodificar) y el 401 sería flaky según el
+    // jti aleatorio de la corrida. El PENÚLTIMO aporta 6 bits completos.
     const validToken = `Bearer ${adminToken}`;
-    const tampered = validToken.slice(0, -1) + (validToken.slice(-1) === "A" ? "B" : "A");
+    const withoutLast = validToken.slice(0, -1);
+    const tampered = withoutLast.slice(0, -1) + (withoutLast.slice(-1) === "A" ? "B" : "A") + validToken.slice(-1);
 
     const res = await request(server)
       .get("/api/dashboard")

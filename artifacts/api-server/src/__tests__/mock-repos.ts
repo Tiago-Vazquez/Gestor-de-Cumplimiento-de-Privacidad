@@ -1,5 +1,6 @@
 import type {
   Activity,
+  AuditEvent,
   Finding,
   MaskingJob,
   Report,
@@ -50,9 +51,21 @@ export type MockState = {
   scans: Scan[];
   activity: Activity[];
   reports: Report[];
+  /** M17: se inicializa vacío en createMockRepos. */
+  auditEvents: AuditEvent[];
   /** M5.c: se inicializa perezosamente en createMockRepos. */
   maskingJobs?: MaskingJob[];
+  /** M18: filas de rate_limit_hits para el store persistente mock. */
+  rateLimitHits?: MockRateLimitHit[];
 };
+
+/** Fila mock de `rate_limit_hits` (M18 Fase 2). */
+export interface MockRateLimitHit {
+  key: string;
+  hits: number;
+  windowStartAt: Date;
+  expiresAt: Date;
+}
 
 const SOURCE_NAMES: Record<string, string> = {
   "src-001": "Customer PostgreSQL",
@@ -232,6 +245,7 @@ export function createMockRepos() {
       { id: "r-001", name: "Auditoría mensual", period: "last_30d", status: "ready", createdAt: minutesAgo(86), findings: 12, complianceScore: 90, format: "pdf" },
       { id: "r-002", name: "Revisión trimestral", period: "quarter", status: "ready", createdAt: minutesAgo(1820), findings: 40, complianceScore: 88, format: "pdf" },
     ],
+    auditEvents: [],
   };
 
   const repos = {
@@ -387,6 +401,14 @@ export function createMockRepos() {
       // FASE 7.0.1: reglas habilitadas (interruptor del catálogo del scanner).
       async listActive() {
         return state.rules.filter((rule) => rule.enabled).map((rule) => ({ ...rule }));
+      },
+      /** FASE 7.0.5 (espejo del repo real): solo `enabled` es gobernable. */
+      async setEnabled({ id, enabled, at }: { id: string; enabled: boolean; at: Date }) {
+        const rule = state.rules.find((item) => item.id === id);
+        if (!rule) return null;
+        rule.enabled = enabled;
+        rule.updatedAt = at;
+        return { ...rule };
       },
     },
     scans: {
@@ -652,6 +674,55 @@ export function createMockRepos() {
       async create(values: { id: string; type: string; title: string; description: string; createdAt: Date; severity: string | null }) {
         state.activity.unshift({ ...values });
         return { ...values };
+      },
+    },
+    auditEvents: {
+      /** M17 — inserta el evento con `createdAt` = ahora (como el default SQL). */
+      async create(values: {
+        id: string;
+        actorUserId: string | null;
+        action: string;
+        resourceType: string;
+        resourceId: string | null;
+        result: string;
+        requestId: string | null;
+        metadata: Record<string, unknown>;
+      }) {
+        const row: AuditEvent = { ...values, createdAt: new Date() };
+        state.auditEvents.unshift(row);
+        return { ...row };
+      },
+      /** M17 — filtros + paginación, orden created_at DESC / id DESC (como la BD). */
+      async list(
+        filters: {
+          actorUserId?: string;
+          action?: string;
+          resourceType?: string;
+          resourceId?: string;
+          result?: string;
+          from?: Date;
+          to?: Date;
+        } = {},
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+      ) {
+        return state.auditEvents
+          .filter((event) => {
+            if (filters.actorUserId !== undefined && event.actorUserId !== filters.actorUserId) return false;
+            if (filters.action !== undefined && event.action !== filters.action) return false;
+            if (filters.resourceType !== undefined && event.resourceType !== filters.resourceType) return false;
+            if (filters.resourceId !== undefined && event.resourceId !== filters.resourceId) return false;
+            if (filters.result !== undefined && event.result !== filters.result) return false;
+            if (filters.from !== undefined && event.createdAt.getTime() < filters.from.getTime()) return false;
+            if (filters.to !== undefined && event.createdAt.getTime() > filters.to.getTime()) return false;
+            return true;
+          })
+          .sort(
+            (a, b) =>
+              b.createdAt.getTime() - a.createdAt.getTime() ||
+              (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+          )
+          .slice(pagination.offset, pagination.offset + pagination.limit)
+          .map((event) => ({ ...event }));
       },
     },
     reports: {
@@ -978,6 +1049,54 @@ export function createMockRepos() {
         }
       },
     },
+    rateLimits: {
+      /** M18 — upsert fixed-window equivalente al SQL `ON CONFLICT ... RETURNING`. */
+      async hit(key: string, windowMs: number) {
+        const rows = (state.rateLimitHits ??= []);
+        const now = Date.now();
+        const existing = rows.find((r) => r.key === key);
+        if (!existing) {
+          const row: MockRateLimitHit = {
+            key,
+            hits: 1,
+            windowStartAt: new Date(now),
+            expiresAt: new Date(now + windowMs),
+          };
+          rows.push(row);
+          return { totalHits: row.hits, resetTime: new Date(row.expiresAt) };
+        }
+        if (existing.expiresAt.getTime() <= now) {
+          existing.hits = 1;
+          existing.windowStartAt = new Date(now);
+          existing.expiresAt = new Date(now + windowMs);
+        } else {
+          existing.hits += 1;
+        }
+        return { totalHits: existing.hits, resetTime: new Date(existing.expiresAt) };
+      },
+      async resetKey(key: string) {
+        const rows = (state.rateLimitHits ??= []);
+        const idx = rows.findIndex((r) => r.key === key);
+        if (idx >= 0) rows.splice(idx, 1);
+      },
+      async resetAll(prefix?: string) {
+        const rows = (state.rateLimitHits ??= []);
+        state.rateLimitHits = prefix
+          ? rows.filter((r) => !r.key.startsWith(`${prefix}:`))
+          : [];
+      },
+      async decrementKey(key: string) {
+        const row = (state.rateLimitHits ??= []).find((r) => r.key === key);
+        if (row && row.hits > 0) row.hits -= 1;
+      },
+      async cleanupExpired() {
+        const rows = (state.rateLimitHits ??= []);
+        const now = Date.now();
+        const before = rows.length;
+        state.rateLimitHits = rows.filter((r) => r.expiresAt.getTime() > now);
+        return before - state.rateLimitHits.length;
+      },
+    },
     sessions: {
       /**
        * [6.3B.12] Contrato transaccional del login (equivalente al repo real:
@@ -1009,6 +1128,19 @@ export function createMockRepos() {
         };
         state.sessions.push(created);
         return { jwt, roles };
+      },
+      async findRawByJti(jti: string) {
+        return state.sessions.find((s) => s.jti === jti) ?? null;
+      },
+      async cleanupStale(cutoff: Date) {
+        const cutoffMs = cutoff.getTime();
+        const before = state.sessions.length;
+        state.sessions = state.sessions.filter(
+          (s) =>
+            s.expiresAt.getTime() > cutoffMs &&
+            (s.revokedAt === null || s.revokedAt.getTime() > cutoffMs),
+        );
+        return before - state.sessions.length;
       },
       async findActiveByJti(jti: string, idleSeconds: number) {
         const now = new Date();

@@ -58,6 +58,7 @@ import {
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
 import { runScan } from "../services/scanner";
+import { recordAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -145,6 +146,17 @@ router.patch("/rules/:id", requireRole("admin"), async (req, res) => {
     throw notFound("Rule not found");
   }
 
+  // M17 — activación/desactivación de una regla de detección (cambia el
+  // comportamiento del escaneo): una acción por request, sin duplicados.
+  await recordAuditEvent({
+    req,
+    action: enabled ? "rule_enabled" : "rule_disabled",
+    resourceType: "rule",
+    resourceId: id,
+    result: "success",
+    metadata: { enabled },
+  });
+
   res.json(UpdateRuleResponse.parse(mapRule(updated)));
 });
 
@@ -166,9 +178,27 @@ router.post("/scans", requireRole("admin"), async (req, res) => {
   // findings; si la fuente no es escaneable o falla la conexión, marca
   // `failed` con su causa. Nunca lanza tras la respuesta: los errores quedan
   // registrados en el scan y en el log.
+  // M17 — inicio manual de escaneo (el usuario lo pidió). El correlation id del
+  // request también viaja al scanner (M16.2), así que el evento y los logs del
+  // scan son cruzables.
+  await recordAuditEvent({
+    req,
+    action: "scan_started",
+    resourceType: "scan",
+    resourceId: result.scan.id,
+    result: "success",
+    metadata: { sourceId, trigger: "manual" },
+  });
+
   res.status(202).json(StartScanResponse.parse(mapScan(result.scan)));
 
-  void runScan({ scanId: result.scan.id, sourceId }).catch((error) => {
+  // M16.2 — el correlation id del request acompaña al scan en sus logs
+  // (scan_started/completed/failed): rastrea la petición que lo originó.
+  void runScan({
+    scanId: result.scan.id,
+    sourceId,
+    requestId: typeof req.id === "string" ? req.id : undefined,
+  }).catch((error) => {
     logger.error({ err: error, scanId: result.scan.id }, "Scanner crashed");
   });
 });
@@ -208,6 +238,16 @@ router.post("/scans/:id/cancel", requireRole("admin"), async (req, res) => {
     }
     throw conflict("Scan already reached a terminal state");
   }
+  // M17 — cancelación cooperativa solicitada por un admin.
+  await recordAuditEvent({
+    req,
+    action: "scan_cancelled",
+    resourceType: "scan",
+    resourceId: id,
+    result: "success",
+    metadata: { sourceId: result.scan.sourceId },
+  });
+
   res.status(202).json(CancelScanResponse.parse(mapScan(result.scan)));
 });
 
@@ -221,6 +261,18 @@ router.get("/reports", async (req, res) => {
 router.post("/reports", requireRole("admin"), async (req, res) => {
   const { name, period } = CreateReportBody.parse(req.body);
   const report = await repos.reports.create({ name, period, at: new Date() });
+
+  // M17 — generación de informe (recurso report). El nombre del informe es
+  // texto provisto por el usuario: se audita el periodo, no el nombre.
+  await recordAuditEvent({
+    req,
+    action: "report_created",
+    resourceType: "report",
+    resourceId: report.id,
+    result: "success",
+    metadata: { period },
+  });
+
   res.status(201).json(ListReportsResponseItem.parse(mapReport(report)));
 });
 
@@ -239,6 +291,16 @@ router.get("/reports/:id/download", async (req, res) => {
   if (!report) {
     throw notFound("Report not found");
   }
+  // M17 — descarga de informe: la lectura de un artefacto de cumplimiento es
+  // una acción trazable (quién se llevó qué informe y cuándo).
+  await recordAuditEvent({
+    req,
+    action: "report_downloaded",
+    resourceType: "report",
+    resourceId: report.id,
+    result: "success",
+  });
+
   res.attachment(`report-${report.id}.json`);
   res.json(DownloadReportResponse.parse(mapReport(report)));
 });
@@ -289,6 +351,17 @@ router.post("/masking/jobs", requireRole("admin"), async (req, res) => {
     fields: body.fields,
     at: new Date(),
   });
+  // M17 — job de anonimización creado: se auditan los campos solicitados y el
+  // estado alcanzado (síncrono), sin filas del dataset ni datos de la fuente.
+  await recordAuditEvent({
+    req,
+    action: "masking_job_created",
+    resourceType: "masking_job",
+    resourceId: job.id,
+    result: "success",
+    metadata: { sourceId: body.sourceId, fields: body.fields, status: job.status },
+  });
+
   res.status(201).json(CreateMaskingJobResponse.parse(mapMaskingJob(job)));
 });
 
@@ -309,6 +382,16 @@ router.get("/masking/jobs/:id/download", async (req, res) => {
   if (!job || job.status !== "ready" || !job.dataset) {
     throw notFound("Masking dataset not available");
   }
+  // M17 — descarga de dataset anonimizado (recurso masking_job).
+  await recordAuditEvent({
+    req,
+    action: "dataset_downloaded",
+    resourceType: "masking_job",
+    resourceId: job.id,
+    result: "success",
+    metadata: { records: job.records, fields: job.dataset.fields },
+  });
+
   res.attachment(`masking-job-${job.id}.json`);
   res.json(DownloadMaskingJobResponse.parse({
     jobId: job.id,

@@ -42,6 +42,24 @@ export function csrfTokenMatches(provided: string, expected: string): boolean {
   return timingSafeEqual(digest(provided), digest(expected));
 }
 
+import { recordAuditEvent } from "../lib/audit";
+
+/**
+ * M18 Fase 5 — auditoría best-effort de violaciones CSRF sobre sesiones
+ * autenticadas (por cookie). Sin secretos: solo razón, método y ruta. Solo se
+ * registra con sesión resuelta (`req.user`), para no amplificar basura
+ * anónima en la tabla de auditoría.
+ */
+function auditCsrfViolation(req: Request, reason: string): void {
+  void recordAuditEvent({
+    req,
+    action: "security_violation",
+    resourceType: "session",
+    result: "failure",
+    metadata: { reason, method: req.method, route: req.path },
+  }).catch(() => undefined);
+}
+
 /**
  * Middleware CSRF centralizado. Debe montarse DESPUÉS de que `requireAuth`
  * resolvió la sesión (`req.user`) y ANTES de los handlers mutativos.
@@ -74,12 +92,14 @@ export function requireCsrf() {
     const expected = (req as AuthedRequest).user?.csrf;
     if (typeof expected !== "string" || expected.length === 0) {
       // Fail-closed: sesión sin claim csrf (emitida sin M11.1) no puede mutar.
+      void auditCsrfViolation(req, "csrf_claim_missing");
       throw forbidden("CSRF token required");
     }
 
     const provided = req.headers[CSRF_HEADER_NAME.toLowerCase()];
     if (typeof provided !== "string" || !csrfTokenMatches(provided, expected)) {
       // Respuesta idéntica para ausencia/token incorrecto: no filtra cuál.
+      void auditCsrfViolation(req, "csrf_token_invalid");
       throw forbidden("CSRF token required");
     }
 

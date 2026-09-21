@@ -14,6 +14,8 @@ tags:
     description: Authentication and session
   - name: users
     description: User administration (admin role required)
+  - name: audit
+    description: Administrative audit trail (admin role required)
   - name: dashboard
     description: Overview and activity
   - name: findings
@@ -110,11 +112,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [currentPassword, newPassword]
-              properties:
-                currentPassword: { type: string, format: password }
-                newPassword: { type: string, format: password, minLength: 12 }
+              $ref: "#/components/schemas/PasswordChangeInput"
       responses:
         "200":
           description: Password changed; other sessions revoked
@@ -124,7 +122,11 @@ paths:
                 type: object
                 properties:
                   ok: { type: boolean }
-                  revokedSessions: { type: integer, minimum: 0 }
+                  # `type: number` (no `integer`): el generador de Zod del
+                  # workspace emite API de Zod 4 (`zod.int()`) para `integer`
+                  # en bodies, y el runtime instalado es Zod 3. El servidor
+                  # sigue devolviendo un entero (conteo de sesiones revocadas).
+                  revokedSessions: { type: number, minimum: 0 }
         "400":
           description: Invalid request (missing fields, password policy or account without local password)
         "401":
@@ -162,7 +164,11 @@ paths:
         - name: jti
           in: path
           required: true
-          schema: { type: string, format: uuid }
+          # Sin `format: uuid`: el generador emitiría `zod.uuid()` (Zod 4) y el
+          # runtime instalado es Zod 3. El jti sigue siendo un UUID validado en
+          # la capa de dominio.
+          schema: { type: string }
+          description: Session allowlist identifier (jti, UUID).
       responses:
         "200":
           description: Session revoked (idempotent)
@@ -194,7 +200,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  revoked: { type: integer, minimum: 0 }
+                  revoked: { type: number, minimum: 0 }
         "401":
           description: Not authenticated
         "403":
@@ -317,6 +323,78 @@ paths:
         "401": { description: Not authenticated }
         "403": { description: Admin role required / would remove last admin }
         "404": { description: User not found }
+  /audit-events:
+    get:
+      operationId: listAuditEvents
+      tags: [audit]
+      summary: List administrative audit events (admin only)
+      description: >-
+        Trazabilidad administrativa (M17), eventos más recientes primero. Solo
+        rol `admin` (403 para cualquier otro rol). Filtros opcionales
+        combinables; la consulta SIEMPRE está paginada (limit/offset aplicados
+        en SQL) y nunca devuelve la tabla completa. `metadata` contiene
+        exclusivamente información operacional segura: nunca contraseñas, JWT,
+        cookies, tokens CSRF, claves de cifrado ni credenciales de conexión.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: actor
+          in: query
+          required: false
+          schema: { type: string }
+          description: actor_user_id exacto (sub del actor autenticado).
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+          description: Acción exacta (p. ej. login_success, source_created).
+        - name: resourceType
+          in: query
+          required: false
+          schema: { type: string }
+          description: Tipo de recurso exacto (session, source, scan, user, rule, report, masking_job, schedule).
+        - name: resourceId
+          in: query
+          required: false
+          schema: { type: string }
+          description: Identificador exacto del recurso afectado.
+        - name: result
+          in: query
+          required: false
+          schema: { type: string, enum: [success, failure] }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string }
+          description: Límite inferior inclusivo, ISO-8601 (comparado contra created_at). Valor inválido → 400.
+        - name: to
+          in: query
+          required: false
+          schema: { type: string }
+          description: Límite superior inclusivo, ISO-8601. Valor inválido → 400.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Audit events (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEvent"
+        "400":
+          description: Invalid filter (malformed date, unknown result, out-of-range limit/offset)
+        "401":
+          description: Not authenticated
+        "403":
+          description: Admin role required
   /dashboard:
     get:
       operationId: getDashboard
@@ -1006,6 +1084,12 @@ components:
           type: string
           description: User email (normalized to lowercase server-side)
         password: { type: string, minLength: 1 }
+    PasswordChangeInput:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, format: password }
+        newPassword: { type: string, format: password, minLength: 12 }
     RegisterInput:
       type: object
       required: [email, password]
@@ -1022,8 +1106,7 @@ components:
       properties:
         jti:
           type: string
-          format: uuid
-          description: Session allowlist identifier.
+          description: Session allowlist identifier (UUID).
         createdAt:
           type: string
           format: date-time
@@ -1463,4 +1546,58 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MaskingRow"
+    AuditEvent:
+      type: object
+      description: >-
+        Evento de auditoría administrativa (M17): quién hizo qué, cuándo y
+        sobre qué recurso. Historia deliberadamente desacoplada de `users`
+        (sin foreign key): sobrevive al borrado de la cuenta referenciada en
+        `actorUserId`. La acción y el tipo de recurso son texto libre con
+        vocabulario cerrado en la capa de dominio.
+      required: [id, action, resourceType, result, createdAt]
+      properties:
+        id: { type: string }
+        actorUserId:
+          type: [string, "null"]
+          description: >-
+            `sub` del actor autenticado que ejecutó la acción; `null` en
+            acciones internas (scheduler de escaneos, recovery de scans
+            huérfanos) donde no hay usuario humano.
+        action:
+          type: string
+          description: >-
+            Acción registrada. Vocabulario: login_success, login_failure,
+            logout, logout_all, session_revoked, password_changed,
+            user_updated, user_roles_updated, source_created, source_updated,
+            source_deleted, schedule_created, schedule_updated,
+            schedule_enabled, schedule_disabled, scan_started, scan_cancelled,
+            scan_failed, report_created, report_downloaded,
+            masking_job_created, dataset_downloaded, rule_enabled,
+            rule_disabled.
+        resourceType:
+          type: string
+          description: >-
+            Tipo de recurso afectado: session, user, source, schedule, scan,
+            report, masking_job o rule.
+        resourceId:
+          type: [string, "null"]
+          description: Identificador del recurso afectado (`null` si no aplica).
+        result:
+          type: string
+          enum: [success, failure]
+          description: Resultado de la acción intentada.
+        requestId:
+          type: [string, "null"]
+          description: >-
+            Correlation id del request (M16, header `X-Request-Id`); `null` en
+            acciones internas sin request HTTP.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: >-
+            Información operacional segura (ids, contadores, tipos, estados,
+            nombres de campos). NUNCA contraseñas, JWT, cookies, tokens CSRF,
+            claves de cifrado, credenciales de conexión ni datos descubiertos
+            por los scans.
+        createdAt: { type: string, format: date-time }
 

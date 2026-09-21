@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, isNotNull, lte, or } from "drizzle-orm";
 import { db, sessionsTable, usersTable, userRolesTable, type Session } from "@workspace/db";
 import { decodeJwt } from "jose";
 
@@ -78,6 +78,41 @@ export async function findActiveByJti(
 }
 
 /** Actualiza el timestamp de última actividad de la sesión. */
+/**
+ * M18 Fase 5 — fila cruda de sesión por `jti`, sin filtros de actividad.
+ * La usa `requireAuth` para distinguir la razón de un rechazo (expirada vs
+ * inactiva vs revocada/desconocida) y auditarla. `null` ⇒ jti desconocido.
+ */
+export async function findRawByJti(jti: string): Promise<Session | null> {
+  const rows = await db
+    .select()
+    .from(sessionsTable)
+    .where(eq(sessionsTable.jti, jti))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * M18 Fase 3 — purga de sesiones huérfanas: elimina las expiradas antes del
+ * corte y las revocadas con antigüedad mayor que la retención (el corte es
+ * `now - retention`). Devuelve cuántas filas eliminó.
+ */
+export async function cleanupStale(cutoff: Date): Promise<number> {
+  const deleted = await db
+    .delete(sessionsTable)
+    .where(
+      or(
+        lte(sessionsTable.expiresAt, cutoff),
+        and(
+          isNotNull(sessionsTable.revokedAt),
+          lte(sessionsTable.revokedAt, cutoff),
+        ),
+      ),
+    )
+    .returning({ jti: sessionsTable.jti });
+  return deleted.length;
+}
+
 export async function touchLastUsed(jti: string): Promise<void> {
   await db
     .update(sessionsTable)

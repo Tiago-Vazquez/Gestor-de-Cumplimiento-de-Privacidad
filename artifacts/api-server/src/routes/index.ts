@@ -4,15 +4,26 @@ import authRouter from "./auth";
 import privacyRouter from "./privacy";
 import sourcesRouter from "./sources";
 import usersRouter from "./users";
+import auditRouter from "./audit";
 import csrfRouter from "./csrf";
 import { requireAuth } from "../auth/middleware";
 import { requireCsrf } from "../auth/csrf";
+import { metrics } from "../lib/metrics";
 
 const router: IRouter = Router();
 
 // Endpoints públicos: health check y flujo de autenticación (login/logout/me).
 router.use(healthRouter);
 router.use("/auth", authRouter);
+
+// M16.4 — métricas operativas en formato Prometheus. Público igual que los
+// health probes: es infraestructura operativa (un scraper de métricas no tiene
+// sesión de usuario); en despliegues con perímetro, el reverse proxy puede
+// restringirlo por red. Contenido: solo contadores/gauge/histograma — sin
+// datos de negocio ni secretos.
+router.get("/metrics", (_req, res) => {
+  res.type("text/plain; version=0.0.4; charset=utf-8").send(metrics.render());
+});
 
 // Todo lo demás bajo /api requiere autenticación JWT.
 router.use(requireAuth());
@@ -31,6 +42,11 @@ router.use("/sources", sourcesRouter);
 // Administración de usuarios: adicionalmente exige rol `admin` (dentro del
 // router). Montado tras requireAuth para que req.user esté disponible.
 router.use("/users", usersRouter);
+
+// M17 — trazabilidad administrativa (solo rol `admin`, aplicado dentro del
+// router). Montado tras requireAuth para que req.user esté disponible y el
+// correlation id del request (M16.1) ya exista.
+router.use("/audit-events", auditRouter);
 
 // GET /api/csrf-token — expone SOLO el token CSRF de la sesión actual.
 router.use("/csrf-token", csrfRouter);

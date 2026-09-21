@@ -22,6 +22,7 @@ import {
   normalizeIntervalMinutes,
 } from "../repositories/scan-schedules.repo";
 import type { SourceConnectionConfig } from "../repositories/sources.repo";
+import { recordAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 
@@ -51,6 +52,21 @@ router.post("/", requireRole("admin"), async (req, res) => {
     kind: body.kind,
     environment: body.environment,
     connection,
+  });
+
+  // M17 — creación de fuente: solo metadatos operacionales. La conexión
+  // (host/usuario/contraseña) NUNCA se audita.
+  await recordAuditEvent({
+    req,
+    action: "source_created",
+    resourceType: "source",
+    resourceId: created.id,
+    result: "success",
+    metadata: {
+      kind: created.kind,
+      environment: created.environment,
+      scannable: created.connectionConfig != null,
+    },
   });
 
   res.status(201).json(CreateSourceResponse.parse({
@@ -121,6 +137,17 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
   // FASE 7.0.5 (M1): conteo real de hallazgos en lugar del hardcode 0
   const withCount = await repos.sources.getByIdWithFindingsCount(id);
 
+  // M17 — actualización de fuente: se auditan los CAMPOS enviados (nombres),
+  // nunca los valores (la conexión incluye contraseña).
+  await recordAuditEvent({
+    req,
+    action: "source_updated",
+    resourceType: "source",
+    resourceId: updated.id,
+    result: "success",
+    metadata: { fields: Object.keys(body) },
+  });
+
   res.json(UpdateSourceResponse.parse({
     id: updated.id,
     name: updated.name,
@@ -142,6 +169,17 @@ router.delete("/:id", requireRole("admin"), async (req, res) => {
   if (!deleted) {
     throw notFound("Source not found");
   }
+
+  // M17 — borrado de fuente. Sin metadata: el recurso ya no existe y no se
+  // conserva ninguna copia de su configuración.
+  await recordAuditEvent({
+    req,
+    action: "source_deleted",
+    resourceType: "source",
+    resourceId: id,
+    result: "success",
+  });
+
   res.status(204).end();
 });
 
@@ -212,6 +250,14 @@ router.put("/:id/schedule", requireRole("admin"), async (req, res) => {
     );
   }
 
+  // M17 — se lee el estado PREVIO del horario para poder clasificar la acción
+  // (creado / habilitado / deshabilitado / actualizado) y registrar el
+  // before→after. Se guardan SNAPSHOTS de los valores previos (no la fila) para
+  // que la clasificación no dependa de la identidad del objeto devuelto.
+  const previous = await repos.scanSchedules.getBySourceId(id);
+  const previousEnabled = previous?.enabled ?? null;
+  const previousIntervalMinutes = previous?.intervalMinutes ?? null;
+
   const result = await repos.scanSchedules.upsert({
     sourceId: id,
     enabled: body.enabled,
@@ -224,6 +270,33 @@ router.put("/:id/schedule", requireRole("admin"), async (req, res) => {
     }
     throw badRequest("intervalMinutes must be an integer between 15 and 10080");
   }
+
+  // M17 — una única acción por request (sin eventos duplicados): el primer PUT
+  // crea el horario; después se distingue el cambio de estado de la mera
+  // reprogramación del intervalo.
+  const action =
+    previousEnabled === null
+      ? "schedule_created"
+      : previousEnabled !== result.schedule.enabled
+        ? result.schedule.enabled
+          ? "schedule_enabled"
+          : "schedule_disabled"
+        : "schedule_updated";
+
+  await recordAuditEvent({
+    req,
+    action,
+    resourceType: "schedule",
+    resourceId: id,
+    result: "success",
+    metadata: {
+      enabled: result.schedule.enabled,
+      intervalMinutes: result.schedule.intervalMinutes,
+      previousEnabled,
+      previousIntervalMinutes,
+    },
+  });
+
   res.json(UpdateSourceScheduleResponse.parse(toScheduleResponse(result.schedule)));
 });
 

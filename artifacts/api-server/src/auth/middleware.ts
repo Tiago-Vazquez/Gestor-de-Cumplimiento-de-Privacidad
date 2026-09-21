@@ -4,6 +4,50 @@ import { extractSessionToken } from "./cookies";
 import { authDisabled, JWT_ISSUER, verifyToken, type AuthTokenPayload } from "./tokens";
 import { repos } from "../repositories";
 import { sessionIdleSeconds } from "../lib/env";
+import { recordAuditEvent, type AuditAction } from "../lib/audit";
+
+/**
+ * M18 Fase 5 — auditoría del rechazo de una sesión por expiración o
+ * inactividad. Solo distingue la razón cuando la fila existe y NO está
+ * revocada (una revocación ya se audita en su propia acción; un `jti`
+ * desconocido no aporta trazabilidad). Fire-and-forget: el 401 nunca depende
+ * de que la auditoría persista; los errores técnicos van al log de M16.
+ */
+async function auditSessionRejection(
+  req: Request,
+  sub: string | undefined,
+  jti: string,
+  idleSeconds: number,
+): Promise<void> {
+  try {
+    const raw = await repos.sessions.findRawByJti(jti);
+    if (!raw || raw.revokedAt) {
+      return;
+    }
+    const now = Date.now();
+    const action: AuditAction | null =
+      raw.expiresAt.getTime() <= now
+        ? "session_expired"
+        : now - raw.lastUsedAt.getTime() > idleSeconds * 1000
+          ? "inactivity_timeout"
+          : null;
+    if (!action) {
+      return;
+    }
+    await recordAuditEvent({
+      req,
+      actorUserId: sub ?? null,
+      action,
+      resourceType: "session",
+      resourceId: jti,
+      result: "failure",
+      metadata: { reason: action },
+    });
+  } catch {
+    // Best-effort: el rechazo de autenticación debe completarse igual.
+  }
+}
+
 import { logger } from "../lib/logger";
 
 /** Request autenticado: lleva el payload del JWT verificado en `req.user`. */
@@ -70,6 +114,7 @@ export function requireAuth() {
     const activeSession = await repos.sessions.findActiveByJti(payload.jti, idleSeconds);
     if (!activeSession) {
       res.set("WWW-Authenticate", WWW_AUTHENTICATE);
+      void auditSessionRejection(req, payload.sub, payload.jti, idleSeconds);
       throw unauthorized("Missing or invalid session");
     }
 

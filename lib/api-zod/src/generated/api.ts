@@ -65,6 +65,68 @@ export const AuthLogoutResponse = zod.void()
 
 
 /**
+ * @summary Change own password (revokes all other active sessions; current session stays valid)
+ */
+export const authPasswordChangeBodyNewPasswordMin = 12;
+
+
+
+export const AuthPasswordChangeBody = zod.object({
+  "currentPassword": zod.string(),
+  "newPassword": zod.string().min(authPasswordChangeBodyNewPasswordMin)
+})
+
+export const authPasswordChangeResponseRevokedSessionsMin = 0;
+
+
+
+export const AuthPasswordChangeResponse = zod.object({
+  "ok": zod.boolean().optional(),
+  "revokedSessions": zod.number().min(authPasswordChangeResponseRevokedSessionsMin).optional()
+})
+
+
+/**
+ * Returns metadata (jti, createdAt, expiresAt, current) of all active sessions for the authenticated user. Never exposes CSRF tokens or secrets.
+ * @summary List own active sessions
+ */
+export const AuthListSessionsResponse = zod.object({
+  "sessions": zod.array(zod.object({
+  "jti": zod.string().describe('Session allowlist identifier (UUID).'),
+  "createdAt": zod.coerce.date().describe('When the session was issued (issued_at).'),
+  "expiresAt": zod.coerce.date().describe('Session expiration (mirrors JWT exp).'),
+  "current": zod.boolean().describe('True when this session is the one making the request.')
+}).describe('Metadata of a single active session (never exposes secrets).'))
+})
+
+
+/**
+ * Revokes a single session by jti. Returns 404 (not 403) for non-existent, already-revoked, or other users' sessions to prevent enumeration. Revoking the current session is allowed.
+ * @summary Revoke one own session
+ */
+export const AuthRevokeSessionParams = zod.object({
+  "jti": zod.coerce.string().describe('Session allowlist identifier (jti, UUID).')
+})
+
+export const AuthRevokeSessionResponse = zod.object({
+  "revoked": zod.boolean().optional()
+})
+
+
+/**
+ * Revokes every active session of the authenticated user. The current session becomes invalid for subsequent requests (401 via allowlist). Other users' sessions are unaffected.
+ * @summary Revoke all own sessions (including current)
+ */
+export const authLogoutAllResponseRevokedMin = 0;
+
+
+
+export const AuthLogoutAllResponse = zod.object({
+  "revoked": zod.number().min(authLogoutAllResponseRevokedMin).optional()
+})
+
+
+/**
  * @summary Get authenticated user identity
  */
 export const AuthMeResponse = zod.object({
@@ -161,6 +223,44 @@ export const UpdateUserRolesResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "lastLoginAt": zod.coerce.date().nullish()
 }).describe('Safe projection for administration (never includes credentials)')
+
+
+/**
+ * Trazabilidad administrativa (M17), eventos más recientes primero. Solo rol `admin` (403 para cualquier otro rol). Filtros opcionales combinables; la consulta SIEMPRE está paginada (limit/offset aplicados en SQL) y nunca devuelve la tabla completa. `metadata` contiene exclusivamente información operacional segura: nunca contraseñas, JWT, cookies, tokens CSRF, claves de cifrado ni credenciales de conexión.
+ * @summary List administrative audit events (admin only)
+ */
+export const listAuditEventsQueryLimitDefault = 50;
+export const listAuditEventsQueryLimitMax = 100;
+
+export const listAuditEventsQueryOffsetDefault = 0;
+export const listAuditEventsQueryOffsetMin = 0;
+
+
+
+export const ListAuditEventsQueryParams = zod.object({
+  "actor": zod.coerce.string().optional().describe('actor_user_id exacto (sub del actor autenticado).'),
+  "action": zod.coerce.string().optional().describe('Acción exacta (p. ej. login_success, source_created).'),
+  "resourceType": zod.coerce.string().optional().describe('Tipo de recurso exacto (session, source, scan, user, rule, report, masking_job, schedule).'),
+  "resourceId": zod.coerce.string().optional().describe('Identificador exacto del recurso afectado.'),
+  "result": zod.enum(['success', 'failure']).optional(),
+  "from": zod.coerce.string().optional().describe('Límite inferior inclusivo, ISO-8601 (comparado contra created_at). Valor inválido → 400.'),
+  "to": zod.coerce.string().optional().describe('Límite superior inclusivo, ISO-8601. Valor inválido → 400.'),
+  "limit": zod.coerce.number().int().min(1).max(listAuditEventsQueryLimitMax).default(listAuditEventsQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listAuditEventsQueryOffsetMin).default(listAuditEventsQueryOffsetDefault)
+})
+
+export const ListAuditEventsResponseItem = zod.object({
+  "id": zod.string(),
+  "actorUserId": zod.string().nullish().describe('`sub` del actor autenticado que ejecutó la acción; `null` en acciones internas (scheduler de escaneos, recovery de scans huérfanos) donde no hay usuario humano.'),
+  "action": zod.string().describe('Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled.'),
+  "resourceType": zod.string().describe('Tipo de recurso afectado: session, user, source, schedule, scan, report, masking_job o rule.'),
+  "resourceId": zod.string().nullish().describe('Identificador del recurso afectado (`null` si no aplica).'),
+  "result": zod.enum(['success', 'failure']).describe('Resultado de la acción intentada.'),
+  "requestId": zod.string().nullish().describe('Correlation id del request (M16, header `X-Request-Id`); `null` en acciones internas sin request HTTP.'),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional().describe('Información operacional segura (ids, contadores, tipos, estados, nombres de campos). NUNCA contraseñas, JWT, cookies, tokens CSRF, claves de cifrado, credenciales de conexión ni datos descubiertos por los scans.'),
+  "createdAt": zod.coerce.date()
+}).describe('Evento de auditoría administrativa (M17): quién hizo qué, cuándo y sobre qué recurso. Historia deliberadamente desacoplada de `users` (sin foreign key): sobrevive al borrado de la cuenta referenciada en `actorUserId`. La acción y el tipo de recurso son texto libre con vocabulario cerrado en la capa de dominio.')
+export const ListAuditEventsResponse = zod.array(ListAuditEventsResponseItem)
 
 
 /**

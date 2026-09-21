@@ -1,5 +1,6 @@
 import { repos } from "../repositories";
 import { logger } from "../lib/logger";
+import { activeScans, scansCompletedTotal, scansFailedTotal, scansStartedTotal } from "../lib/metrics";
 import {
   connectPg,
   listTables,
@@ -119,6 +120,11 @@ export interface RunScanInput {
    * por defecto resuelve SCAN_HEARTBEAT_INTERVAL_MS (clamp [1 s, 60 s], 10 s).
    */
   heartbeatIntervalMs?: number;
+  /**
+   * M16.2 — correlation id del request HTTP que originó el scan (POST /scans
+   * lo pasa; el scheduler no tiene request). SOLO logging: nunca se persiste.
+   */
+  requestId?: string;
 }
 
 interface MatchAgg {
@@ -224,6 +230,7 @@ async function failScanSafe(
   sourceId: string,
   reason: FailReason,
   originalError?: unknown,
+  durationMs?: number,
 ): Promise<void> {
   try {
     await repos.scans.failScan({ scanId, completedAt: new Date(), reason });
@@ -231,6 +238,16 @@ async function failScanSafe(
     logger.error(
       { err: failError, originalErr: originalError, scanId, sourceId, reason },
       "Failed to mark scan as failed",
+    );
+  } finally {
+    // M16.3 — punto ÚNICO de terminal fallido (incluye `cancelled`): evento
+    // con scanId/sourceId/duración/resultado + métricas. `active_scans` baja
+    // solo aquí y en completed: `runScan` siempre incrementó al iniciar.
+    scansFailedTotal.inc();
+    activeScans.dec();
+    logger.info(
+      { event: "scan_failed", scanId, sourceId, reason, durationMs, result: "failed" },
+      "Scan failed",
     );
   }
 }
@@ -243,6 +260,8 @@ async function failScanSafe(
  * estado terminal `failed` (HIGH #2).
  */
 async function runScanInner(input: RunScanInput): Promise<void> {
+  // M16.3 — reloj del scan: duración total del pipeline para los eventos.
+  const startedAtMs = Date.now();
   const connector = input.connector ?? {
     connect: connectPg,
     listTables,
@@ -254,13 +273,13 @@ async function runScanInner(input: RunScanInput): Promise<void> {
     source = await repos.sources.getById(input.sourceId);
   } catch (error) {
     logger.error({ err: error, scanId: input.scanId, sourceId: input.sourceId }, "Scan failed: could not load source");
-    await failScanSafe(input.scanId, input.sourceId, "persist_failed", error);
+    await failScanSafe(input.scanId, input.sourceId, "persist_failed", error, Date.now() - startedAtMs);
     return;
   }
   if (!source) {
     // La source fue eliminada entre startScan y runScan: estado terminal failed.
     logger.warn({ scanId: input.scanId, sourceId: input.sourceId }, "Scan failed: source not found");
-    await failScanSafe(input.scanId, input.sourceId, "source_not_found");
+    await failScanSafe(input.scanId, input.sourceId, "source_not_found", undefined, Date.now() - startedAtMs);
     return;
   }
 
@@ -270,7 +289,7 @@ async function runScanInner(input: RunScanInput): Promise<void> {
       { scanId: input.scanId, sourceId: input.sourceId },
       "Scan failed: source has no connection configuration",
     );
-    await failScanSafe(input.scanId, input.sourceId, "source_not_scannable");
+    await failScanSafe(input.scanId, input.sourceId, "source_not_scannable", undefined, Date.now() - startedAtMs);
     return;
   }
 
@@ -363,7 +382,7 @@ async function runScanInner(input: RunScanInput): Promise<void> {
     if (connection) {
       await connection.close().catch(() => undefined);
     }
-    await failScanSafe(input.scanId, input.sourceId, "connection_failed", error);
+    await failScanSafe(input.scanId, input.sourceId, "connection_failed", error, Date.now() - startedAtMs);
     return;
   }
 
@@ -377,7 +396,19 @@ async function runScanInner(input: RunScanInput): Promise<void> {
   // el trabajo, NO se calculan/persisten hallazgos parciales y el scan
   // termina `failed(cancelled)` SIN pasar por finalizeScan.
   if (cancelRequested) {
-    await failScanSafe(input.scanId, input.sourceId, "cancelled");
+    // M16.3 — cancelación cooperativa: evento propio. El estado terminal
+    // `failed(cancelled)` y el evento scan_failed los emite failScanSafe.
+    logger.info(
+      {
+        event: "scan_cancelled",
+        scanId: input.scanId,
+        sourceId: input.sourceId,
+        durationMs: Date.now() - startedAtMs,
+        result: "cancelled",
+      },
+      "Scan cancelled by request",
+    );
+    await failScanSafe(input.scanId, input.sourceId, "cancelled", undefined, Date.now() - startedAtMs);
     return;
   }
 
@@ -426,8 +457,19 @@ async function runScanInner(input: RunScanInput): Promise<void> {
     completedAt: new Date(),
   });
 
+  // M16.3 — terminal correcto: evento + métricas, con duración total y
+  // resultado. Sustituye al log anterior conservando su mensaje.
+  scansCompletedTotal.inc();
+  activeScans.dec();
   logger.info(
-    { scanId: input.scanId, sourceId: input.sourceId, findings: findings.length },
+    {
+      event: "scan_completed",
+      scanId: input.scanId,
+      sourceId: input.sourceId,
+      durationMs: Date.now() - startedAtMs,
+      result: "completed",
+      findings: findings.length,
+    },
     "Scan completed",
   );
 }
@@ -444,6 +486,20 @@ async function runScanInner(input: RunScanInput): Promise<void> {
  * rejection. El `.catch` del endpoint permanece como última línea de defensa.
  */
 export async function runScan(input: RunScanInput): Promise<void> {
+  // M16.3 — arranque del pipeline (manual o programado): evento + métricas.
+  // El correlation id (`requestId`) solo viaja en logs; lo pasa POST /scans.
+  const startedAtMs = Date.now();
+  scansStartedTotal.inc();
+  activeScans.inc();
+  logger.info(
+    {
+      event: "scan_started",
+      ...(input.requestId !== undefined ? { requestId: input.requestId } : {}),
+      scanId: input.scanId,
+      sourceId: input.sourceId,
+    },
+    "Scan started",
+  );
   try {
     await runScanInner(input);
   } catch (error) {
@@ -451,6 +507,6 @@ export async function runScan(input: RunScanInput): Promise<void> {
       { err: error, scanId: input.scanId, sourceId: input.sourceId },
       "Scan failed: unhandled error",
     );
-    await failScanSafe(input.scanId, input.sourceId, "persist_failed", error);
+    await failScanSafe(input.scanId, input.sourceId, "persist_failed", error, Date.now() - startedAtMs);
   }
 }
