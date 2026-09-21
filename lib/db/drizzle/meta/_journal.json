@@ -76,6 +76,27 @@
       "when": 1789223700000,
       "tag": "0010_session_idle",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789687084650,
+      "tag": "0011_mixed_vampiro",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789689923189,
+      "tag": "0012_opposite_talisman",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789775233401,
+      "tag": "0013_uneven_nico_minoru",
+      "breakpoints": true
     }
   ],
   "version": "7",

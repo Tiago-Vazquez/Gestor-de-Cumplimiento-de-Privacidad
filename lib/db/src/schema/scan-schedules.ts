@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { sourcesTable } from "./sources";
@@ -16,8 +16,11 @@ import { sourcesTable } from "./sources";
  * dentro de la transacción de claim, garantizando que dos ticks nunca
  * despachan dos veces el mismo vencimiento.
  *
- * `last_status` refleja el resultado del despacho (`ok | skipped | error`),
- * no el estado del scan (ese vive en `scans.status`).
+ * `last_status` refleja el resultado del despacho (`ok | skipped | error`), no
+ * el estado del scan (ese vive en `scans.status`). Los CHECKs de BD replican
+ * las mismas reglas que la capa de aplicación (`normalizeIntervalMinutes` en
+ * el repo del API): rango del intervalo y dominio de `last_status` (NULL
+ * pasa: una fila recién creada aún no tiene despachos).
  */
 export const scanSchedulesTable = pgTable(
   "scan_schedules",
@@ -40,6 +43,14 @@ export const scanSchedulesTable = pgTable(
     index("scan_schedules_due_idx")
       .on(table.nextRunAt)
       .where(sql`${table.enabled} = true`),
+    check(
+      "scan_schedules_interval_check",
+      sql`${table.intervalMinutes} >= 15 and ${table.intervalMinutes} <= 10080`,
+    ),
+    check(
+      "scan_schedules_last_status_check",
+      sql`${table.lastStatus} in ('ok', 'error', 'skipped')`,
+    ),
   ],
 );
 
