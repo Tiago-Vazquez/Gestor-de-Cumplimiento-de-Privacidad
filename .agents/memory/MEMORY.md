@@ -1,1 +1,2 @@
 - [OpenAPI y Zod](openapi-zod-compatibility.md) — prefer números compatibles con Zod 3 para evitar que el generador emita `z.int()`.
+- [Namespacing del store de rate limiting](rate-limit-store-namespacing.md) — el store persistente es una tabla compartida: sin prefijo por limiter, los buckets (`login` vs `register`) colisionan.
