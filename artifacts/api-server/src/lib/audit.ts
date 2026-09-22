@@ -57,6 +57,13 @@ export type AuditAction =
   | "rule_disabled"
   | "session_expired"
   | "inactivity_timeout"
+  // M21.2 — multi-tenancy: contexto de organización, members e invitaciones.
+  | "org_context_switched"
+  | "member_role_updated"
+  | "member_removed"
+  | "invitation_created"
+  | "invitation_revoked"
+  | "invitation_accepted"
   | "security_violation";
 
 /** Tipos de recurso afectado. */
@@ -68,7 +75,11 @@ export type AuditResourceType =
   | "scan"
   | "report"
   | "masking_job"
-  | "rule";
+  | "rule"
+  // M21.2 — multi-tenancy.
+  | "organization"
+  | "membership"
+  | "invitation";
 
 export type AuditResult = "success" | "failure";
 

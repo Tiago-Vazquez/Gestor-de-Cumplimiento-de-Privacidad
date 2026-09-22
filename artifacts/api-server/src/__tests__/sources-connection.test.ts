@@ -73,7 +73,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: encryptConnectionConfig(sampleConfig),
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: null,
+    }
     const decrypted = decryptConnectionConfig(source);
     expect(decrypted).toEqual(sampleConfig);
   });
@@ -91,7 +92,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: null,
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: null,
+    }
     expect(decryptConnectionConfig(legacySource)).toBeNull();
   });
 
@@ -108,7 +110,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: "not-valid-encrypted-data",
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: null,
+    }
     expect(decryptConnectionConfig(corruptSource)).toBeNull();
   });
 
@@ -125,7 +128,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: "iv:tag:ciphertext",
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: null,
+    }
     expect(isScannable(source)).toBe(true);
   });
 
@@ -142,7 +146,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: null,
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: null,
+    }
     expect(isScannable(legacySource)).toBe(false);
   });
 

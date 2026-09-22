@@ -5,6 +5,7 @@ import privacyRouter from "./privacy";
 import sourcesRouter from "./sources";
 import usersRouter from "./users";
 import auditRouter from "./audit";
+import organizationsRouter from "./organizations";
 import csrfRouter from "./csrf";
 import { requireAuth } from "../auth/middleware";
 import { requireCsrf } from "../auth/csrf";
@@ -50,5 +51,11 @@ router.use("/audit-events", auditRouter);
 
 // GET /api/csrf-token — expone SOLO el token CSRF de la sesión actual.
 router.use("/csrf-token", csrfRouter);
+
+// M21.2 — organizaciones, membresías e invitaciones (ADR-002). Montado tras
+// requireAuth + requireCsrf: el contexto de organización activa se resuelve
+// SIEMPRE server-side (requireOrgContext) y las mutaciones exigen roles de
+// organización (requireOrgRole) dentro del router.
+router.use("/orgs", organizationsRouter);
 
 export default router;

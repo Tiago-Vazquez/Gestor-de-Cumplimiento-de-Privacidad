@@ -7,6 +7,9 @@ import * as compliance from "./compliance.repo";
 import * as dashboard from "./dashboard.repo";
 import * as findings from "./findings.repo";
 import * as masking from "./masking.repo";
+import * as memberships from "./memberships.repo";
+import * as invitations from "./invitations.repo";
+import * as organizations from "./organizations.repo";
 import * as rateLimits from "./rate-limits.repo";
 import * as reports from "./reports.repo";
 import * as rules from "./rules.repo";
@@ -23,7 +26,10 @@ export const repos = {
   compliance,
   dashboard,
   findings,
+  invitations,
   masking,
+  memberships,
+  organizations,
   rateLimits,
   reports,
   rules,

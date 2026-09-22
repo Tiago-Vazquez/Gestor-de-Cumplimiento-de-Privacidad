@@ -36,6 +36,7 @@ function supersededDuplicate(): Finding {
   const now = new Date();
   return {
     id: "f-dup",
+    tenantId: null,
     title: "Duplicado legacy superseded",
     dataType: "email",
     sourceId: "src-001",

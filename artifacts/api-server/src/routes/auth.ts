@@ -4,6 +4,7 @@ import { rateLimit } from "express-rate-limit";
 import { optionalPersistentStore } from "../lib/rate-limit-store";
 import { logger } from "../lib/logger";
 import { repos } from "../repositories";
+import { BOOTSTRAP_ORGANIZATION_ID } from "../repositories/organizations.repo";
 import { isProductionEnv, signToken, verifyToken } from "../auth/tokens";
 import { requireAuth, type AuthedRequest } from "../auth/middleware";
 import { requireCsrf } from "../auth/csrf";
@@ -306,6 +307,17 @@ async function handleBootstrapLogin(
   });
   await repos.userRoles.addRole(user.sub, "admin");
 
+  // M21.2 - bootstrap multi-tenancy: asegura la organizacion inicial y el
+  // membership `owner` del administrador de arranque (ambos idempotentes) y
+  // fija el contexto de organizacion de la sesion recien creada.
+  await repos.organizations.ensureBootstrapOrganization();
+  await repos.memberships.create({
+    organizationId: BOOTSTRAP_ORGANIZATION_ID,
+    userSub: user.sub,
+    role: "owner",
+  });
+  const activeOrgId = await repos.memberships.getFirstOrgForUser(user.sub);
+
   // [6.3B.12] Login transaccional (mismo patron que el login local): lock de
   // la fila del usuario + lectura de roles reales + firma + alta de sesion en
   // UNA transaccion, para no emitir un JWT admin stale tras una demosion
@@ -322,6 +334,7 @@ async function handleBootstrapLogin(
         roles,
         csrf: generateCsrfToken(),
       }),
+    activeOrgId,
   );
 
   res.cookie(sessionCookieName(), jwt, sessionCookieOptions());
@@ -413,6 +426,9 @@ async function handleLocalLogin(
     throw unauthorized("Invalid credentials");
   }
 
+  // M21.2 - el contexto de organizacion inicial de la sesion es la primera
+  // membership del usuario (orden de ingreso); null si no tiene ninguna.
+  const activeOrgId = await repos.memberships.getFirstOrgForUser(user.sub);
   // [6.3B.12] Login transaccional: lock de users(sub) FOR UPDATE + lectura
   // de roles + firma + alta de sesion en UNA tx (cierra U3: carrera login +
   // role-change que podia emitir un JWT con roles stale y sesion activa).
@@ -428,6 +444,7 @@ async function handleLocalLogin(
         roles,
         csrf: generateCsrfToken(),
       }),
+    activeOrgId,
   );
 
   res.cookie(sessionCookieName(), jwt, sessionCookieOptions());

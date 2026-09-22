@@ -1,5 +1,12 @@
 import { and, desc, eq, gt, isNull, isNotNull, lte, or } from "drizzle-orm";
-import { db, sessionsTable, usersTable, userRolesTable, type Session } from "@workspace/db";
+import {
+  db,
+  membershipsTable,
+  sessionsTable,
+  usersTable,
+  userRolesTable,
+  type Session,
+} from "@workspace/db";
 import { decodeJwt } from "jose";
 
 /**
@@ -23,6 +30,7 @@ import { decodeJwt } from "jose";
 export async function createSessionForUser(
   sub: string,
   buildToken: (roles: string[]) => Promise<string>,
+  activeOrgId?: string | null,
 ): Promise<{ jwt: string; roles: string[] }> {
   return db.transaction(async (tx) => {
     // Lock 1 (mismo orden que setRolesAndRevokeSessions): fila del usuario.
@@ -49,6 +57,9 @@ export async function createSessionForUser(
       jti,
       userSub: sub,
       expiresAt: new Date(exp * 1000),
+      // M21.2 — contexto de organización inicial (primera membership). El
+      // usuario puede cambiarlo con POST /api/orgs/active (valida membership).
+      activeOrgId: activeOrgId ?? null,
     });
 
     return { jwt, roles };
@@ -164,6 +175,103 @@ export async function revokeAllForUser(userSub: string): Promise<number> {
     .where(and(eq(sessionsTable.userSub, userSub), isNull(sessionsTable.revokedAt)))
     .returning({ jti: sessionsTable.jti });
   return rows.length;
+}
+
+/**
+ * M21.2 — Fija (o cambia) la organización activa de UNA sesión.
+ * La membership se valida DENTRO de la transacción: nunca se confía en un
+ * valor del cliente sin re-verificar contra `memberships`.
+ */
+export async function setActiveOrganization(
+  jti: string,
+  userSub: string,
+  organizationId: string,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [membership] = await tx
+      .select({ role: membershipsTable.role })
+      .from(membershipsTable)
+      .where(
+        and(
+          eq(membershipsTable.userSub, userSub),
+          eq(membershipsTable.organizationId, organizationId),
+        ),
+      )
+      .limit(1);
+    if (!membership) return false;
+
+    const rows = await tx
+      .update(sessionsTable)
+      .set({ activeOrgId: organizationId })
+      .where(and(eq(sessionsTable.jti, jti), eq(sessionsTable.userSub, userSub)))
+      .returning({ jti: sessionsTable.jti });
+    return rows.length > 0;
+  });
+}
+
+/** Limpia el contexto activo de las sesiones del usuario cuando la membership de esa org desaparece. */
+export async function clearActiveOrgForOrg(
+  userSub: string,
+  organizationId: string,
+): Promise<number> {
+  const rows = await db
+    .update(sessionsTable)
+    .set({ activeOrgId: null })
+    .where(
+      and(
+        eq(sessionsTable.userSub, userSub),
+        eq(sessionsTable.activeOrgId, organizationId),
+      ),
+    )
+    .returning({ jti: sessionsTable.jti });
+  return rows.length;
+}
+
+/** Variante transaccional de clearActiveOrgForOrg (compone con revocaciones). */
+export async function clearActiveOrgForOrgTx(
+  tx: Pick<typeof db, "update">,
+  userSub: string,
+  organizationId: string,
+): Promise<number> {
+  const rows = await tx
+    .update(sessionsTable)
+    .set({ activeOrgId: null })
+    .where(
+      and(
+        eq(sessionsTable.userSub, userSub),
+        eq(sessionsTable.activeOrgId, organizationId),
+      ),
+    )
+    .returning({ jti: sessionsTable.jti });
+  return rows.length;
+}
+
+/**
+ * M21.2 — Organización activa resuelta EN CADA REQUEST. Siempre contra la BD:
+ * si la membership desapareció (baja/revocación), el contexto cae aunque la
+ * sesión siga viva (el acceso a endpoints de plataforma es identitario).
+ */
+export async function resolveActiveOrganization(
+  jti: string,
+  userSub: string,
+): Promise<{ organizationId: string; role: string } | null> {
+  const [row] = await db
+    .select({
+      organizationId: sessionsTable.activeOrgId,
+      role: membershipsTable.role,
+    })
+    .from(sessionsTable)
+    .innerJoin(
+      membershipsTable,
+      and(
+        eq(membershipsTable.organizationId, sessionsTable.activeOrgId),
+        eq(membershipsTable.userSub, sessionsTable.userSub),
+      ),
+    )
+    .where(and(eq(sessionsTable.jti, jti), eq(sessionsTable.userSub, userSub)))
+    .limit(1);
+  if (!row || !row.organizationId) return null;
+  return { organizationId: row.organizationId, role: row.role };
 }
 
 /**

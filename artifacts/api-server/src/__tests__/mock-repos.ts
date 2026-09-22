@@ -2,7 +2,10 @@ import type {
   Activity,
   AuditEvent,
   Finding,
+  Invitation,
   MaskingJob,
+  Membership,
+  Organization,
   Report,
   Rule,
   Scan,
@@ -40,23 +43,36 @@ import { buildTrendDayKeys, buildTrendPoints } from "../lib/trend-buckets";
  * lo que `@workspace/db` ni siquiera llega a importarse.
  */
 
+/**
+ * M21.1/M21.2 — columnas de tenancy (`tenant_id` en las tablas de negocio) y
+ * contexto de sesión (`active_org_id`) añadidas con backfill TRANSITORIO
+ * (asignación real en M21.4). En el mock quedan OPCIONALES: las filas demo y
+ * las creadas por los tests no necesitan declararlas (equivale a NULL).
+ */
+type MockRow<T> = Omit<T, "tenantId"> & { tenantId?: string | null };
+type MockSession = Omit<Session, "activeOrgId"> & { activeOrgId?: string | null };
+
 export type MockState = {
   users: User[];
   userRoles: UserRole[];
   scanSchedules: ScanSchedule[];
-  sessions: Session[];
-  findings: Finding[];
-  sources: (Source & { findingsCount: number })[];
+  sessions: MockSession[];
+  findings: MockRow<Finding>[];
+  sources: (MockRow<Source> & { findingsCount: number })[];
   rules: Rule[];
-  scans: Scan[];
-  activity: Activity[];
-  reports: Report[];
+  scans: MockRow<Scan>[];
+  activity: MockRow<Activity>[];
+  reports: MockRow<Report>[];
   /** M17: se inicializa vacío en createMockRepos. */
-  auditEvents: AuditEvent[];
+  auditEvents: MockRow<AuditEvent>[];
   /** M5.c: se inicializa perezosamente en createMockRepos. */
-  maskingJobs?: MaskingJob[];
+  maskingJobs?: MockRow<MaskingJob>[];
   /** M18: filas de rate_limit_hits para el store persistente mock. */
   rateLimitHits?: MockRateLimitHit[];
+  /** M21.2: organizaciones, memberships e invitaciones (inicialización perezosa). */
+  organizations?: Organization[];
+  memberships?: Membership[];
+  invitations?: Invitation[];
 };
 
 /** Fila mock de `rate_limit_hits` (M18 Fase 2). */
@@ -80,7 +96,7 @@ const SOURCE_NAMES: Record<string, string> = {
  * `superseded = false`. Único lugar en el mock para que los tres
  * consumidores (findings.countOpen, reports.create, dashboard) no diverjan.
  */
-function isActiveFinding(finding: Finding): boolean {
+function isActiveFinding(finding: MockRow<Finding>): boolean {
   return finding.status !== "resolved" && finding.superseded === false;
 }
 
@@ -207,6 +223,27 @@ export function createMockRepos() {
 
   let counter = 0;
   const nextId = (prefix: string) => `${prefix}-mock-${++counter}`;
+
+  /**
+   * M21.2 — revoca TODAS las sesiones activas del usuario y limpia su contexto
+   * activo para la organización dada (equivale in-tx a
+   * revokeAllSessionsForUserTx + clearActiveOrgForOrgTx del repo real).
+   */
+  function revokeUserSessions(userSub: string, organizationId: string): number {
+    let revoked = 0;
+    for (const session of state.sessions) {
+      if (session.userSub === userSub && session.revokedAt === null) {
+        session.revokedAt = new Date();
+        revoked += 1;
+      }
+    }
+    for (const session of state.sessions) {
+      if (session.userSub === userSub && session.activeOrgId === organizationId) {
+        session.activeOrgId = null;
+      }
+    }
+    return revoked;
+  }
 
   const state: MockState = {
     users: [],
@@ -416,7 +453,7 @@ export function createMockRepos() {
         const source = state.sources.find((item) => item.id === sourceId);
         if (!source) return { ok: false, reason: "source_not_found" as const };
 
-        const scan: Scan = {
+        const scan: MockRow<Scan> = {
           id: nextId("scan"),
           sourceId: source.id,
           status: "running",
@@ -643,7 +680,7 @@ export function createMockRepos() {
         completedAt: Date;
         reason: "timeout";
       }) {
-        const recovered: Scan[] = [];
+        const recovered: MockRow<Scan>[] = [];
         for (const scan of [...state.scans]) {
           const lastAlive = scan.heartbeatAt ?? scan.startedAt;
           if (scan.status !== "running" || lastAlive.getTime() >= before.getTime()) continue;
@@ -688,7 +725,7 @@ export function createMockRepos() {
         requestId: string | null;
         metadata: Record<string, unknown>;
       }) {
-        const row: AuditEvent = { ...values, createdAt: new Date() };
+        const row: MockRow<AuditEvent> = { ...values, createdAt: new Date() };
         state.auditEvents.unshift(row);
         return { ...row };
       },
@@ -736,7 +773,7 @@ export function createMockRepos() {
       },
       async create({ name, period, at }: { name: string; period: string; at: Date }) {
         const openFindings = state.findings.filter(isActiveFinding).length;
-        const report: Report = {
+        const report: MockRow<Report> = {
           id: nextId("r"),
           name,
           period,
@@ -1108,6 +1145,7 @@ export function createMockRepos() {
       async createSessionForUser(
         sub: string,
         buildToken: (roles: string[]) => Promise<string>,
+        activeOrgId?: string | null,
       ) {
         const roles = state.userRoles
           .filter((r) => r.userSub === sub)
@@ -1125,6 +1163,8 @@ export function createMockRepos() {
           expiresAt: new Date(exp * 1000),
           revokedAt: null,
           lastUsedAt: new Date(),
+          // M21.2 — contexto de organización inicial (primera membership).
+          activeOrgId: activeOrgId ?? null,
         };
         state.sessions.push(created);
         return { jwt, roles };
@@ -1205,6 +1245,387 @@ export function createMockRepos() {
           }
         }
         return revoked;
+      },
+
+      /**
+       * M21.2 — fija la organización activa de una sesión. Replica el repo
+       * real: valida membership ANTES de mutar (misma tx lógica) y devuelve
+       * `false` si la sesión no existe o no pertenece al usuario.
+       */
+      async setActiveOrganization(
+        jti: string,
+        userSub: string,
+        organizationId: string,
+      ) {
+        const memberships = (state.memberships ??= []);
+        const membership = memberships.find(
+          (m) => m.userSub === userSub && m.organizationId === organizationId,
+        );
+        if (!membership) return false;
+        const session = state.sessions.find(
+          (s) => s.jti === jti && s.userSub === userSub,
+        );
+        if (!session) return false;
+        session.activeOrgId = organizationId;
+        return true;
+      },
+
+      /** M21.2 — limpia el contexto activo de las sesiones de un usuario para una org. */
+      async clearActiveOrgForOrg(userSub: string, organizationId: string) {
+        let cleared = 0;
+        for (const session of state.sessions) {
+          if (session.userSub === userSub && session.activeOrgId === organizationId) {
+            session.activeOrgId = null;
+            cleared += 1;
+          }
+        }
+        return cleared;
+      },
+
+      /**
+       * M21.2 — organización activa resuelta EN CADA REQUEST: la sesión debe
+       * existir, tener contexto, y la membership debe seguir viva (fail-closed).
+       */
+      async resolveActiveOrganization(jti: string, userSub: string) {
+        const session = state.sessions.find(
+          (s) => s.jti === jti && s.userSub === userSub,
+        );
+        if (!session || session.activeOrgId === null) return null;
+        const membership = (state.memberships ??= []).find(
+          (m) =>
+            m.userSub === userSub && m.organizationId === session.activeOrgId,
+        );
+        if (!membership) return null;
+        return { organizationId: membership.organizationId, role: membership.role };
+      },
+    },
+
+    // ---- M21.2: organizaciones ----
+    organizations: {
+      /** Bootstrap idempotente (id determinístico + no-op si ya existe). */
+      async ensureBootstrapOrganization() {
+        const orgs = (state.organizations ??= []);
+        if (!orgs.some((org) => org.id === "org-bootstrap")) {
+          orgs.push({
+            id: "org-bootstrap",
+            name: "Bootstrap Organization",
+            slug: "bootstrap",
+            status: "active",
+            createdAt: new Date(),
+          });
+        }
+      },
+      async getByIds(ids: string[]) {
+        const orgs = (state.organizations ??= []);
+        const map = new Map<
+          string,
+          { id: string; name: string; slug: string; createdAt: Date }
+        >();
+        for (const org of orgs) {
+          if (ids.includes(org.id)) {
+            map.set(org.id, {
+              id: org.id,
+              name: org.name,
+              slug: org.slug,
+              createdAt: org.createdAt,
+            });
+          }
+        }
+        return map;
+      },
+      async getById(id: string) {
+        const orgs = (state.organizations ??= []);
+        const org = orgs.find((row) => row.id === id);
+        if (!org) return null;
+        return {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          createdAt: org.createdAt,
+        };
+      },
+      async exists(id: string) {
+        return (state.organizations ??= []).some((org) => org.id === id);
+      },
+    },
+
+    // ---- M21.2: memberships (autoridad empresarial) ----
+    memberships: {
+      async getByUserAndOrg(userSub: string, organizationId: string) {
+        return (
+          (state.memberships ??= []).find(
+            (m) => m.userSub === userSub && m.organizationId === organizationId,
+          ) ?? null
+        );
+      },
+      /** Primera organización del usuario (orden de ingreso): default del login. */
+      async getFirstOrgForUser(userSub: string) {
+        const rows = (state.memberships ??= [])
+          .filter((m) => m.userSub === userSub)
+          .sort(
+            (a, b) =>
+              a.joinedAt.getTime() - b.joinedAt.getTime() ||
+              a.organizationId.localeCompare(b.organizationId),
+          );
+        return rows[0]?.organizationId ?? null;
+      },
+      /** Organizaciones del usuario + rol (orden de ingreso). */
+      async listByUser(userSub: string) {
+        const orgs = (state.organizations ??= []);
+        return (state.memberships ??= [])
+          .filter((m) => m.userSub === userSub)
+          .sort(
+            (a, b) =>
+              a.joinedAt.getTime() - b.joinedAt.getTime() ||
+              a.organizationId.localeCompare(b.organizationId),
+          )
+          .map((m) => {
+            const org = orgs.find((row) => row.id === m.organizationId);
+            if (!org) return null;
+            return {
+              organization: {
+                id: org.id,
+                name: org.name,
+                slug: org.slug,
+                createdAt: org.createdAt,
+              },
+              role: m.role,
+              joinedAt: m.joinedAt,
+            };
+          })
+          .filter((row): row is NonNullable<typeof row> => row !== null);
+      },
+      /** Miembros de una organización con identidad pública (sin credenciales). */
+      async listByOrg(organizationId: string) {
+        return (state.memberships ??= [])
+          .filter((m) => m.organizationId === organizationId)
+          .sort(
+            (a, b) =>
+              a.joinedAt.getTime() - b.joinedAt.getTime() ||
+              a.userSub.localeCompare(b.userSub),
+          )
+          .map((m) => {
+            const user = state.users.find((u) => u.sub === m.userSub);
+            if (!user) return null;
+            return {
+              sub: user.sub,
+              email: user.email,
+              name: user.name,
+              role: m.role,
+              joinedAt: m.joinedAt,
+            };
+          })
+          .filter((row): row is NonNullable<typeof row> => row !== null);
+      },
+      /** Alta idempotente por PK compuesta (`null` = ya existía). */
+      async create(values: {
+        organizationId: string;
+        userSub: string;
+        role: string;
+        invitedBy?: string | null;
+      }) {
+        const memberships = (state.memberships ??= []);
+        if (
+          memberships.some(
+            (m) =>
+              m.organizationId === values.organizationId &&
+              m.userSub === values.userSub,
+          )
+        ) {
+          return null;
+        }
+        const created: Membership = {
+          organizationId: values.organizationId,
+          userSub: values.userSub,
+          role: values.role,
+          invitedBy: values.invitedBy ?? null,
+          joinedAt: new Date(),
+        };
+        memberships.push(created);
+        return { ...created };
+      },
+      /**
+       * Cambio de rol: replica al repo real — invariante de último
+       * owner/admin evaluada AL MOMENTO DE MUTAR, `owner` inmutable, y
+       * revocación de sesiones + limpieza de contexto en la misma operación.
+       */
+      async updateRole(
+        organizationId: string,
+        userSub: string,
+        nextRole: string,
+      ) {
+        const memberships = (state.memberships ??= []);
+        const target = memberships.find(
+          (m) => m.organizationId === organizationId && m.userSub === userSub,
+        );
+        if (!target) throw notFound("Member not found");
+        if (target.role === "owner") {
+          throw forbidden(
+            "Ownership transfer is required to change the owner membership",
+          );
+        }
+        if (target.role === nextRole) {
+          return { revokedSessions: 0 };
+        }
+        const remainingGovernors = memberships.filter(
+          (m) =>
+            m.organizationId === organizationId &&
+            m.userSub !== userSub &&
+            (m.role === "owner" || m.role === "admin"),
+        );
+        if (
+          (target.role === "owner" || target.role === "admin") &&
+          remainingGovernors.length === 0
+        ) {
+          throw forbidden("Cannot remove the last organization admin");
+        }
+        target.role = nextRole;
+        return {
+          revokedSessions: revokeUserSessions(userSub, organizationId),
+        };
+      },
+      /** Baja de miembro: mismas invariantes que updateRole. */
+      async remove(organizationId: string, userSub: string) {
+        const memberships = (state.memberships ??= []);
+        const targetIndex = memberships.findIndex(
+          (m) => m.organizationId === organizationId && m.userSub === userSub,
+        );
+        if (targetIndex === -1) throw notFound("Member not found");
+        const target = memberships[targetIndex];
+        if (target.role === "owner") {
+          throw forbidden(
+            "Ownership transfer is required to remove the owner membership",
+          );
+        }
+        const remainingGovernors = memberships.filter(
+          (m) =>
+            m.organizationId === organizationId &&
+            m.userSub !== userSub &&
+            (m.role === "owner" || m.role === "admin"),
+        );
+        if (
+          (target.role === "owner" || target.role === "admin") &&
+          remainingGovernors.length === 0
+        ) {
+          throw forbidden("Cannot remove the last organization admin");
+        }
+        memberships.splice(targetIndex, 1);
+        return {
+          revokedSessions: revokeUserSessions(userSub, organizationId),
+        };
+      },
+    },
+
+    // ---- M21.2: invitaciones (el token NUNCA se persiste, solo su hash) ----
+    invitations: {
+      async create(values: {
+        organizationId: string;
+        email: string;
+        role: string;
+        tokenHash: string;
+        expiresAt: Date;
+        invitedBy: string;
+      }) {
+        const invitations = (state.invitations ??= []);
+        const created: Invitation = {
+          id: nextId("inv"),
+          organizationId: values.organizationId,
+          email: values.email,
+          role: values.role,
+          tokenHash: values.tokenHash,
+          expiresAt: values.expiresAt,
+          acceptedAt: null,
+          invitedBy: values.invitedBy,
+          createdAt: new Date(),
+        };
+        invitations.push(created);
+        return { ...created };
+      },
+      /** Proyección SIN token_hash (nunca sale de la BD). */
+      async listByOrg(organizationId: string) {
+        return (state.invitations ??= [])
+          .filter((invitation) => invitation.organizationId === organizationId)
+          .sort(
+            (a, b) =>
+              b.createdAt.getTime() - a.createdAt.getTime() ||
+              a.id.localeCompare(b.id),
+          )
+          .map((invitation) => ({
+            id: invitation.id,
+            email: invitation.email,
+            role: invitation.role,
+            expiresAt: invitation.expiresAt,
+            acceptedAt: invitation.acceptedAt,
+            createdAt: invitation.createdAt,
+          }));
+      },
+      /** Revoca (borra) una invitación pendiente de ESA organización. */
+      async revoke(organizationId: string, invitationId: string) {
+        const invitations = (state.invitations ??= []);
+        const index = invitations.findIndex(
+          (invitation) =>
+            invitation.id === invitationId &&
+            invitation.organizationId === organizationId,
+        );
+        if (index === -1) return false;
+        invitations.splice(index, 1);
+        return true;
+      },
+      /**
+       * Aceptación atómica (espejo del repo real): valida estado + consumo +
+       * alta del membership. `expectedEmail` hace la invitación PERSONAL;
+       * mismatch → `not_found` (mismo contrato que token inexistente, sin
+       * filtrar cuál de los dos falló).
+       */
+      async consumeByTokenHash(input: {
+        tokenHash: string;
+        userSub: string;
+        now: Date;
+        expectedEmail?: string;
+      }) {
+        const invitations = (state.invitations ??= []);
+        const invitation = invitations.find(
+          (row) => row.tokenHash === input.tokenHash,
+        );
+        if (!invitation) {
+          return { ok: false as const, reason: "not_found" as const };
+        }
+        if (
+          input.expectedEmail !== undefined &&
+          invitation.email !== input.expectedEmail
+        ) {
+          return { ok: false as const, reason: "not_found" as const };
+        }
+        if (invitation.acceptedAt) {
+          return { ok: false as const, reason: "already_accepted" as const };
+        }
+        if (invitation.expiresAt.getTime() <= input.now.getTime()) {
+          return { ok: false as const, reason: "expired" as const };
+        }
+        const memberships = (state.memberships ??= []);
+        if (
+          memberships.some(
+            (m) =>
+              m.organizationId === invitation.organizationId &&
+              m.userSub === input.userSub,
+          )
+        ) {
+          return { ok: false as const, reason: "already_member" as const };
+        }
+        memberships.push({
+          organizationId: invitation.organizationId,
+          userSub: input.userSub,
+          role: invitation.role,
+          invitedBy: invitation.invitedBy,
+          joinedAt: input.now,
+        });
+        invitation.acceptedAt = input.now;
+        return {
+          ok: true as const,
+          organizationId: invitation.organizationId,
+          role: invitation.role,
+          invitationId: invitation.id,
+        };
       },
     },
   };

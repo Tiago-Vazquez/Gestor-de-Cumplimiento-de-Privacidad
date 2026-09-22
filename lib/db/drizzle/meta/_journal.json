@@ -97,6 +97,20 @@
       "when": 1789775233401,
       "tag": "0013_uneven_nico_minoru",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789988584213,
+      "tag": "0014_glamorous_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789997998733,
+      "tag": "0015_high_johnny_storm",
+      "breakpoints": true
     }
   ],
   "version": "7",
