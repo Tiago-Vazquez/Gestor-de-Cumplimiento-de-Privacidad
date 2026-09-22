@@ -43,3 +43,7 @@ export const repos = {
 
 
 export type Repos = typeof repos;
+
+// M21.3 — predicado de scoping por tenant (D2), re-exportado desde el barrel
+// para que rutas/tests lo importen de un único punto (junto a los repos).
+export { tenantScope } from "./tenant";

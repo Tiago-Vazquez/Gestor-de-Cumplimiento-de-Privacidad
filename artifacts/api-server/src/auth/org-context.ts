@@ -34,6 +34,49 @@ export interface OrgAuthedRequest extends AuthedRequest {
   orgContext?: OrgContext;
 }
 
+/**
+ * Contexto de organización ya resuelto por `requireOrgContext` (router de
+ * negocio). Lanza 403 si no existe — falla cerrada, igual que el middleware.
+ */
+export function resolvedOrgContext(req: Request): OrgContext {
+  const context = (req as OrgAuthedRequest).orgContext;
+  if (!context) {
+    throw forbidden("No active organization");
+  }
+  return context;
+}
+
+/**
+ * M21.3 (D2 transitorio) — contexto de organización OPCIONAL, sin lanzar.
+ * Los routers de negocio lo usan para scoping: si el usuario aún no pertenece
+ * a ninguna organización, `tenantId` queda `undefined` y las consultas del
+ * repositorio no se scoped (compatibilidad legacy). El fail-closed estricto
+ * sigue en `requireOrgContext`/`resolvedOrgContext` para los endpoints de
+ * organizaciones.
+ */
+export function optionalOrgContext(req: Request): OrgContext | null {
+  return (req as OrgAuthedRequest).orgContext ?? null;
+}
+
+/**
+ * M21.3 — adjunta el contexto resuelto SIN fallar si no existe organización.
+ * Espejo leniente de `requireOrgContext`: se usa en los routers de negocio
+ * para poblar `req.orgContext` (scoping) sin romper a usuarios sin org.
+ */
+export function attachOrgContext() {
+  return async function attachOrgContextMiddleware(
+    req: Request,
+    _res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    const context = await resolveOrgContext(req);
+    if (context) {
+      (req as OrgAuthedRequest).orgContext = context;
+    }
+    next();
+  };
+}
+
 export async function resolveOrgContext(
   req: Request,
 ): Promise<OrgContext | null> {

@@ -1,7 +1,8 @@
 import { and, count, eq, gte, isNotNull, lt } from "drizzle-orm";
-import { db, findingsTable, scansTable } from "@workspace/db";
+import { db, findingsTable, scansTable, sourcesTable } from "@workspace/db";
 import { computeComplianceScore } from "./compliance-score";
 import { activeFindingsWhere } from "./findings.repo";
+import { tenantScope } from "./tenant";
 import {
   UTC_MS_PER_DAY,
   buildTrendDayKeys,
@@ -108,17 +109,17 @@ export function summarizeComplianceAggregates(input: {
 }
 
 /** Snapshot de métricas de compliance (contrato `ComplianceSummary`). */
-export async function getComplianceSummary(): Promise<ComplianceSummaryData> {
+export async function getComplianceSummary(tenantId?: string): Promise<ComplianceSummaryData> {
   const severityRows = await db
     .select({ severity: findingsTable.severity, total: count() })
     .from(findingsTable)
-    .where(activeFindingsWhere())
+    .where(activeFindingsWhere(tenantId))
     .groupBy(findingsTable.severity);
 
   const dataTypeRows = await db
     .select({ dataType: findingsTable.dataType, total: count() })
     .from(findingsTable)
-    .where(activeFindingsWhere())
+    .where(activeFindingsWhere(tenantId))
     .groupBy(findingsTable.dataType);
 
   // `sourceId IS NOT NULL`: los huérfanos (fuente eliminada) no participan.
@@ -129,7 +130,12 @@ export async function getComplianceSummary(): Promise<ComplianceSummaryData> {
       openFindings: count(),
     })
     .from(findingsTable)
-    .where(and(activeFindingsWhere(), isNotNull(findingsTable.sourceId)))
+    .where(
+      and(
+        activeFindingsWhere(tenantId),
+        isNotNull(findingsTable.sourceId),
+      ),
+    )
     .groupBy(findingsTable.sourceId, findingsTable.sourceName);
 
   const aggregates = summarizeComplianceAggregates({ severityRows, dataTypeRows, sourceRows });
@@ -152,7 +158,11 @@ export async function getComplianceSummary(): Promise<ComplianceSummaryData> {
  * el rango se defiende igualmente aquí para que ningún caller silencie una
  * ventana inválida.
  */
-export async function getComplianceTrend(days: number, now: Date = new Date()): Promise<ComplianceTrendData> {
+export async function getComplianceTrend(
+  days: number,
+  now: Date = new Date(),
+  tenantId?: string,
+): Promise<ComplianceTrendData> {
   if (!Number.isInteger(days) || days < 1 || days > COMPLIANCE_TREND_MAX_DAYS) {
     throw new RangeError(`days debe ser un entero en 1..${COMPLIANCE_TREND_MAX_DAYS}, recibido ${days}`);
   }
@@ -160,6 +170,15 @@ export async function getComplianceTrend(days: number, now: Date = new Date()): 
   const dayKeys = buildTrendDayKeys(days, now);
   const windowStart = utcDayStart(dayKeys[0]);
   const windowEnd = new Date(utcDayStart(dayKeys[dayKeys.length - 1]).getTime() + UTC_MS_PER_DAY);
+
+  // M21.3 (D2) - scoping de la ventana por tenant activo. Los scans (sin
+  // columna tenant propia) se scoped via JOIN con su source.
+  const findingScope = tenantId
+    ? tenantScope(findingsTable.tenantId, tenantId)
+    : undefined;
+  const sourceScope = tenantId
+    ? tenantScope(sourcesTable.tenantId, tenantId)
+    : undefined;
 
   // Altas: canónicos (superseded = false) por firstSeenAt. El status actual
   // es irrelevante: un finding detectado lunes y resuelto martes SÍ cuenta el
@@ -173,6 +192,7 @@ export async function getComplianceTrend(days: number, now: Date = new Date()): 
         isNotNull(findingsTable.firstSeenAt),
         gte(findingsTable.firstSeenAt, windowStart),
         lt(findingsTable.firstSeenAt, windowEnd),
+        findingScope,
       ),
     );
 
@@ -186,6 +206,7 @@ export async function getComplianceTrend(days: number, now: Date = new Date()): 
         eq(findingsTable.status, "resolved"),
         gte(findingsTable.updatedAt, windowStart),
         lt(findingsTable.updatedAt, windowEnd),
+        findingScope,
       ),
     );
 
@@ -193,12 +214,14 @@ export async function getComplianceTrend(days: number, now: Date = new Date()): 
   const scanRows = await db
     .select({ at: scansTable.completedAt, recordsRead: scansTable.recordsRead })
     .from(scansTable)
+    .innerJoin(sourcesTable, eq(scansTable.sourceId, sourcesTable.id))
     .where(
       and(
         eq(scansTable.status, "completed"),
         isNotNull(scansTable.completedAt),
         gte(scansTable.completedAt, windowStart),
         lt(scansTable.completedAt, windowEnd),
+        sourceScope,
       ),
     );
 

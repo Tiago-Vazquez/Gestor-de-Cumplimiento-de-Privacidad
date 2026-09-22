@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, lte, type SQL } from "drizzle-orm";
 import { auditEventsTable, db, type AuditEvent } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
+import { tenantScope } from "./tenant";
 
 /**
  * M17 — Repositorio de auditoría administrativa (`audit_events`).
@@ -22,6 +23,12 @@ export type AuditEventCreateInput = {
   result: string;
   requestId: string | null;
   metadata: Record<string, unknown>;
+  /**
+   * M21.3 (ADR-001) — tenant del evento, resuelto en el punto de registro:
+   * actor → organización activa; eventos de sistema → NULL (la resolución
+   * por recurso afectado llega con el backfill de M21.4).
+   */
+  tenantId?: string | null;
 };
 
 export async function create(input: AuditEventCreateInput): Promise<AuditEvent> {
@@ -36,6 +43,7 @@ export async function create(input: AuditEventCreateInput): Promise<AuditEvent> 
       result: input.result,
       requestId: input.requestId,
       metadata: input.metadata,
+      tenantId: input.tenantId ?? null,
     })
     .returning();
   return row;
@@ -49,6 +57,8 @@ export type AuditEventFilters = {
   result?: string;
   from?: Date;
   to?: Date;
+  /** M21.3 — scoping por tenant activo (D2: incluye legacy NULL). */
+  tenantId?: string;
 };
 
 export async function list(
@@ -76,6 +86,11 @@ export async function list(
   }
   if (filters.to !== undefined) {
     conditions.push(lte(auditEventsTable.createdAt, filters.to));
+  }
+  // M21.3 — scoping por tenant activo (D2: tenant o legacy NULL).
+  if (filters.tenantId !== undefined) {
+    const scope = tenantScope(auditEventsTable.tenantId, filters.tenantId);
+    if (scope) conditions.push(scope);
   }
 
   let query = db

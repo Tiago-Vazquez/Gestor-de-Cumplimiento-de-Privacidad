@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { ListAuditEventsQueryParams, ListAuditEventsResponse } from "@workspace/api-zod";
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
+import { optionalOrgContext } from "../auth/org-context";
 import { badRequest } from "../lib/errors";
 import { parsePagination } from "../lib/pagination";
 import { mapAuditEvent } from "../mappers";
@@ -59,6 +60,8 @@ router.get("/", async (req, res) => {
       result: params.result,
       from,
       to,
+      // M21.3 — scoping por tenant activo (D2).
+      tenantId: optionalOrgContext(req)?.organizationId,
     },
     pagination,
   );

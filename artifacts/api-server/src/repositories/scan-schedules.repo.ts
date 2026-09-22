@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, lte } from "drizzle-orm";
+import { and, asc, eq, exists, isNotNull, lte } from "drizzle-orm";
 import {
   db,
   scanSchedulesTable,
@@ -6,6 +6,26 @@ import {
   type ScanSchedule,
 } from "@workspace/db";
 import { newId } from "./ids";
+import { tenantScope } from "./tenant";
+
+/**
+ * M21.3 — EXISTS: el schedule pertenece al tenant activo vía su source (FK).
+ * Sin JOIN para que `SELECT *` siga devolviendo la fila `scan_schedules`.
+ */
+function scheduleTenantExists(tenantId?: string) {
+  if (!tenantId) return undefined;
+  return exists(
+    db
+      .select({ id: sourcesTable.id })
+      .from(sourcesTable)
+      .where(
+        and(
+          eq(sourcesTable.id, scanSchedulesTable.sourceId),
+          tenantScope(sourcesTable.tenantId, tenantId),
+        ),
+      ),
+  );
+}
 
 /**
  * M10.3 — Repositorio de horarios de escaneo automático (`scan_schedules`).
@@ -132,12 +152,15 @@ export type UpsertScheduleResult =
  * (habilitar = primera corrida en `at + intervalo`; cambiar intervalo =
  * reprogramar desde ahora).
  */
-export async function upsert(input: {
-  sourceId: string;
-  enabled: boolean;
-  intervalMinutes?: number;
-  at: Date;
-}): Promise<UpsertScheduleResult> {
+export async function upsert(
+  input: {
+    sourceId: string;
+    enabled: boolean;
+    intervalMinutes?: number;
+    at: Date;
+  },
+  tenantId?: string,
+): Promise<UpsertScheduleResult> {
   const normalized = normalizeIntervalMinutes({
     enabled: input.enabled,
     intervalMinutes: input.intervalMinutes,
@@ -148,7 +171,13 @@ export async function upsert(input: {
     const [source] = await tx
       .select({ id: sourcesTable.id })
       .from(sourcesTable)
-      .where(eq(sourcesTable.id, input.sourceId))
+      // M21.3 — scoping por tenant (D2): fuente ajena → source_not_found.
+      .where(
+        and(
+          eq(sourcesTable.id, input.sourceId),
+          tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        ),
+      )
       .for("update");
     if (!source) return { ok: false, reason: "source_not_found" as const };
 
@@ -185,14 +214,21 @@ export async function upsert(input: {
   });
 }
 
-/** Horario de una fuente (null si la fuente no tiene fila de schedule). */
+/** Horario de una fuente (null si la fuente no tiene fila de schedule o es ajena). */
 export async function getBySourceId(
   sourceId: string,
+  tenantId?: string,
 ): Promise<ScanSchedule | null> {
   const [row] = await db
     .select()
     .from(scanSchedulesTable)
-    .where(eq(scanSchedulesTable.sourceId, sourceId))
+    .where(
+      and(
+        eq(scanSchedulesTable.sourceId, sourceId),
+        // M21.3 — scoping vía source (D2).
+        scheduleTenantExists(tenantId),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }

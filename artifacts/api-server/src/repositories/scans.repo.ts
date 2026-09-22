@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, exists, inArray, sql } from "drizzle-orm";
 import {
   activityTable,
   db,
@@ -10,6 +10,27 @@ import {
 } from "@workspace/db";
 import { newId } from "./ids";
 import { activeFindingsWhere } from "./findings.repo";
+import { tenantScope } from "./tenant";
+
+/**
+ * M21.3 — EXISTS: el scan pertenece al tenant activo vía su source (FK). Sin
+ * JOIN para que `SELECT *` siga devolviendo la fila `scans` (y no una tupla
+ * de join) y el `FOR UPDATE` bloquee solo la fila del scan.
+ */
+function scanTenantExists(tenantId?: string) {
+  if (!tenantId) return undefined;
+  return exists(
+    db
+      .select({ id: sourcesTable.id })
+      .from(sourcesTable)
+      .where(
+        and(
+          eq(sourcesTable.id, scansTable.sourceId),
+          tenantScope(sourcesTable.tenantId, tenantId),
+        ),
+      ),
+  );
+}
 import type { Pagination } from "../lib/pagination";
 import {
   computeFingerprint,
@@ -41,12 +62,21 @@ export type CancelScanResult =
  * `FOR UPDATE` sobre la fuente para devolver 409 limpio sin depender de
  * capturar el 23505.
  */
-export async function startScan({ sourceId, startedAt }: { sourceId: string; startedAt: Date }): Promise<StartScanResult> {
+export async function startScan(
+  { sourceId, startedAt, tenantId }: { sourceId: string; startedAt: Date; tenantId?: string },
+): Promise<StartScanResult> {
   return db.transaction(async (tx) => {
     const [source] = await tx
       .select()
       .from(sourcesTable)
-      .where(eq(sourcesTable.id, sourceId))
+      // M21.3 — scoping en el SELECT FOR UPDATE (D2): una fuente ajena se
+      // reporta como `source_not_found` sin escribir nada (BOLA).
+      .where(
+        and(
+          eq(sourcesTable.id, sourceId),
+          tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        ),
+      )
       .for("update");
     if (!source) return { ok: false, reason: "source_not_found" as const };
 
@@ -397,6 +427,7 @@ export async function heartbeatScan({
 export async function list(
   filters: { sourceId?: string; status?: string } = {},
   pagination?: Pagination,
+  tenantId?: string,
 ): Promise<Scan[]> {
   let query = db
     .select()
@@ -405,6 +436,8 @@ export async function list(
       and(
         filters.sourceId ? eq(scansTable.sourceId, filters.sourceId) : undefined,
         filters.status ? eq(scansTable.status, filters.status) : undefined,
+        // M21.3 — scans sin columna tenant propia: scoped vía EXISTS(source).
+        scanTenantExists(tenantId),
       ),
     )
     .orderBy(desc(scansTable.startedAt), desc(scansTable.id))
@@ -415,12 +448,18 @@ export async function list(
   return query;
 }
 
-/** FASE 7.1.1 (M1): detalle de un scan por id (null si no existe). */
-export async function getById(id: string): Promise<Scan | null> {
+/** FASE 7.1.1 (M1): detalle de un scan por id (null si no existe o es ajeno). */
+export async function getById(id: string, tenantId?: string): Promise<Scan | null> {
   const [scan] = await db
     .select()
     .from(scansTable)
-    .where(eq(scansTable.id, id))
+    .where(
+      and(
+        eq(scansTable.id, id),
+        // M21.3 — scoping vía source (un scan ajeno produce 0 filas → 404).
+        scanTenantExists(tenantId),
+      ),
+    )
     .limit(1);
   return scan ?? null;
 }
@@ -433,16 +472,20 @@ export async function getById(id: string): Promise<Scan | null> {
  * murió). Idempotente: pedir cancel dos veces mientras siga `running` es un
  * éxito (segunda llamada retorna el scan ya marcado).
  */
-export async function requestCancel({
-  scanId,
-}: {
-  scanId: string;
-}): Promise<CancelScanResult> {
+export async function requestCancel(
+  { scanId, tenantId }: { scanId: string; tenantId?: string },
+): Promise<CancelScanResult> {
   return db.transaction(async (tx) => {
     const [scan] = await tx
       .select()
       .from(scansTable)
-      .where(eq(scansTable.id, scanId))
+      .where(
+        and(
+          eq(scansTable.id, scanId),
+          // M21.3 — scoping vía source (cancelar un scan ajeno → scan_not_found).
+          scanTenantExists(tenantId),
+        ),
+      )
       .for("update");
     if (!scan) return { ok: false, reason: "scan_not_found" as const };
     if (scan.status !== "running") {

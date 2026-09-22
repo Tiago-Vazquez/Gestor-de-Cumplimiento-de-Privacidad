@@ -4,6 +4,7 @@ import { repos } from "../repositories";
 import { logger } from "./logger";
 import { REQUEST_ID_HEADER, requestIdFromHeader } from "./request-id";
 import type { AuthedRequest } from "../auth/middleware";
+import type { OrgAuthedRequest } from "../auth/org-context";
 
 /**
  * M17 — Registro de auditoría administrativa (helper de escritura).
@@ -102,6 +103,8 @@ export type AuditEventInput = {
   result?: AuditResult;
   origin?: AuditOrigin;
   metadata?: Record<string, unknown>;
+  /** M21.3 (D2) — tenant explícito del evento (si se omite se resuelve del request). */
+  tenantId?: string | null;
 };
 
 /** Claves cuyo nombre (case-insensitive) nunca se persiste. */
@@ -185,6 +188,15 @@ export function resolveAuditActor(req?: Request): string | null {
 }
 
 /**
+ * M21.3 (D2) — organización activa del request, para stamping del evento.
+ * `null` si el request no pasó por `attachOrgContext`/`requireOrgContext`
+ * (acciones identitarias, de sistema o usuarios sin organización).
+ */
+export function resolveAuditTenant(req?: Request): string | null {
+  return (req as OrgAuthedRequest | undefined)?.orgContext?.organizationId ?? null;
+}
+
+/**
  * Correlation id del evento: el `req.id` asignado por pino-http (M16.1). Si el
  * request no pasó por el middleware se intenta el header `X-Request-Id`
  * validado; en acciones internas devuelve `null`. Nunca se genera un id nuevo:
@@ -220,6 +232,8 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
       result: input.result ?? "success",
       requestId: resolveAuditRequestId(input.req),
       metadata,
+      // M21.3 (D2) — tenant del evento: organización activa del request.
+      tenantId: input.tenantId ?? resolveAuditTenant(input.req),
     });
   } catch (error) {
     logger.error(

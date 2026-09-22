@@ -4,6 +4,7 @@ import type { Pagination } from "../lib/pagination";
 import { decrypt, encrypt } from "../lib/secret-manager";
 import { logger } from "../lib/logger";
 import { newId } from "./ids";
+import { tenantScope } from "./tenant";
 
 export type SourceWithFindingsCount = Source & { findingsCount: number };
 
@@ -67,6 +68,8 @@ export interface CreateSourceInput {
   kind: string;
   environment: string;
   connection?: SourceConnectionConfig;
+  /** M21.3 — tenant propietario (contexto de organización activa). */
+  tenantId?: string | null;
 }
 
 export interface UpdateSourceInput {
@@ -95,6 +98,8 @@ export async function createSource(input: CreateSourceInput): Promise<Source> {
     connectionConfig: input.connection
       ? encryptConnectionConfig(input.connection)
       : null,
+    // M21.3 — raíz de propiedad del recurso (D2: null si no hay contexto).
+    tenantId: input.tenantId ?? null,
     createdAt: now,
     updatedAt: now,
   };
@@ -110,8 +115,9 @@ export async function createSource(input: CreateSourceInput): Promise<Source> {
 export async function updateSource(
   id: string,
   input: UpdateSourceInput,
+  tenantId?: string,
 ): Promise<Source | null> {
-  const existing = await getById(id);
+  const existing = await getById(id, tenantId);
   if (!existing) return null;
 
   const set: Partial<Source> = { updatedAt: new Date() };
@@ -127,7 +133,13 @@ export async function updateSource(
   const [row] = await db
     .update(sourcesTable)
     .set(set)
-    .where(eq(sourcesTable.id, id))
+    // M21.3 — scoping en el WHERE de la mutación (no solo el pre-check).
+    .where(
+      and(
+        eq(sourcesTable.id, id),
+        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+      ),
+    )
     .returning();
   return row ?? null;
 }
@@ -138,10 +150,16 @@ export async function updateSource(
  * `source_id = NULL` como evidencia histórica de cumplimiento (ON DELETE
  * SET NULL), preservando `source_name` para la atribución.
  */
-export async function deleteSource(id: string): Promise<boolean> {
+export async function deleteSource(id: string, tenantId?: string): Promise<boolean> {
   const [row] = await db
     .delete(sourcesTable)
-    .where(eq(sourcesTable.id, id))
+    // M21.3 — scoping en el DELETE (BOLA: borrar recurso ajeno → 0 filas).
+    .where(
+      and(
+        eq(sourcesTable.id, id),
+        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+      ),
+    )
     .returning({ id: sourcesTable.id });
   return row !== undefined;
 }
@@ -151,12 +169,20 @@ export async function deleteSource(id: string): Promise<boolean> {
  * asociados (conteo en SQL vía LEFT JOIN, igual que `list`). Antes el detalle
  * devolvía `findings: 0` hardcodeado.
  */
-export async function getByIdWithFindingsCount(id: string): Promise<SourceWithFindingsCount | null> {
+export async function getByIdWithFindingsCount(
+  id: string,
+  tenantId?: string,
+): Promise<SourceWithFindingsCount | null> {
   const [row] = await db
     .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
     .from(sourcesTable)
     .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
-    .where(eq(sourcesTable.id, id))
+    .where(
+      and(
+        eq(sourcesTable.id, id),
+        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+      ),
+    )
     .groupBy(sourcesTable.id);
   return row ? { ...row.source, findingsCount: row.findingsCount } : null;
 }
@@ -167,11 +193,15 @@ export async function getByIdWithFindingsCount(id: string): Promise<SourceWithFi
  * Orden estable: creación y, a igualdad, id.
  * F4 (6.3B.20): paginación aplicada en SQL (LIMIT/OFFSET sobre el GROUP BY).
  */
-export async function list(pagination?: Pagination): Promise<SourceWithFindingsCount[]> {
+export async function list(
+  pagination?: Pagination,
+  tenantId?: string,
+): Promise<SourceWithFindingsCount[]> {
   let query = db
     .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
     .from(sourcesTable)
     .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
+    .where(tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined)
     .groupBy(sourcesTable.id)
     .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id))
     .$dynamic();
@@ -183,18 +213,37 @@ export async function list(pagination?: Pagination): Promise<SourceWithFindingsC
   return rows.map((row) => ({ ...row.source, findingsCount: row.findingsCount }));
 }
 
-export async function getById(id: string): Promise<Source | null> {
-  const [row] = await db.select().from(sourcesTable).where(eq(sourcesTable.id, id));
+export async function getById(id: string, tenantId?: string): Promise<Source | null> {
+  const [row] = await db
+    .select()
+    .from(sourcesTable)
+    .where(
+      and(
+        eq(sourcesTable.id, id),
+        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+      ),
+    );
   return row ?? null;
 }
 
 /** Actualiza `last_scan_at` tras iniciar un escaneo (operación atómica de una
  * sola sentencia; las transacciones multi-tabla viven en scans.repo). */
-export async function touchLastScan({ id, at }: { id: string; at: Date }): Promise<Source | null> {
+export async function touchLastScan({
+  id,
+  at,
+}: {
+  id: string;
+  at: Date;
+}, tenantId?: string): Promise<Source | null> {
   const [row] = await db
     .update(sourcesTable)
     .set({ lastScanAt: at, updatedAt: new Date() })
-    .where(eq(sourcesTable.id, id))
+    .where(
+      and(
+        eq(sourcesTable.id, id),
+        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+      ),
+    )
     .returning();
   return row ?? null;
 }

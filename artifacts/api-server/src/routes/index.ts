@@ -9,6 +9,7 @@ import organizationsRouter from "./organizations";
 import csrfRouter from "./csrf";
 import { requireAuth } from "../auth/middleware";
 import { requireCsrf } from "../auth/csrf";
+import { attachOrgContext } from "../auth/org-context";
 import { metrics } from "../lib/metrics";
 
 const router: IRouter = Router();
@@ -33,6 +34,12 @@ router.use(requireAuth());
 // cuando la sesión viaja por cookie de navegador. Debe ir DESPUÉS de que
 // requireAuth resolvió req.user y ANTES de los handlers mutativos.
 router.use(requireCsrf());
+
+// M21.3 — contexto de organización (leniente, D2 transitorio): pobla
+// `req.orgContext` para el scoping de los routers de negocio. Sin contexto =
+// sin scoping (compatibilidad legacy); el fail-closed estricto vive en los
+// endpoints de organizaciones (requireOrgContext).
+router.use(attachOrgContext());
 
 router.use(privacyRouter);
 

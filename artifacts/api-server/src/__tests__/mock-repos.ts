@@ -100,6 +100,19 @@ function isActiveFinding(finding: MockRow<Finding>): boolean {
   return finding.status !== "resolved" && finding.superseded === false;
 }
 
+/**
+ * M21.3 (D2) — visibilidad de una fila para la organización activa: visible si
+ * su `tenant_id` coincide con el contexto o si es legacy (`null`). Sin contexto
+ * (`orgId` undefined) no hay scoping (compatibilidad legacy, espejo del repo).
+ */
+function tenantVisible(
+  rowTenantId: string | null | undefined,
+  orgId: string | undefined,
+): boolean {
+  if (orgId === undefined) return true;
+  return rowTenantId == null || rowTenantId === orgId;
+}
+
 // ---- FASE 7.3 (M5.c): espejo in-memory de masking.repo ----
 // Réplica EXACTA de la semántica del repo real: validación de campos contra
 // MASKABLE_FIELDS, 404 de fuente inexistente, job `failed` auditable sin
@@ -122,30 +135,46 @@ function createMockMaskingRepos(state: MockState) {
   };
 
   return {
-    async list(pagination?: { limit: number; offset: number }) {
-      const sorted = [...jobs()].sort(
-        (a, b) =>
-          b.createdAt.getTime() - a.createdAt.getTime() ||
-          b.id.localeCompare(a.id),
-      );
+    async list(pagination?: { limit: number; offset: number }, tenantId?: string) {
+      const sorted = [...jobs()]
+        .filter((job) => {
+          if (tenantId === undefined) return true;
+          const source = state.sources.find((s) => s.id === job.sourceId);
+          return tenantVisible(source?.tenantId, tenantId);
+        })
+        .sort(
+          (a, b) =>
+            b.createdAt.getTime() - a.createdAt.getTime() ||
+            b.id.localeCompare(a.id),
+        );
       const page = pagination
         ? sorted.slice(pagination.offset, pagination.offset + pagination.limit)
         : sorted;
       return page.map(stripDataset);
     },
 
-    async getById(id: string) {
+    async getById(id: string, tenantId?: string) {
       const job = jobs().find((j) => j.id === id);
-      return job ? stripDataset(job) : null;
+      if (!job) return null;
+      if (tenantId !== undefined) {
+        const source = state.sources.find((s) => s.id === job.sourceId);
+        if (!tenantVisible(source?.tenantId, tenantId)) return null;
+      }
+      return stripDataset(job);
     },
 
     /** Única vía de salida del dataset (usada por /download). */
-    async getByIdWithDataset(id: string) {
+    async getByIdWithDataset(id: string, tenantId?: string) {
       const job = jobs().find((j) => j.id === id);
-      return job ? { ...job } : null;
+      if (!job) return null;
+      if (tenantId !== undefined) {
+        const source = state.sources.find((s) => s.id === job.sourceId);
+        if (!tenantVisible(source?.tenantId, tenantId)) return null;
+      }
+      return { ...job };
     },
 
-    async create(input: { sourceId: string; fields: string[]; at: Date }) {
+    async create(input: { sourceId: string; fields: string[]; at: Date; tenantId?: string }) {
       const unique = [...new Set(input.fields)];
       if (unique.length === 0) throw badRequest("At least one field is required");
       const unsupported = unique.filter(
@@ -154,7 +183,9 @@ function createMockMaskingRepos(state: MockState) {
       if (unsupported.length > 0) {
         throw badRequest(`Unsupported masking fields: ${unsupported.join(", ")}`);
       }
-      const source = state.sources.find((s) => s.id === input.sourceId);
+      const source = state.sources.find(
+        (s) => s.id === input.sourceId && tenantVisible(s.tenantId, input.tenantId),
+      );
       if (!source) throw notFound("Source not found");
 
       const completedAt = new Date(input.at.getTime() + 1);
@@ -287,19 +318,29 @@ export function createMockRepos() {
 
   const repos = {
     sources: {
-      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+      async list(
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
+      ) {
         return state.sources
+          .filter((source) => tenantVisible(source.tenantId, tenantId))
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((source) => ({ ...source }));
       },
-      async getById(id: string) {
-        return state.sources.find((source) => source.id === id) ?? null;
+      async getById(id: string, tenantId?: string) {
+        return (
+          state.sources.find(
+            (source) => source.id === id && tenantVisible(source.tenantId, tenantId),
+          ) ?? null
+        );
       },
       // FASE 7.0.5 (M1): réplica del repo real — devuelve la fuente con su
       // conteo real de hallazgos. Cada source del estado ya incluye el campo
       // findingsCount (se mantiene coherente con createSource que lo inicia en 0).
-      async getByIdWithFindingsCount(id: string) {
-        const source = state.sources.find((source) => source.id === id);
+      async getByIdWithFindingsCount(id: string, tenantId?: string) {
+        const source = state.sources.find(
+          (source) => source.id === id && tenantVisible(source.tenantId, tenantId),
+        );
         return source ? { ...source, findingsCount: source.findingsCount } : null;
       },
       // FASE 7.0.1: réplica del repo real — connectionConfig cifrado (mock) se
@@ -329,6 +370,7 @@ export function createMockRepos() {
           password: string;
           schema?: string;
         };
+        tenantId?: string | null;
       }) {
         const now = new Date();
         const created = {
@@ -340,6 +382,8 @@ export function createMockRepos() {
           lastScanAt: null,
           tables: 0,
           records: 0,
+          // M21.3 — raíz de propiedad (D2: null si no hay contexto).
+          tenantId: input.tenantId ?? null,
           connectionConfig: input.connection
             ? "mock-encrypted-connection-string"
             : null,
@@ -365,8 +409,11 @@ export function createMockRepos() {
             schema?: string;
           } | null;
         },
+        tenantId?: string,
       ) {
-        const source = state.sources.find((item) => item.id === id);
+        const source = state.sources.find(
+          (item) => item.id === id && tenantVisible(item.tenantId, tenantId),
+        );
         if (!source) return null;
         if (input.name !== undefined) source.name = input.name;
         if (input.kind !== undefined) source.kind = input.kind;
@@ -379,14 +426,21 @@ export function createMockRepos() {
         source.updatedAt = new Date();
         return { ...source };
       },
-      async deleteSource(id: string) {
-        const index = state.sources.findIndex((item) => item.id === id);
+      async deleteSource(id: string, tenantId?: string) {
+        const index = state.sources.findIndex(
+          (item) => item.id === id && tenantVisible(item.tenantId, tenantId),
+        );
         if (index === -1) return false;
         state.sources.splice(index, 1);
         return true;
       },
-      async touchLastScan({ id, at }: { id: string; at: Date }) {
-        const source = state.sources.find((item) => item.id === id);
+      async touchLastScan(
+        { id, at }: { id: string; at: Date },
+        tenantId?: string,
+      ) {
+        const source = state.sources.find(
+          (item) => item.id === id && tenantVisible(item.tenantId, tenantId),
+        );
         if (!source) return null;
         source.lastScanAt = at;
         source.updatedAt = at;
@@ -397,21 +451,32 @@ export function createMockRepos() {
       async list(
         filter: { status?: string; severity?: string } = {},
         pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
       ) {
         return state.findings
           .filter(
             (finding) =>
               (!filter.status || finding.status === filter.status) &&
-              (!filter.severity || finding.severity === filter.severity),
+              (!filter.severity || finding.severity === filter.severity) &&
+              tenantVisible(finding.tenantId, tenantId),
           )
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((finding) => ({ ...finding }));
       },
-      async getById(id: string) {
-        return state.findings.find((finding) => finding.id === id) ?? null;
+      async getById(id: string, tenantId?: string) {
+        return (
+          state.findings.find(
+            (finding) => finding.id === id && tenantVisible(finding.tenantId, tenantId),
+          ) ?? null
+        );
       },
-      async updateStatus({ id, status, at }: { id: string; status: string; at: Date }) {
-        const finding = state.findings.find((item) => item.id === id);
+      async updateStatus(
+        { id, status, at }: { id: string; status: string; at: Date },
+        tenantId?: string,
+      ) {
+        const finding = state.findings.find(
+          (item) => item.id === id && tenantVisible(item.tenantId, tenantId),
+        );
         if (!finding) return null;
         finding.status = status;
         finding.updatedAt = at;
@@ -422,11 +487,14 @@ export function createMockRepos() {
           description: finding.title,
           createdAt: at,
           severity: finding.severity,
+          tenantId: finding.tenantId,
         });
         return { ...finding };
       },
-      async countOpen() {
-        return state.findings.filter(isActiveFinding).length;
+      async countOpen(tenantId?: string) {
+        return state.findings.filter(
+          (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
+        ).length;
       },
     },
     rules: {
@@ -449,8 +517,12 @@ export function createMockRepos() {
       },
     },
     scans: {
-      async startScan({ sourceId, startedAt }: { sourceId: string; startedAt: Date }) {
-        const source = state.sources.find((item) => item.id === sourceId);
+      async startScan(
+        { sourceId, startedAt, tenantId }: { sourceId: string; startedAt: Date; tenantId?: string },
+      ) {
+        const source = state.sources.find(
+          (item) => item.id === sourceId && tenantVisible(item.tenantId, tenantId),
+        );
         if (!source) return { ok: false, reason: "source_not_found" as const };
 
         const scan: MockRow<Scan> = {
@@ -632,13 +704,18 @@ export function createMockRepos() {
       async list(
         filters: { sourceId?: string; status?: string } = {},
         pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
       ) {
         return state.scans
-          .filter(
-            (scan) =>
-              (!filters.sourceId || scan.sourceId === filters.sourceId) &&
-              (!filters.status || scan.status === filters.status),
-          )
+          .filter((scan) => {
+            if (filters.sourceId && scan.sourceId !== filters.sourceId) return false;
+            if (filters.status && scan.status !== filters.status) return false;
+            if (tenantId !== undefined) {
+              const source = state.sources.find((s) => s.id === scan.sourceId);
+              if (!tenantVisible(source?.tenantId, tenantId)) return false;
+            }
+            return true;
+          })
           .sort(
             (a, b) =>
               b.startedAt.getTime() - a.startedAt.getTime() ||
@@ -647,17 +724,29 @@ export function createMockRepos() {
           .slice(pagination.offset, pagination.offset + pagination.limit);
       },
 
-      // FASE 7.1.1 (M1): detalle por id (null si no existe).
-      async getById(id: string) {
-        return state.scans.find((scan) => scan.id === id) ?? null;
+      // FASE 7.1.1 (M1): detalle por id (null si no existe o es ajeno).
+      async getById(id: string, tenantId?: string) {
+        const scan = state.scans.find((scan) => scan.id === id);
+        if (!scan) return null;
+        if (tenantId !== undefined) {
+          const source = state.sources.find((s) => s.id === scan.sourceId);
+          if (!tenantVisible(source?.tenantId, tenantId)) return null;
+        }
+        return scan;
       },
 
       // FASE 7.1.2 (M2): cancelación cooperativa — réplica del repo real:
       // transacción/FOR UPDATE simulada por orden de chequeo; NO cambia
       // status (lo hace el scanner); idempotente mientras siga `running`.
-      async requestCancel({ scanId }: { scanId: string }) {
+      async requestCancel({ scanId, tenantId }: { scanId: string; tenantId?: string }) {
         const scan = state.scans.find((item) => item.id === scanId);
         if (!scan) return { ok: false as const, reason: "scan_not_found" as const };
+        if (tenantId !== undefined) {
+          const source = state.sources.find((s) => s.id === scan.sourceId);
+          if (!tenantVisible(source?.tenantId, tenantId)) {
+            return { ok: false as const, reason: "scan_not_found" as const };
+          }
+        }
         if (scan.status !== "running") {
           return { ok: false as const, reason: "scan_not_running" as const };
         }
@@ -703,14 +792,26 @@ export function createMockRepos() {
       },
     },
     activity: {
-      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+      async list(
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
+      ) {
         return state.activity
+          .filter((event) => tenantVisible(event.tenantId, tenantId))
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((event) => ({ ...event }));
       },
-      async create(values: { id: string; type: string; title: string; description: string; createdAt: Date; severity: string | null }) {
-        state.activity.unshift({ ...values });
-        return { ...values };
+      async create(values: {
+        id: string;
+        type: string;
+        title: string;
+        description: string;
+        createdAt: Date;
+        severity: string | null;
+        tenantId?: string | null;
+      }) {
+        state.activity.unshift({ ...values, tenantId: values.tenantId ?? null });
+        return { ...values, tenantId: values.tenantId ?? null };
       },
     },
     auditEvents: {
@@ -724,8 +825,9 @@ export function createMockRepos() {
         result: string;
         requestId: string | null;
         metadata: Record<string, unknown>;
+        tenantId?: string | null;
       }) {
-        const row: MockRow<AuditEvent> = { ...values, createdAt: new Date() };
+        const row: MockRow<AuditEvent> = { ...values, createdAt: new Date(), tenantId: values.tenantId ?? null };
         state.auditEvents.unshift(row);
         return { ...row };
       },
@@ -739,6 +841,7 @@ export function createMockRepos() {
           result?: string;
           from?: Date;
           to?: Date;
+          tenantId?: string;
         } = {},
         pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
       ) {
@@ -751,6 +854,7 @@ export function createMockRepos() {
             if (filters.result !== undefined && event.result !== filters.result) return false;
             if (filters.from !== undefined && event.createdAt.getTime() < filters.from.getTime()) return false;
             if (filters.to !== undefined && event.createdAt.getTime() > filters.to.getTime()) return false;
+            if (filters.tenantId !== undefined && !tenantVisible(event.tenantId, filters.tenantId)) return false;
             return true;
           })
           .sort(
@@ -763,16 +867,26 @@ export function createMockRepos() {
       },
     },
     reports: {
-      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+      async list(
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
+      ) {
         return state.reports
+          .filter((report) => tenantVisible(report.tenantId, tenantId))
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((report) => ({ ...report }));
       },
-      async getById(id: string) {
-        return state.reports.find((report) => report.id === id) ?? null;
+      async getById(id: string, tenantId?: string) {
+        return (
+          state.reports.find(
+            (report) => report.id === id && tenantVisible(report.tenantId, tenantId),
+          ) ?? null
+        );
       },
-      async create({ name, period, at }: { name: string; period: string; at: Date }) {
-        const openFindings = state.findings.filter(isActiveFinding).length;
+      async create({ name, period, at, tenantId }: { name: string; period: string; at: Date; tenantId?: string }) {
+        const openFindings = state.findings.filter(
+          (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
+        ).length;
         const report: MockRow<Report> = {
           id: nextId("r"),
           name,
@@ -782,6 +896,7 @@ export function createMockRepos() {
           findings: openFindings,
           complianceScore: openFindings === 0 ? 100 : 0,
           format: "pdf",
+          tenantId: tenantId ?? null,
         };
         state.reports.unshift(report);
         state.activity.unshift({
@@ -791,30 +906,39 @@ export function createMockRepos() {
           description: name,
           createdAt: at,
           severity: null,
+          tenantId: report.tenantId,
         });
         return { ...report };
       },
     },
     dashboard: {
-      async getDashboardData() {
-        const open = state.findings.filter(isActiveFinding);
+      async getDashboardData(tenantId?: string) {
+        const sources = state.sources.filter((source) => tenantVisible(source.tenantId, tenantId));
+        const open = state.findings.filter(
+          (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
+        );
         const countsBySeverity: { critical: number; high: number; medium: number; low: number } = { critical: 0, high: 0, medium: 0, low: 0 };
         for (const finding of open) {
           if (finding.severity in countsBySeverity) {
             countsBySeverity[finding.severity as keyof typeof countsBySeverity] += 1;
           }
         }
-        const lastScanAt = state.sources.reduce<Date | null>(
+        const lastScanAt = sources.reduce<Date | null>(
           (acc, source) => (source.lastScanAt && (!acc || source.lastScanAt > acc) ? source.lastScanAt : acc),
           null,
         );
+        const visibleScans = state.scans.filter((scan) => {
+          if (tenantId === undefined) return true;
+          const source = state.sources.find((s) => s.id === scan.sourceId);
+          return tenantVisible(source?.tenantId, tenantId);
+        });
         return {
           countsBySeverity,
           openFindings: open.length,
-          protectedRecords: state.sources.reduce((sum, source) => sum + source.records, 0),
-          monitoredSources: state.sources.length,
+          protectedRecords: sources.reduce((sum, source) => sum + source.records, 0),
+          monitoredSources: sources.length,
           lastScanAt,
-          scanStatus: state.scans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
+          scanStatus: visibleScans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
           complianceScore: open.length === 0 ? 100 : 0,
         };
       },
@@ -825,8 +949,10 @@ export function createMockRepos() {
     // D8), usa computeComplianceScore como única fuente del score y reutiliza
     // el helper PURO real de buckets UTC (sin dependencias de BD).
     compliance: {
-      async getComplianceSummary() {
-        const active = state.findings.filter(isActiveFinding);
+      async getComplianceSummary(tenantId?: string) {
+        const active = state.findings.filter(
+          (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
+        );
         const findingsBySeverity: { critical: number; high: number; medium: number; low: number } = {
           critical: 0,
           high: 0,
@@ -862,7 +988,7 @@ export function createMockRepos() {
           ),
         };
       },
-      async getComplianceTrend(days: number) {
+      async getComplianceTrend(days: number, _now?: Date, tenantId?: string) {
         const dayKeys = buildTrendDayKeys(days, new Date());
         return {
           days,
@@ -872,13 +998,28 @@ export function createMockRepos() {
             // Resoluciones: filas actualmente 'resolved' por updatedAt
             // (misma semántica que las consultas del repositorio real).
             newFindings: state.findings
-              .filter((finding) => finding.superseded === false)
+              .filter(
+                (finding) =>
+                  finding.superseded === false &&
+                  tenantVisible(finding.tenantId, tenantId),
+              )
               .map((finding) => ({ at: finding.firstSeenAt })),
             resolvedFindings: state.findings
-              .filter((finding) => finding.status === "resolved")
+              .filter(
+                (finding) =>
+                  finding.status === "resolved" &&
+                  tenantVisible(finding.tenantId, tenantId),
+              )
               .map((finding) => ({ at: finding.updatedAt })),
             completedScans: state.scans
-              .filter((scan) => scan.status === "completed")
+              .filter((scan) => {
+                if (scan.status !== "completed") return false;
+                if (tenantId !== undefined) {
+                  const source = state.sources.find((s) => s.id === scan.sourceId);
+                  return tenantVisible(source?.tenantId, tenantId);
+                }
+                return true;
+              })
               .map((scan) => ({ at: scan.completedAt, recordsRead: scan.recordsRead })),
           }),
         };
@@ -1039,10 +1180,15 @@ export function createMockRepos() {
     },
 
     scanSchedules: {
-      async upsert(input: { sourceId: string; enabled: boolean; intervalMinutes?: number; at: Date }) {
+      async upsert(
+        input: { sourceId: string; enabled: boolean; intervalMinutes?: number; at: Date },
+        tenantId?: string,
+      ) {
         // Semántica del repo real: la fuente debe existir (lock FOR UPDATE
         // dentro de la transacción); si no, { ok: false, source_not_found }.
-        const source = state.sources.find((item) => item.id === input.sourceId);
+        const source = state.sources.find(
+          (item) => item.id === input.sourceId && tenantVisible(item.tenantId, tenantId),
+        );
         if (!source) return { ok: false, reason: "source_not_found" as const };
         const nextRunAt = input.enabled
           ? new Date(input.at.getTime() + (input.intervalMinutes ?? 1440) * 60_000)
@@ -1064,8 +1210,14 @@ export function createMockRepos() {
         else state.scanSchedules.push(row);
         return { ok: true, schedule: row };
       },
-      async getBySourceId(sourceId: string) {
-        return state.scanSchedules.find((item) => item.sourceId === sourceId) ?? null;
+      async getBySourceId(sourceId: string, tenantId?: string) {
+        const schedule = state.scanSchedules.find((item) => item.sourceId === sourceId);
+        if (!schedule) return null;
+        if (tenantId !== undefined) {
+          const source = state.sources.find((s) => s.id === sourceId);
+          if (!tenantVisible(source?.tenantId, tenantId)) return null;
+        }
+        return schedule;
       },
       async claimDue({ now, limit }: { now: Date; limit: number }) {
         const due = state.scanSchedules

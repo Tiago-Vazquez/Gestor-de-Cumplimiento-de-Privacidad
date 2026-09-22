@@ -1,7 +1,8 @@
-import { count, eq, sql } from "drizzle-orm";
+import { and, count, eq, sql } from "drizzle-orm";
 import { db, findingsTable, scansTable, sourcesTable } from "@workspace/db";
 import { activeFindingsWhere } from "./findings.repo";
 import { computeComplianceScore } from "./compliance-score";
+import { tenantScope } from "./tenant";
 
 export type DashboardData = {
   countsBySeverity: { critical: number; high: number; medium: number; low: number };
@@ -19,12 +20,23 @@ export type DashboardData = {
 /**
  * Datos del dashboard calculados íntegramente con agregaciones sobre las
  * tablas reales (no existe tabla `dashboard`).
+ * M21.3 — TODAS las agregaciones quedan scoped al tenant activo (D2):
+ * findings por `findings.tenant_id`; sources por `sources.tenant_id`;
+ * los scans (sin columna propia) por JOIN con su source.
  */
-export async function getDashboardData(): Promise<DashboardData> {
+export async function getDashboardData(tenantId?: string): Promise<DashboardData> {
+  const findingScope = tenantId
+    ? tenantScope(findingsTable.tenantId, tenantId)
+    : undefined;
+  // M21.3 — cada tabla usa SU propia columna tenant_id en el predicado.
+  const sourceScope = tenantId
+    ? tenantScope(sourcesTable.tenantId, tenantId)
+    : undefined;
+
   const severityRows = await db
     .select({ severity: findingsTable.severity, total: count() })
     .from(findingsTable)
-    .where(activeFindingsWhere())
+    .where(activeFindingsWhere(tenantId))
     .groupBy(findingsTable.severity);
 
   const countsBySeverity: DashboardData["countsBySeverity"] = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -40,16 +52,25 @@ export async function getDashboardData(): Promise<DashboardData> {
       total: count(),
       protectedRecords: sql<number>`COALESCE(SUM(${sourcesTable.records}), 0)::int`,
     })
-    .from(sourcesTable);
+    .from(sourcesTable)
+    .where(sourceScope);
 
   const [runningRow] = await db
     .select({ total: count() })
     .from(scansTable)
-    .where(eq(scansTable.status, "running"));
+    // M21.3 — scans sin tenant propio: se scoped vía su source.
+    .innerJoin(sourcesTable, eq(scansTable.sourceId, sourcesTable.id))
+    .where(
+      and(
+        eq(scansTable.status, "running"),
+        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+      ),
+    );
 
   const [lastScanRow] = await db
     .select({ last: sql<Date | null>`MAX(${sourcesTable.lastScanAt})` })
-    .from(sourcesTable);
+    .from(sourcesTable)
+    .where(sourceScope);
 
   return {
     countsBySeverity,

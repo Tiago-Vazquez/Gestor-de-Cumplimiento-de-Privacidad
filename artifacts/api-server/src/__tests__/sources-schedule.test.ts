@@ -149,7 +149,7 @@ describe("Sources schedule API (M10.5)", () => {
       const spy = vi.spyOn(repos.scanSchedules, "getBySourceId");
       const res = await request(server).get(SCHEDULE_PATH("src-003")).set("Cookie", adminCookie);
       expect(res.status).toBe(200);
-      expect(spy).toHaveBeenCalledWith("src-003");
+      expect(spy).toHaveBeenCalledWith("src-003", "org-bootstrap");
       spy.mockRestore();
     });
   });

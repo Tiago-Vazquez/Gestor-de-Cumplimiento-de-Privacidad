@@ -1,8 +1,9 @@
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, exists, inArray, ne } from "drizzle-orm";
 import {
   db,
   findingsTable,
   maskingJobsTable,
+  sourcesTable,
   type MaskingJob,
 } from "@workspace/db";
 import { connectPg, readPage } from "../connectors/postgres";
@@ -23,6 +24,27 @@ import * as activityRepo from "./activity.repo";
 import { newId } from "./ids";
 import * as sourcesRepo from "./sources.repo";
 import type { SourceConnectionConfig } from "./sources.repo";
+import { tenantScope } from "./tenant";
+
+/**
+ * M21.3 — EXISTS: el masking job pertenece al tenant activo vía su source (FK).
+ * Sin JOIN para que `SELECT *` (getByIdWithDataset) siga devolviendo la fila
+ * `masking_jobs` (y no una tupla de join).
+ */
+function maskingTenantExists(tenantId?: string) {
+  if (!tenantId) return undefined;
+  return exists(
+    db
+      .select({ id: sourcesTable.id })
+      .from(sourcesTable)
+      .where(
+        and(
+          eq(sourcesTable.id, maskingJobsTable.sourceId),
+          tenantScope(sourcesTable.tenantId, tenantId),
+        ),
+      ),
+  );
+}
 
 // Re-exportados para que tests y rutas usen el MISMO origen de la verdad.
 export { MAX_MASKING_DATASET_BYTES, MAX_MASKING_RECORDS };
@@ -191,9 +213,11 @@ export async function create(input: {
   sourceId: string;
   fields: string[];
   at: Date;
+  /** M21.3 — scoping de la fuente origen (job ajeno → source_not_found). */
+  tenantId?: string;
 }): Promise<MaskingJob> {
   const fields = assertMaskableFields(input.fields);
-  const source = await sourcesRepo.getById(input.sourceId);
+  const source = await sourcesRepo.getById(input.sourceId, input.tenantId);
   if (!source) {
     throw notFound("Source not found");
   }
@@ -257,10 +281,16 @@ export async function create(input: {
 }
 
 /** Listado con columnas explícitas (SIN dataset), newest-first, paginado. */
-export async function list(pagination?: Pagination): Promise<MaskingJobRow[]> {
+export async function list(
+  pagination?: Pagination,
+  tenantId?: string,
+): Promise<MaskingJobRow[]> {
   let query = db
     .select(jobColumns)
     .from(maskingJobsTable)
+    // M21.3 — masking_jobs sin tenant propio: scoped vía JOIN con source.
+    .innerJoin(sourcesTable, eq(maskingJobsTable.sourceId, sourcesTable.id))
+    .where(tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined)
     .orderBy(desc(maskingJobsTable.createdAt), desc(maskingJobsTable.id))
     .$dynamic();
   if (pagination) {
@@ -270,11 +300,17 @@ export async function list(pagination?: Pagination): Promise<MaskingJobRow[]> {
 }
 
 /** Detalle con columnas explícitas (SIN dataset). */
-export async function getById(id: string): Promise<MaskingJobRow | null> {
+export async function getById(id: string, tenantId?: string): Promise<MaskingJobRow | null> {
   const [row] = await db
     .select(jobColumns)
     .from(maskingJobsTable)
-    .where(eq(maskingJobsTable.id, id))
+    .innerJoin(sourcesTable, eq(maskingJobsTable.sourceId, sourcesTable.id))
+    .where(
+      and(
+        eq(maskingJobsTable.id, id),
+        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+      ),
+    )
     .limit(1);
   return row ?? null;
 }
@@ -282,11 +318,17 @@ export async function getById(id: string): Promise<MaskingJobRow | null> {
 /** Solo para el download: única vía de salida del dataset persistido. */
 export async function getByIdWithDataset(
   id: string,
+  tenantId?: string,
 ): Promise<MaskingJobWithDataset | null> {
   const [row] = await db
     .select()
     .from(maskingJobsTable)
-    .where(eq(maskingJobsTable.id, id))
+    .where(
+      and(
+        eq(maskingJobsTable.id, id),
+        maskingTenantExists(tenantId),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }

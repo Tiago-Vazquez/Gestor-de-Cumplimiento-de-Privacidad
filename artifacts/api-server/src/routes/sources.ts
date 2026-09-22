@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
+import { optionalOrgContext } from "../auth/org-context";
 import { badRequest, notFound } from "../lib/errors";
 import {
   CreateSourceBody,
@@ -36,6 +37,7 @@ const router: IRouter = Router();
 // POST /api/sources — crear fuente (admin)
 router.post("/", requireRole("admin"), async (req, res) => {
   const body = CreateSourceBody.parse(req.body);
+  const tenantId = optionalOrgContext(req)?.organizationId;
   const connection: SourceConnectionConfig | undefined = body.connection
     ? {
         host: body.connection.host,
@@ -52,6 +54,8 @@ router.post("/", requireRole("admin"), async (req, res) => {
     kind: body.kind,
     environment: body.environment,
     connection,
+    // M21.3 — la fuente hereda la organización activa (D2).
+    tenantId,
   });
 
   // M17 — creación de fuente: solo metadatos operacionales. La conexión
@@ -87,8 +91,9 @@ router.post("/", requireRole("admin"), async (req, res) => {
 // GET /api/sources/:id — detalle de fuente (autenticado)
 router.get("/:id", async (req, res) => {
   const { id } = GetSourceParams.parse(req.params);
+  const tenantId = optionalOrgContext(req)?.organizationId;
   // FASE 7.0.5 (M1): conteo real de hallazgos en lugar del hardcode 0
-  const source = await repos.sources.getByIdWithFindingsCount(id);
+  const source = await repos.sources.getByIdWithFindingsCount(id, tenantId);
   if (!source) {
     throw notFound("Source not found");
   }
@@ -111,6 +116,7 @@ router.get("/:id", async (req, res) => {
 router.patch("/:id", requireRole("admin"), async (req, res) => {
   const { id } = UpdateSourceParams.parse(req.params);
   const body = UpdateSourceBody.parse(req.body);
+  const tenantId = optionalOrgContext(req)?.organizationId;
 
   let connection: SourceConnectionConfig | undefined = undefined;
   if ("connection" in body && body.connection) {
@@ -129,13 +135,13 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
     kind: body.kind,
     environment: body.environment,
     connection,
-  });
+  }, tenantId);
   if (!updated) {
     throw notFound("Source not found");
   }
 
   // FASE 7.0.5 (M1): conteo real de hallazgos en lugar del hardcode 0
-  const withCount = await repos.sources.getByIdWithFindingsCount(id);
+  const withCount = await repos.sources.getByIdWithFindingsCount(id, tenantId);
 
   // M17 — actualización de fuente: se auditan los CAMPOS enviados (nombres),
   // nunca los valores (la conexión incluye contraseña).
@@ -165,7 +171,8 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
 // DELETE /api/sources/:id — eliminar fuente (admin)
 router.delete("/:id", requireRole("admin"), async (req, res) => {
   const { id } = DeleteSourceParams.parse(req.params);
-  const deleted = await repos.sources.deleteSource(id);
+  const tenantId = optionalOrgContext(req)?.organizationId;
+  const deleted = await repos.sources.deleteSource(id, tenantId);
   if (!deleted) {
     throw notFound("Source not found");
   }
@@ -211,11 +218,12 @@ function toScheduleResponse(row: {
 // GET /api/sources/:id/schedule — horario de la fuente (autenticado)
 router.get("/:id/schedule", async (req, res) => {
   const { id } = GetSourceScheduleParams.parse(req.params);
-  const source = await repos.sources.getById(id);
+  const tenantId = optionalOrgContext(req)?.organizationId;
+  const source = await repos.sources.getById(id, tenantId);
   if (!source) {
     throw notFound("Source not found");
   }
-  const schedule = await repos.scanSchedules.getBySourceId(id);
+  const schedule = await repos.scanSchedules.getBySourceId(id, tenantId);
   const response = schedule
     ? toScheduleResponse(schedule)
     : toScheduleResponse({
@@ -233,6 +241,7 @@ router.get("/:id/schedule", async (req, res) => {
 router.put("/:id/schedule", requireRole("admin"), async (req, res) => {
   const { id } = UpdateSourceScheduleParams.parse(req.params);
   const body = UpdateSourceScheduleBody.parse(req.body);
+  const tenantId = optionalOrgContext(req)?.organizationId;
 
   // Regla de negocio del contrato: enabled=true exige intervalo dentro de
   // [15, 10080]; enabled=false lo acepta opcional (default diario). Se usa la
@@ -254,7 +263,7 @@ router.put("/:id/schedule", requireRole("admin"), async (req, res) => {
   // (creado / habilitado / deshabilitado / actualizado) y registrar el
   // before→after. Se guardan SNAPSHOTS de los valores previos (no la fila) para
   // que la clasificación no dependa de la identidad del objeto devuelto.
-  const previous = await repos.scanSchedules.getBySourceId(id);
+  const previous = await repos.scanSchedules.getBySourceId(id, tenantId);
   const previousEnabled = previous?.enabled ?? null;
   const previousIntervalMinutes = previous?.intervalMinutes ?? null;
 
@@ -263,7 +272,7 @@ router.put("/:id/schedule", requireRole("admin"), async (req, res) => {
     enabled: body.enabled,
     intervalMinutes: normalized.intervalMinutes,
     at: new Date(),
-  });
+  }, tenantId);
   if (!result.ok) {
     if (result.reason === "source_not_found") {
       throw notFound("Source not found");
