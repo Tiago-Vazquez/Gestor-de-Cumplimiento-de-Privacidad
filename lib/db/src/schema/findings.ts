@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { boolean, index, integer, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+import { organizationsTable } from "./organizations";
 import { scansTable } from "./scans";
 import { sourcesTable } from "./sources";
 
@@ -64,6 +65,12 @@ export const findingsTable = pgTable(
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
     superseded: boolean("superseded").notNull().default(false),
+    // M21.1 (ADR-001): tenant DENORMALIZADO en el propio hallazgo. Obligatorio
+    // porque `source_id` es nullable con SET NULL (la evidencia histórica
+    // sobrevive al borrado de la fuente) y porque `source_name` denormalizado
+    // ya establece el precedente: el hallazgo debe ser aislable sin join.
+    // Nullable TRANSITORIO: backfill en M21.4 → NOT NULL.
+    tenantId: text("tenant_id").references(() => organizationsTable.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -71,6 +78,9 @@ export const findingsTable = pgTable(
     index("findings_source_id_idx").on(table.sourceId),
     index("findings_scan_id_idx").on(table.scanId),
     index("findings_fingerprint_idx").on(table.fingerprint),
+    // M21.1 (ADR-001): patrón dominante WHERE tenant_id = ? (listado, PATCH y
+    // agregaciones countOpen/dashboard por organización en M21.3).
+    index("findings_tenant_id_idx").on(table.tenantId),
     uniqueIndex("findings_fingerprint_active_idx")
       .on(table.fingerprint)
       .where(sql`${table.fingerprint} IS NOT NULL AND ${table.superseded} = false`),

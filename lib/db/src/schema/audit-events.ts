@@ -31,12 +31,22 @@ export const auditEventsTable = pgTable(
     requestId: text("request_id"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // M21.1 (ADR-001): tenant del evento, resuelto EN EL PUNTO DE REGISTRO
+    // (actor→membership activo; eventos de sistema→tenant del recurso
+    // afectado; plataforma→NULL reservado a platform-admin). SIN FK a
+    // organizations, como `actor_user_id` no la tiene a users: la auditoría es
+    // evidencia de retención y debe sobrevivir a la entidad referenciada.
+    // Nullable TRANSITORIO: backfill en M21.4 → NOT NULL.
+    tenantId: text("tenant_id"),
   },
   (table) => [
     index("audit_events_actor_user_id_idx").on(table.actorUserId),
     index("audit_events_created_at_idx").on(table.createdAt),
     index("audit_events_resource_idx").on(table.resourceType, table.resourceId),
     index("audit_events_action_idx").on(table.action),
+    // M21.1 (ADR-001): listado de auditoría por organización (el listado
+    // existente ya ordena created_at DESC con filtros combinables).
+    index("audit_events_tenant_created_idx").on(table.tenantId, table.createdAt),
   ],
 );
 
