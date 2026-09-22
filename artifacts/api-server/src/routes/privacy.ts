@@ -57,7 +57,7 @@ import {
 } from "../mappers";
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
-import { optionalOrgContext } from "../auth/org-context";
+import { optionalOrgContext, resolvedOrgContext } from "../auth/org-context";
 import { runScan } from "../services/scanner";
 import { recordAuditEvent } from "../lib/audit";
 
@@ -278,7 +278,8 @@ router.get("/reports", async (req, res) => {
 
 router.post("/reports", requireRole("admin"), async (req, res) => {
   const { name, period } = CreateReportBody.parse(req.body);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  // M21.4 — generar un informe exige organización activa (tenant_id NOT NULL).
+  const tenantId = resolvedOrgContext(req).organizationId;
   const report = await repos.reports.create({ name, period, at: new Date(), tenantId });
 
   // M17 — generación de informe (recurso report). El nombre del informe es

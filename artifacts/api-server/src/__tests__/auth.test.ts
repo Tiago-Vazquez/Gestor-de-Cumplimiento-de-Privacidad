@@ -46,6 +46,14 @@ describe("Auth middleware (JWT)", () => {
     });
     // Cutover del allowlist: cada token con `jti` necesita una fila de sesión
     // activa para ser aceptado por requireAuth().
+    // M21.4 — POST /reports exige organización activa: el admin pertenece a
+    // org-bootstrap (misma org inicial del backfill); el auditor no.
+    state().organizations = [
+      { id: "org-bootstrap", name: "Bootstrap Organization", slug: "bootstrap", status: "active", createdAt: new Date() },
+    ];
+    state().memberships = [
+      { organizationId: "org-bootstrap", userSub: "admin-1", role: "owner", invitedBy: null, joinedAt: new Date() },
+    ];
     for (const token of [adminToken, auditorToken]) {
       const { jti, sub, exp } = decodeJwt(token);
       state().sessions.push({
@@ -55,6 +63,7 @@ describe("Auth middleware (JWT)", () => {
         expiresAt: new Date((exp ?? 0) * 1000),
         revokedAt: null,
         lastUsedAt: new Date(),
+        activeOrgId: sub === "admin-1" ? "org-bootstrap" : null,
       });
     }
   });

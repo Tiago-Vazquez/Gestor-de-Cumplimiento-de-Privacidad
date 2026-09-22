@@ -51,7 +51,8 @@ export async function create({
   name: string;
   period: string;
   at: Date;
-  tenantId?: string;
+  /** M21.4 — tenant de la organización activa (tenant_id NOT NULL). */
+  tenantId: string;
 }): Promise<Report> {
   return db.transaction(async (tx) => {
     const [openRow] = await tx
@@ -71,8 +72,8 @@ export async function create({
         findings: openFindings,
         complianceScore: computeComplianceScore({ openFindings }),
         format: "pdf",
-        // M21.3 — el informe pertenece a la organización activa.
-        tenantId: tenantId ?? null,
+        // M21.4 — el informe pertenece a la organización activa.
+        tenantId,
       })
       .returning();
 

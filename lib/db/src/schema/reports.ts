@@ -22,7 +22,7 @@ export const reportsTable = pgTable("reports", {
   // M21.1 (ADR-001): raíz independiente (sin FK a sources) → necesita
   // tenant_id propio para ser aislable. Nullable TRANSITORIO: el backfill de
   // M21.4 asigna la organización inicial y entonces pasa a NOT NULL.
-  tenantId: text("tenant_id").references(() => organizationsTable.id),
+  tenantId: text("tenant_id").notNull().references(() => organizationsTable.id),
 }, (table) => [
   // M21.1 (ADR-001): único patrón de consulta del repo — listado por tenant
   // ordenado por creación DESC (`reports.repo.list` ya ordena created_at DESC).

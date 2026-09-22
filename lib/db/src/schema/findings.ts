@@ -70,7 +70,7 @@ export const findingsTable = pgTable(
     // sobrevive al borrado de la fuente) y porque `source_name` denormalizado
     // ya establece el precedente: el hallazgo debe ser aislable sin join.
     // Nullable TRANSITORIO: backfill en M21.4 → NOT NULL.
-    tenantId: text("tenant_id").references(() => organizationsTable.id),
+    tenantId: text("tenant_id").notNull().references(() => organizationsTable.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

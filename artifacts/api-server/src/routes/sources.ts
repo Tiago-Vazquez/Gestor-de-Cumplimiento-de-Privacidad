@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
-import { optionalOrgContext } from "../auth/org-context";
+import { optionalOrgContext, resolvedOrgContext } from "../auth/org-context";
 import { badRequest, notFound } from "../lib/errors";
 import {
   CreateSourceBody,
@@ -37,7 +37,8 @@ const router: IRouter = Router();
 // POST /api/sources — crear fuente (admin)
 router.post("/", requireRole("admin"), async (req, res) => {
   const body = CreateSourceBody.parse(req.body);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  // M21.4 — crear una fuente exige organización activa (tenant_id NOT NULL).
+  const tenantId = resolvedOrgContext(req).organizationId;
   const connection: SourceConnectionConfig | undefined = body.connection
     ? {
         host: body.connection.host,

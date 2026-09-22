@@ -30,7 +30,7 @@ export const sourcesTable = pgTable("sources", {
   // NULL (el esquema no puede garantizarlo antes sin bloquear filas
   // existentes). FK RESTRICT: borrar una organización no debe arrastrar datos
   // de negocio (las orgs no se eliminan en MVP; la restricción lo impide).
-  tenantId: text("tenant_id").references(() => organizationsTable.id),
+  tenantId: text("tenant_id").notNull().references(() => organizationsTable.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

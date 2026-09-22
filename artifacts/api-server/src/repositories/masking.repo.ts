@@ -256,6 +256,8 @@ export async function create(input: {
       description: `${row.records} registros preparados para testing`,
       createdAt: completedAt,
       severity: null,
+      // M21.4 — la actividad hereda el tenant de la source.
+      tenantId: source.tenantId,
     });
     return row;
   } catch (err) {

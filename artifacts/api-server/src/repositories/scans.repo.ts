@@ -112,6 +112,8 @@ export async function startScan(
       description: `${source.name} · analizando ${source.tables} tablas`,
       createdAt: startedAt,
       severity: null,
+      // M21.4 — la actividad hereda el tenant de la source.
+      tenantId: source.tenantId,
     });
 
     return { ok: true, scan, sourceName: source.name, sourceTables: source.tables };
@@ -159,6 +161,16 @@ export interface FinalizeScanInput {
 
 export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
   await db.transaction(async (tx) => {
+    // M21.4 — el finding hereda el tenant de su source (tenant_id NOT NULL).
+    const [sourceRow] = await tx
+      .select({ tenantId: sourcesTable.tenantId })
+      .from(sourcesTable)
+      .where(eq(sourcesTable.id, input.sourceId))
+      .limit(1);
+    if (!sourceRow) {
+      throw new Error(`Source ${input.sourceId} not found while finalizing scan`);
+    }
+
     const fingerprints = [
       ...new Set(
         input.findings.map((finding) =>
@@ -223,6 +235,8 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
         dataType: finding.dataType,
         sourceId: input.sourceId,
         sourceName: input.sourceName,
+        // M21.4 — tenant heredado de la source (raíz de propiedad).
+        tenantId: sourceRow.tenantId,
         location: finding.location,
         severity: finding.severity,
         status: "open",
@@ -332,6 +346,8 @@ export async function failScan({
         description: `${source.name} · ${reason}`,
         createdAt: completedAt,
         severity: null,
+        // M21.4 — la actividad hereda el tenant de la source.
+        tenantId: source.tenantId,
       });
     }
     return updated;
@@ -379,6 +395,8 @@ export async function failStaleRunningScans({
           description: `${source.name} · ${reason}`,
           createdAt: completedAt,
           severity: null,
+          // M21.4 — la actividad hereda el tenant de la source.
+          tenantId: source.tenantId,
         });
       }
       recovered.push(updated);

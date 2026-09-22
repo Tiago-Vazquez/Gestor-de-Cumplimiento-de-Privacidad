@@ -21,7 +21,7 @@ export const activityTable = pgTable("activity", {
   // sources/users) → tenant_id propio, derivado del recurso que originó el
   // evento en el punto de inserción. Nullable TRANSITORIO: backfill en
   // M21.4 → NOT NULL.
-  tenantId: text("tenant_id").references(() => organizationsTable.id),
+  tenantId: text("tenant_id").notNull().references(() => organizationsTable.id),
 }, (table) => [
   // M21.1 (ADR-001): único patrón de consulta del repo — feed por tenant
   // ordenado por creación DESC (`activity.repo.list` ya ordena created_at DESC).

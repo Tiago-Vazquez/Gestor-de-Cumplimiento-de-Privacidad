@@ -68,8 +68,8 @@ export interface CreateSourceInput {
   kind: string;
   environment: string;
   connection?: SourceConnectionConfig;
-  /** M21.3 — tenant propietario (contexto de organización activa). */
-  tenantId?: string | null;
+  /** M21.4 — tenant propietario (contexto de organización activa, SIEMPRE). */
+  tenantId: string;
 }
 
 export interface UpdateSourceInput {
@@ -98,8 +98,8 @@ export async function createSource(input: CreateSourceInput): Promise<Source> {
     connectionConfig: input.connection
       ? encryptConnectionConfig(input.connection)
       : null,
-    // M21.3 — raíz de propiedad del recurso (D2: null si no hay contexto).
-    tenantId: input.tenantId ?? null,
+    // M21.4 — raíz de propiedad del recurso (tenant_id NOT NULL).
+    tenantId: input.tenantId,
     createdAt: now,
     updatedAt: now,
   };

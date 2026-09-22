@@ -25,12 +25,12 @@ export async function create(values: {
   description: string;
   createdAt: Date;
   severity: string | null;
-  /** M21.3 — tenant del evento; los llamadores lo heredan del recurso. */
-  tenantId?: string | null;
+  /** M21.4 — tenant del evento; SIEMPRE heredado del recurso (tenant_id NOT NULL). */
+  tenantId: string;
 }): Promise<Activity> {
   const [row] = await db
     .insert(activityTable)
-    .values({ ...values, tenantId: values.tenantId ?? null })
+    .values({ ...values, tenantId: values.tenantId })
     .returning();
   return row;
 }
