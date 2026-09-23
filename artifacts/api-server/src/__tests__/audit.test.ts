@@ -769,13 +769,13 @@ describe("M17 — auditoría administrativa", () => {
     });
 
     it("filtra por action, actor, result y recurso", async () => {
-      const failures = await request(server)
-        .get("/api/audit-events?action=login_failure")
+      const byAction = await request(server)
+        .get("/api/audit-events?action=source_created")
         .set("X-Forwarded-For", nextIp())
         .set("Cookie", adminCookie);
-      expect(failures.status).toBe(200);
-      expect(failures.body.length).toBeGreaterThanOrEqual(1);
-      expect(failures.body.every((e: { action: string }) => e.action === "login_failure")).toBe(true);
+      expect(byAction.status).toBe(200);
+      expect(byAction.body.length).toBeGreaterThanOrEqual(1);
+      expect(byAction.body.every((e: { action: string }) => e.action === "source_created")).toBe(true);
 
       const byActor = await request(server)
         .get("/api/audit-events?actor=bootstrap-admin")

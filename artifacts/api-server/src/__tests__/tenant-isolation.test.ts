@@ -129,14 +129,14 @@ describe("M21.3 tenant isolation (D2)", () => {
     server.close();
   });
 
-  it("el listado de sources no filtra datos legacy (tenant_id NULL) y aísla los del otro tenant", async () => {
+  it("el listado de sources aísla por tenant (scoping estricto)", async () => {
     const listA = await request(server).get("/api/sources").set("Cookie", cookieA);
     expect(listA.status).toBe(200);
     const namesA = (listA.body as Array<{ name: string }>).map((s) => s.name);
     expect(namesA).toContain("Source A");
     expect(namesA).not.toContain("Source B");
-    // Legacy (src-001..004, tenant_id NULL) siguen visibles en ambas orgs.
-    expect(namesA).toContain("Customer PostgreSQL");
+    // M21.5 — los datos demo (org-bootstrap) NO son visibles para org-a.
+    expect(namesA).not.toContain("Customer PostgreSQL");
   });
 
   it("GET de un source ajeno → 404 (BOLA cerrado)", async () => {

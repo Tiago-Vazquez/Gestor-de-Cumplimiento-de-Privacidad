@@ -65,9 +65,29 @@ function addScan(input: {
   tablesScanned?: number;
   recordsRead?: number;
 }): void {
+  const sourceId = input.sourceId ?? "src-001";
+  // M21.5 — el scan debe referenciar una source existente con tenant conocido
+  // (scoping estricto); se crea si no existe.
+  if (!state().sources.some((s) => s.id === sourceId)) {
+    state().sources.push({
+      id: sourceId,
+      name: sourceId,
+      kind: "postgresql",
+      environment: "production",
+      status: "healthy",
+      lastScanAt: null,
+      tables: 0,
+      records: 0,
+      connectionConfig: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      findingsCount: 0,
+      tenantId: "org-bootstrap",
+    });
+  }
   state().scans.push({
     id: input.id,
-    sourceId: input.sourceId ?? "src-001",
+    sourceId,
     status: input.status ?? "completed",
     startedAt: input.startedAt,
     completedAt: input.completedAt ?? null,
@@ -99,6 +119,14 @@ describe("Scans history (FASE 7.1.1 M1)", () => {
       .set("X-Forwarded-For", nextIp())
       .send({ email: "auditor-scans@example.com", password: "secure-password-123" });
     expect(reg.status).toBe(201);
+    // M21.5 — el auditor pertenece a org-bootstrap (fail-closed en lecturas).
+    (state().memberships ??= []).push({
+      organizationId: "org-bootstrap",
+      userSub: reg.body.sub,
+      role: "auditor",
+      invitedBy: null,
+      joinedAt: new Date(),
+    });
     const login = await request(server)
       .post("/api/auth/login")
       .set("X-Forwarded-For", nextIp())

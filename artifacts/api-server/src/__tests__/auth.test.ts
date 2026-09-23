@@ -53,6 +53,7 @@ describe("Auth middleware (JWT)", () => {
     ];
     state().memberships = [
       { organizationId: "org-bootstrap", userSub: "admin-1", role: "owner", invitedBy: null, joinedAt: new Date() },
+      { organizationId: "org-bootstrap", userSub: "auditor-1", role: "auditor", invitedBy: null, joinedAt: new Date() },
     ];
     for (const token of [adminToken, auditorToken]) {
       const { jti, sub, exp } = decodeJwt(token);
@@ -63,7 +64,7 @@ describe("Auth middleware (JWT)", () => {
         expiresAt: new Date((exp ?? 0) * 1000),
         revokedAt: null,
         lastUsedAt: new Date(),
-        activeOrgId: sub === "admin-1" ? "org-bootstrap" : null,
+        activeOrgId: "org-bootstrap",
       });
     }
   });

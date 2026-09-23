@@ -2,7 +2,7 @@ import { and, asc, count, desc, eq, ne, type SQL } from "drizzle-orm";
 import { activityTable, db, findingsTable, type Finding } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 import { newId } from "./ids";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 export type FindingsFilter = { status?: string; severity?: string };
 
@@ -16,7 +16,7 @@ export function activeFindingsWhere(tenantId?: string): SQL | undefined {
     ne(findingsTable.status, "resolved"),
     eq(findingsTable.superseded, false),
   );
-  return and(canonical, tenantId ? tenantScope(findingsTable.tenantId, tenantId) : undefined);
+  return and(canonical, tenantId ? tenantScopeStrict(findingsTable.tenantId, tenantId) : undefined);
 }
 
 /**
@@ -33,7 +33,7 @@ export function list(
   if (filter.severity) conditions.push(eq(findingsTable.severity, filter.severity));
   // M21.3 — scoping en el WHERE (D2: tenant activo o legacy NULL).
   if (tenantId) {
-    const scope = tenantScope(findingsTable.tenantId, tenantId);
+    const scope = tenantScopeStrict(findingsTable.tenantId, tenantId);
     if (scope) conditions.push(scope);
   }
 
@@ -56,7 +56,7 @@ export async function getById(id: string, tenantId?: string): Promise<Finding | 
     .where(
       and(
         eq(findingsTable.id, id),
-        tenantId ? tenantScope(findingsTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(findingsTable.tenantId, tenantId) : undefined,
       ),
     );
   return row ?? null;
@@ -79,7 +79,7 @@ export async function updateStatus(
       .where(
         and(
           eq(findingsTable.id, id),
-          tenantId ? tenantScope(findingsTable.tenantId, tenantId) : undefined,
+          tenantId ? tenantScopeStrict(findingsTable.tenantId, tenantId) : undefined,
         ),
       )
       .returning();

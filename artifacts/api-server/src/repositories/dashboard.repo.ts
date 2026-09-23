@@ -2,7 +2,7 @@ import { and, count, eq, sql } from "drizzle-orm";
 import { db, findingsTable, scansTable, sourcesTable } from "@workspace/db";
 import { activeFindingsWhere } from "./findings.repo";
 import { computeComplianceScore } from "./compliance-score";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 export type DashboardData = {
   countsBySeverity: { critical: number; high: number; medium: number; low: number };
@@ -26,11 +26,11 @@ export type DashboardData = {
  */
 export async function getDashboardData(tenantId?: string): Promise<DashboardData> {
   const findingScope = tenantId
-    ? tenantScope(findingsTable.tenantId, tenantId)
+    ? tenantScopeStrict(findingsTable.tenantId, tenantId)
     : undefined;
   // M21.3 — cada tabla usa SU propia columna tenant_id en el predicado.
   const sourceScope = tenantId
-    ? tenantScope(sourcesTable.tenantId, tenantId)
+    ? tenantScopeStrict(sourcesTable.tenantId, tenantId)
     : undefined;
 
   const severityRows = await db
@@ -63,7 +63,7 @@ export async function getDashboardData(tenantId?: string): Promise<DashboardData
     .where(
       and(
         eq(scansTable.status, "running"),
-        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
       ),
     );
 

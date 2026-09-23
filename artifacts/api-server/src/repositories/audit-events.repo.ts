@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, lte, type SQL } from "drizzle-orm";
 import { auditEventsTable, db, type AuditEvent } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 /**
  * M17 — Repositorio de auditoría administrativa (`audit_events`).
@@ -89,7 +89,7 @@ export async function list(
   }
   // M21.3 — scoping por tenant activo (D2: tenant o legacy NULL).
   if (filters.tenantId !== undefined) {
-    const scope = tenantScope(auditEventsTable.tenantId, filters.tenantId);
+    const scope = tenantScopeStrict(auditEventsTable.tenantId, filters.tenantId);
     if (scope) conditions.push(scope);
   }
 

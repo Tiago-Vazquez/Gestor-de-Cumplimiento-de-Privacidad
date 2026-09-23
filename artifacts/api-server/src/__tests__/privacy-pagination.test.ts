@@ -54,9 +54,18 @@ describe("F4 - Paginacion server-side en listados", () => {
     server = app.listen(0);
 
     // auditor: registro + login (registro opt-in habilitado arriba)
-    await request(server)
+    const reg = await request(server)
       .post("/api/auth/register")
       .send({ email: "pager-auditor@example.com", password: "secure-password-123" });
+    expect(reg.status).toBe(201);
+    // M21.5 — el auditor pertenece a org-bootstrap (fail-closed en lecturas).
+    (mocks.state!.memberships ??= []).push({
+      organizationId: "org-bootstrap",
+      userSub: reg.body.sub,
+      role: "auditor",
+      invitedBy: null,
+      joinedAt: new Date(),
+    });
     const login = await request(server)
       .post("/api/auth/login")
       .send({ email: "pager-auditor@example.com", password: "secure-password-123" });

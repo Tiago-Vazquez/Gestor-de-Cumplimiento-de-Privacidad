@@ -10,7 +10,7 @@ import {
 } from "@workspace/db";
 import { newId } from "./ids";
 import { activeFindingsWhere } from "./findings.repo";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 /**
  * M21.3 — EXISTS: el scan pertenece al tenant activo vía su source (FK). Sin
@@ -26,7 +26,7 @@ function scanTenantExists(tenantId?: string) {
       .where(
         and(
           eq(sourcesTable.id, scansTable.sourceId),
-          tenantScope(sourcesTable.tenantId, tenantId),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
         ),
       ),
   );
@@ -74,7 +74,7 @@ export async function startScan(
       .where(
         and(
           eq(sourcesTable.id, sourceId),
-          tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+          tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
         ),
       )
       .for("update");

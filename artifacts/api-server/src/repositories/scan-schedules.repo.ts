@@ -6,7 +6,7 @@ import {
   type ScanSchedule,
 } from "@workspace/db";
 import { newId } from "./ids";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 /**
  * M21.3 — EXISTS: el schedule pertenece al tenant activo vía su source (FK).
@@ -21,7 +21,7 @@ function scheduleTenantExists(tenantId?: string) {
       .where(
         and(
           eq(sourcesTable.id, scanSchedulesTable.sourceId),
-          tenantScope(sourcesTable.tenantId, tenantId),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
         ),
       ),
   );
@@ -175,7 +175,7 @@ export async function upsert(
       .where(
         and(
           eq(sourcesTable.id, input.sourceId),
-          tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+          tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
         ),
       )
       .for("update");

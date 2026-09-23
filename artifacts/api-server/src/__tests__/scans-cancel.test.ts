@@ -49,6 +49,24 @@ function cookieOf(res: { headers: { [k: string]: unknown } }): string {
 }
 
 function addScan(id: string, status: string): void {
+  // M21.5 — el scan referencia una source existente con tenant conocido.
+  if (!state().sources.some((s) => s.id === "src-cancel-target")) {
+    state().sources.push({
+      id: "src-cancel-target",
+      name: "src-cancel-target",
+      kind: "postgresql",
+      environment: "production",
+      status: "healthy",
+      lastScanAt: null,
+      tables: 0,
+      records: 0,
+      connectionConfig: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      findingsCount: 0,
+      tenantId: "org-bootstrap",
+    });
+  }
   state().scans.push({
     id,
     sourceId: "src-cancel-target",

@@ -86,6 +86,8 @@ function addScannableSource(id: string): void {
     createdAt: new Date(),
     updatedAt: new Date(),
     findingsCount: 0,
+    // M21.5 — scoping estricto: la source pertenece a la org canónica.
+    tenantId: "org-bootstrap",
   });
 }
 

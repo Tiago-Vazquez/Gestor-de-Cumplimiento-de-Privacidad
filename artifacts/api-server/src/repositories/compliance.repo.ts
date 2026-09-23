@@ -2,7 +2,7 @@ import { and, count, eq, gte, isNotNull, lt } from "drizzle-orm";
 import { db, findingsTable, scansTable, sourcesTable } from "@workspace/db";
 import { computeComplianceScore } from "./compliance-score";
 import { activeFindingsWhere } from "./findings.repo";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 import {
   UTC_MS_PER_DAY,
   buildTrendDayKeys,
@@ -174,10 +174,10 @@ export async function getComplianceTrend(
   // M21.3 (D2) - scoping de la ventana por tenant activo. Los scans (sin
   // columna tenant propia) se scoped via JOIN con su source.
   const findingScope = tenantId
-    ? tenantScope(findingsTable.tenantId, tenantId)
+    ? tenantScopeStrict(findingsTable.tenantId, tenantId)
     : undefined;
   const sourceScope = tenantId
-    ? tenantScope(sourcesTable.tenantId, tenantId)
+    ? tenantScopeStrict(sourcesTable.tenantId, tenantId)
     : undefined;
 
   // Altas: canónicos (superseded = false) por firstSeenAt. El status actual

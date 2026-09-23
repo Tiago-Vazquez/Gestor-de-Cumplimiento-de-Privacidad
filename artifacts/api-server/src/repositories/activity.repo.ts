@@ -1,7 +1,7 @@
 import { desc } from "drizzle-orm";
 import { activityTable, db, type Activity } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 /** F4 (6.3B.20): paginación aplicada en SQL (LIMIT/OFFSET), orden estable. */
 export function list(pagination?: Pagination, tenantId?: string): Promise<Activity[]> {
@@ -9,7 +9,7 @@ export function list(pagination?: Pagination, tenantId?: string): Promise<Activi
     .select()
     .from(activityTable)
     // M21.3 — scoping en el WHERE (D2: tenant activo o legacy NULL).
-    .where(tenantId ? tenantScope(activityTable.tenantId, tenantId) : undefined)
+    .where(tenantId ? tenantScopeStrict(activityTable.tenantId, tenantId) : undefined)
     .orderBy(desc(activityTable.createdAt), desc(activityTable.id))
     .$dynamic();
   if (pagination) {

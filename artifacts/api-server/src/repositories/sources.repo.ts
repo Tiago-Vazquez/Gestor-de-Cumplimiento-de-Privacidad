@@ -4,7 +4,7 @@ import type { Pagination } from "../lib/pagination";
 import { decrypt, encrypt } from "../lib/secret-manager";
 import { logger } from "../lib/logger";
 import { newId } from "./ids";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 export type SourceWithFindingsCount = Source & { findingsCount: number };
 
@@ -137,7 +137,7 @@ export async function updateSource(
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
       ),
     )
     .returning();
@@ -157,7 +157,7 @@ export async function deleteSource(id: string, tenantId?: string): Promise<boole
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
       ),
     )
     .returning({ id: sourcesTable.id });
@@ -180,7 +180,7 @@ export async function getByIdWithFindingsCount(
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
       ),
     )
     .groupBy(sourcesTable.id);
@@ -201,7 +201,7 @@ export async function list(
     .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
     .from(sourcesTable)
     .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
-    .where(tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined)
+    .where(tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined)
     .groupBy(sourcesTable.id)
     .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id))
     .$dynamic();
@@ -220,7 +220,7 @@ export async function getById(id: string, tenantId?: string): Promise<Source | n
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
       ),
     );
   return row ?? null;
@@ -241,7 +241,7 @@ export async function touchLastScan({
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
       ),
     )
     .returning();

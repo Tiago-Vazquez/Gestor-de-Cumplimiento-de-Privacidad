@@ -1,20 +1,20 @@
-import { eq, isNull, or, type SQL } from "drizzle-orm";
+import { eq, type SQL } from "drizzle-orm";
 import type { AnyColumn } from "drizzle-orm";
 
 /**
- * M21.3 (D2) — Predicado de scoping por tenant, TRANSITORIO hasta el
- * backfill de M21.4: una fila pertenece al tenant si `tenant_id` coincide
- * con la organización activa, o si es legacy (`tenant_id IS NULL` — datos
- * previos a M21.1, aún comunes a todos los tenants por decisión de
- * compatibilidad). Cuando M21.4 complete el backfill y el NOT NULL, este
- * predicado se reduce a la igualdad exacta.
+ * M21.5 — Predicado de scoping ESTRICTO por tenant. Una fila pertenece al
+ * tenant SOLO si `tenant_id` coincide con la organización activa. El fallback
+ * transitorio `tenant_id IS NULL` (D2 de M21.3) queda RETIRADO: M21.4
+ * backfilleó las filas y aplicó NOT NULL en las tablas de negocio, y los
+ * `audit_events` con `tenant_id IS NULL` son eventos de plataforma que NO se
+ * muestran en listados org-scoped.
  *
  * `organizationId` SIEMPRE proviene del contexto de organización resuelto
- * server-side (`requireOrgContext`) — nunca del cliente.
+ * server-side (`resolvedOrgContext`) — nunca del cliente.
  */
-export function tenantScope(
+export function tenantScopeStrict(
   column: AnyColumn,
   organizationId: string,
-): SQL | undefined {
-  return or(eq(column, organizationId), isNull(column));
+): SQL {
+  return eq(column, organizationId);
 }

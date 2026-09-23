@@ -4,6 +4,7 @@ import { authDisabled } from "./tokens";
 import type { AuthedRequest } from "./middleware";
 import { repos } from "../repositories";
 import { ORG_ROLES, type OrgRole } from "../repositories/memberships.repo";
+import { BOOTSTRAP_ORGANIZATION_ID } from "../repositories/organizations.repo";
 
 /**
  * M21.2 — Contexto de organización (ADR-002).
@@ -81,7 +82,10 @@ export async function resolveOrgContext(
   req: Request,
 ): Promise<OrgContext | null> {
   if (authDisabled()) {
-    return { organizationId: "dev-org", role: "owner" };
+    // M21.5 — el contexto sintético de dev/tests se alinea con la organización
+    // canónica del backfill (org-bootstrap), de modo que el scoping estricto
+    // sea consistente entre pruebas AUTH_DISABLED y el flujo real.
+    return { organizationId: BOOTSTRAP_ORGANIZATION_ID, role: "owner" };
   }
   const user = (req as AuthedRequest).user;
   if (!user?.sub || !user.jti) return null;

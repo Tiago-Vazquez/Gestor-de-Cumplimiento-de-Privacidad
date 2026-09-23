@@ -84,6 +84,14 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
       .set("X-Forwarded-For", nextIp())
       .send({ email: "auditor-src@example.com", password: "secure-password-123" });
     expect(reg.status).toBe(201);
+    // M21.5 — el auditor pertenece a org-bootstrap (fail-closed en lecturas).
+    (state().memberships ??= []).push({
+      organizationId: "org-bootstrap",
+      userSub: reg.body.sub,
+      role: "auditor",
+      invitedBy: null,
+      joinedAt: new Date(),
+    });
     const login = await request(server)
       .post("/api/auth/login")
       .set("X-Forwarded-For", nextIp())

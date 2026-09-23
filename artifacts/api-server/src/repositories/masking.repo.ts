@@ -24,7 +24,7 @@ import * as activityRepo from "./activity.repo";
 import { newId } from "./ids";
 import * as sourcesRepo from "./sources.repo";
 import type { SourceConnectionConfig } from "./sources.repo";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 /**
  * M21.3 — EXISTS: el masking job pertenece al tenant activo vía su source (FK).
@@ -40,7 +40,7 @@ function maskingTenantExists(tenantId?: string) {
       .where(
         and(
           eq(sourcesTable.id, maskingJobsTable.sourceId),
-          tenantScope(sourcesTable.tenantId, tenantId),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
         ),
       ),
   );
@@ -292,7 +292,7 @@ export async function list(
     .from(maskingJobsTable)
     // M21.3 — masking_jobs sin tenant propio: scoped vía JOIN con source.
     .innerJoin(sourcesTable, eq(maskingJobsTable.sourceId, sourcesTable.id))
-    .where(tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined)
+    .where(tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined)
     .orderBy(desc(maskingJobsTable.createdAt), desc(maskingJobsTable.id))
     .$dynamic();
   if (pagination) {
@@ -310,7 +310,7 @@ export async function getById(id: string, tenantId?: string): Promise<MaskingJob
     .where(
       and(
         eq(maskingJobsTable.id, id),
-        tenantId ? tenantScope(sourcesTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
       ),
     )
     .limit(1);

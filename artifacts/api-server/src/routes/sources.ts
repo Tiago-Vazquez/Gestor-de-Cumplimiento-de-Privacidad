@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
-import { optionalOrgContext, resolvedOrgContext } from "../auth/org-context";
+import { resolvedOrgContext } from "../auth/org-context";
 import { badRequest, notFound } from "../lib/errors";
 import {
   CreateSourceBody,
@@ -92,7 +92,7 @@ router.post("/", requireRole("admin"), async (req, res) => {
 // GET /api/sources/:id — detalle de fuente (autenticado)
 router.get("/:id", async (req, res) => {
   const { id } = GetSourceParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   // FASE 7.0.5 (M1): conteo real de hallazgos en lugar del hardcode 0
   const source = await repos.sources.getByIdWithFindingsCount(id, tenantId);
   if (!source) {
@@ -117,7 +117,7 @@ router.get("/:id", async (req, res) => {
 router.patch("/:id", requireRole("admin"), async (req, res) => {
   const { id } = UpdateSourceParams.parse(req.params);
   const body = UpdateSourceBody.parse(req.body);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
 
   let connection: SourceConnectionConfig | undefined = undefined;
   if ("connection" in body && body.connection) {
@@ -172,7 +172,7 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
 // DELETE /api/sources/:id — eliminar fuente (admin)
 router.delete("/:id", requireRole("admin"), async (req, res) => {
   const { id } = DeleteSourceParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const deleted = await repos.sources.deleteSource(id, tenantId);
   if (!deleted) {
     throw notFound("Source not found");
@@ -219,7 +219,7 @@ function toScheduleResponse(row: {
 // GET /api/sources/:id/schedule — horario de la fuente (autenticado)
 router.get("/:id/schedule", async (req, res) => {
   const { id } = GetSourceScheduleParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const source = await repos.sources.getById(id, tenantId);
   if (!source) {
     throw notFound("Source not found");
@@ -242,7 +242,7 @@ router.get("/:id/schedule", async (req, res) => {
 router.put("/:id/schedule", requireRole("admin"), async (req, res) => {
   const { id } = UpdateSourceScheduleParams.parse(req.params);
   const body = UpdateSourceScheduleBody.parse(req.body);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
 
   // Regla de negocio del contrato: enabled=true exige intervalo dentro de
   // [15, 10080]; enabled=false lo acepta opcional (default diario). Se usa la

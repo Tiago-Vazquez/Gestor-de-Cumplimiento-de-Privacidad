@@ -4,7 +4,7 @@ import type { Pagination } from "../lib/pagination";
 import { activeFindingsWhere } from "./findings.repo";
 import { computeComplianceScore } from "./compliance-score";
 import { newId } from "./ids";
-import { tenantScope } from "./tenant";
+import { tenantScopeStrict } from "./tenant";
 
 /** F4 (6.3B.20): paginación aplicada en SQL, orden estable. */
 export function list(pagination?: Pagination, tenantId?: string): Promise<Report[]> {
@@ -12,7 +12,7 @@ export function list(pagination?: Pagination, tenantId?: string): Promise<Report
     .select()
     .from(reportsTable)
     // M21.3 — scoping en el WHERE (D2: tenant activo o legacy NULL).
-    .where(tenantId ? tenantScope(reportsTable.tenantId, tenantId) : undefined)
+    .where(tenantId ? tenantScopeStrict(reportsTable.tenantId, tenantId) : undefined)
     .orderBy(desc(reportsTable.createdAt), desc(reportsTable.id))
     .$dynamic();
   if (pagination) {
@@ -29,7 +29,7 @@ export async function getById(id: string, tenantId?: string): Promise<Report | n
     .where(
       and(
         eq(reportsTable.id, id),
-        tenantId ? tenantScope(reportsTable.tenantId, tenantId) : undefined,
+        tenantId ? tenantScopeStrict(reportsTable.tenantId, tenantId) : undefined,
       ),
     );
   return report ?? null;

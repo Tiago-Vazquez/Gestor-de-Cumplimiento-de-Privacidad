@@ -57,14 +57,14 @@ import {
 } from "../mappers";
 import { repos } from "../repositories";
 import { requireRole } from "../auth/middleware";
-import { optionalOrgContext, resolvedOrgContext } from "../auth/org-context";
+import { resolvedOrgContext } from "../auth/org-context";
 import { runScan } from "../services/scanner";
 import { recordAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 
 router.get("/dashboard", async (req, res) => {
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const data = await repos.dashboard.getDashboardData(tenantId);
 
   // D9: el contrato exige `lastScanAt` como string incluso con la base de
@@ -86,7 +86,7 @@ router.get("/dashboard", async (req, res) => {
 // sesión requerida por el middleware global de /api; el repositorio
 // recalcula en cada lectura con el criterio canónico D8.
 router.get("/compliance", async (req, res) => {
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const data = await repos.compliance.getComplianceSummary(tenantId);
   res.json(GetComplianceResponse.parse(mapComplianceSummary(data)));
 });
@@ -96,13 +96,13 @@ router.get("/compliance", async (req, res) => {
 // La ventana SQL se acota dentro del repositorio.
 router.get("/compliance/trend", async (req, res) => {
   const params = GetComplianceTrendQueryParams.parse(req.query);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const data = await repos.compliance.getComplianceTrend(params.days, new Date(), tenantId);
   res.json(GetComplianceTrendResponse.parse(mapComplianceTrend(data)));
 });
 
 router.get("/activity", async (req, res) => {
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const rows = await repos.activity.list(parsePagination(req.query), tenantId);
   res.json(GetActivityResponse.parse(rows.map(mapActivity)));
 });
@@ -110,7 +110,7 @@ router.get("/activity", async (req, res) => {
 router.get("/findings", async (req, res) => {
   const params = ListFindingsQueryParams.parse(req.query);
   const pagination = parsePagination(req.query);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const rows = await repos.findings.list(
     { status: params.status, severity: params.severity },
     pagination,
@@ -122,7 +122,7 @@ router.get("/findings", async (req, res) => {
 router.patch("/findings/:id", requireRole("admin"), async (req, res) => {
   const { id } = UpdateFindingParams.parse(req.params);
   const { status } = UpdateFindingBody.parse(req.body);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
 
   const updated = await repos.findings.updateStatus(
     { id, status, at: new Date() },
@@ -136,7 +136,7 @@ router.patch("/findings/:id", requireRole("admin"), async (req, res) => {
 });
 
 router.get("/sources", async (req, res) => {
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const rows = await repos.sources.list(parsePagination(req.query), tenantId);
   res.json(ListSourcesResponse.parse(rows.map(mapSource)));
 });
@@ -174,7 +174,7 @@ router.patch("/rules/:id", requireRole("admin"), async (req, res) => {
 
 router.post("/scans", requireRole("admin"), async (req, res) => {
   const { sourceId } = StartScanBody.parse(req.body);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
 
   const result = await repos.scans.startScan({ sourceId, startedAt: new Date(), tenantId });
   if (!result.ok) {
@@ -221,7 +221,7 @@ router.post("/scans", requireRole("admin"), async (req, res) => {
 // exactos sourceId/status ya validados por el contrato; paginación en SQL.
 router.get("/scans", async (req, res) => {
   const params = ListScansQueryParams.parse(req.query);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const rows = await repos.scans.list(
     { sourceId: params.sourceId, status: params.status },
     parsePagination(req.query),
@@ -232,7 +232,7 @@ router.get("/scans", async (req, res) => {
 
 router.get("/scans/:id", async (req, res) => {
   const { id } = GetScanParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const scan = await repos.scans.getById(id, tenantId);
   if (!scan) {
     throw notFound("Scan not found");
@@ -247,7 +247,7 @@ router.get("/scans/:id", async (req, res) => {
 // mientras siga `running`; 409 si ya alcanzó estado terminal por sí mismo.
 router.post("/scans/:id/cancel", requireRole("admin"), async (req, res) => {
   const { id } = CancelScanParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const result = await repos.scans.requestCancel({ scanId: id, tenantId });
   if (!result.ok) {
     if (result.reason === "scan_not_found") {
@@ -269,7 +269,7 @@ router.post("/scans/:id/cancel", requireRole("admin"), async (req, res) => {
 });
 
 router.get("/reports", async (req, res) => {
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const rows = await repos.reports.list(parsePagination(req.query), tenantId);
   // F9 (6.3B.20): la salida se valida contra el esquema del contrato antes
   // de enviarla (fallback no validado eliminado).
@@ -298,7 +298,7 @@ router.post("/reports", requireRole("admin"), async (req, res) => {
 
 router.get("/reports/:id", async (req, res) => {
   const { id } = GetReportParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const report = await repos.reports.getById(id, tenantId);
   if (!report) {
     throw notFound("Report not found");
@@ -308,7 +308,7 @@ router.get("/reports/:id", async (req, res) => {
 
 router.get("/reports/:id/download", async (req, res) => {
   const { id } = DownloadReportParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const report = await repos.reports.getById(id, tenantId);
   if (!report) {
     throw notFound("Report not found");
@@ -329,7 +329,7 @@ router.get("/reports/:id/download", async (req, res) => {
 
 router.post("/masking/preview", requireRole("admin"), async (req, res) => {
   const { sourceId, fields } = PreviewMaskingBody.parse(req.body);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
 
   // La fuente se valida contra PostgreSQL; el resto del preview no persiste
   // nada (operación sin estado) y sus filas son sintéticas, nunca datos de
@@ -363,14 +363,14 @@ router.post("/masking/preview", requireRole("admin"), async (req, res) => {
 // lo omiten porque mapMaskingJob ni siquiera acepta la columna.
 router.get("/masking/jobs", async (req, res) => {
   const params = ListMaskingJobsQueryParams.parse(req.query);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const rows = await repos.masking.list(params, tenantId);
   res.json(ListMaskingJobsResponse.parse(rows.map(mapMaskingJob)));
 });
 
 router.post("/masking/jobs", requireRole("admin"), async (req, res) => {
   const body = CreateMaskingJobBody.parse(req.body);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const job = await repos.masking.create({
     sourceId: body.sourceId,
     fields: body.fields,
@@ -393,7 +393,7 @@ router.post("/masking/jobs", requireRole("admin"), async (req, res) => {
 
 router.get("/masking/jobs/:id", async (req, res) => {
   const { id } = GetMaskingJobParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const job = await repos.masking.getById(id, tenantId);
   if (!job) {
     throw notFound("Masking job not found");
@@ -405,7 +405,7 @@ router.get("/masking/jobs/:id", async (req, res) => {
 // relee la fuente ni re-anonimiza (patrón downloadReport de M4).
 router.get("/masking/jobs/:id/download", async (req, res) => {
   const { id } = DownloadMaskingJobParams.parse(req.params);
-  const tenantId = optionalOrgContext(req)?.organizationId;
+  const tenantId = resolvedOrgContext(req).organizationId;
   const job = await repos.masking.getByIdWithDataset(id, tenantId);
   if (!job || job.status !== "ready" || !job.dataset) {
     throw notFound("Masking dataset not available");

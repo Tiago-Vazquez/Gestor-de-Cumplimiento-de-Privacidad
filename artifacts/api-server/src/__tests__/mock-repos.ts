@@ -101,16 +101,17 @@ function isActiveFinding(finding: MockRow<Finding>): boolean {
 }
 
 /**
- * M21.3 (D2) — visibilidad de una fila para la organización activa: visible si
- * su `tenant_id` coincide con el contexto o si es legacy (`null`). Sin contexto
- * (`orgId` undefined) no hay scoping (compatibilidad legacy, espejo del repo).
+ * M21.5 — visibilidad ESTRICTA de una fila para la organización activa: visible
+ * SOLO si `tenant_id` coincide exactamente con el contexto. Sin contexto
+ * (`orgId` undefined) no hay scoping (espejo del repo real, que solo aplica el
+ * predicado cuando `tenantId` viene definido). El fail-closed vive en la ruta.
  */
 function tenantVisible(
   rowTenantId: string | null | undefined,
   orgId: string | undefined,
 ): boolean {
   if (orgId === undefined) return true;
-  return rowTenantId == null || rowTenantId === orgId;
+  return rowTenantId === orgId;
 }
 
 // ---- FASE 7.3 (M5.c): espejo in-memory de masking.repo ----
@@ -315,6 +316,14 @@ export function createMockRepos() {
     ],
     auditEvents: [],
   };
+
+  // M21.5 — los datos demo (legacy, sin tenant) se sellean con la organización
+  // canónica del backfill (org-bootstrap) para que el scoping estricto los haga
+  // visibles a los tests (cuyo contexto sintético/de bootstrap es org-bootstrap).
+  for (const row of state.findings) row.tenantId ??= "org-bootstrap";
+  for (const row of state.sources) row.tenantId ??= "org-bootstrap";
+  for (const row of state.activity) row.tenantId ??= "org-bootstrap";
+  for (const row of state.reports) row.tenantId ??= "org-bootstrap";
 
   const repos = {
     sources: {
