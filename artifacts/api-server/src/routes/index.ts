@@ -12,6 +12,32 @@ import { requireCsrf } from "../auth/csrf";
 import { attachOrgContext } from "../auth/org-context";
 import { metrics } from "../lib/metrics";
 
+/**
+ * M21.7.2 — REINOS DE AUTORIZACIÓN (ADR-003 D2).
+ *
+ * La cadena global de /api resuelve AUTENTICACIÓN (requireAuth → req.user),
+ * CSRF (requireCsrf) y el contexto de organización de forma leniente
+ * (attachOrgContext → req.orgContext si existe membership). La AUTORIZACIÓN se
+ * divide en DOS reinos explícitos:
+ *
+ *   PLATAFORMA  → `requirePlatformAdmin()` (alias de requireRole("admin"),
+ *                 SIN resolvedOrgContext). Superficie: /api/users,
+ *                 PATCH /rules/:id y —en M21.7.3— la auditoría de plataforma.
+ *                 Un admin global sin membership puede operar esta superficie.
+ *
+ *   ORGANIZACIÓN → `resolvedOrgContext` (requiere contexto de org válido;
+ *                 fail-closed), opcionalmente + `requireOrgRole`. Superficie:
+ *                 sources, scans, findings, reports, activity, dashboard,
+ *                 compliance, masking, schedule y auditoría org-scoped.
+ *
+ * Matriz efectiva (M21.7.2, decisiones B+C):
+ *   - Admin global, sin org:  plataforma 200; auditoría/negocio 403.
+ *   - Admin global, con org:  todo 200.
+ *   - Admin de org, sin rol global: lectura de negocio 200; plataforma,
+ *     auditoría y mutaciones de negocio 403 (las mutaciones conservan
+ *     requireRole("admin") global).
+ *   - Miembro/auditor de org: lectura de negocio 200; resto 403.
+ */
 const router: IRouter = Router();
 
 // Endpoints públicos: health check y flujo de autenticación (login/logout/me).
@@ -35,10 +61,10 @@ router.use(requireAuth());
 // requireAuth resolvió req.user y ANTES de los handlers mutativos.
 router.use(requireCsrf());
 
-// M21.3 — contexto de organización (leniente, D2 transitorio): pobla
-// `req.orgContext` para el scoping de los routers de negocio. Sin contexto =
-// sin scoping (compatibilidad legacy); el fail-closed estricto vive en los
-// endpoints de organizaciones (requireOrgContext).
+// M21.7 — contexto de organización (leniente): pobla `req.orgContext` para que
+// los routers de negocio resuelvan su scoping. El fail-closed estricto vive en
+// `resolvedOrgContext` (reino organización): sin contexto = 403, nunca datos
+// sin scoping.
 router.use(attachOrgContext());
 
 router.use(privacyRouter);

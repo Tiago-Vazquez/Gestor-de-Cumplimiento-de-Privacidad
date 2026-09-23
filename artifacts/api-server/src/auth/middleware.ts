@@ -171,3 +171,16 @@ export function requireRole(role: string) {
     throw forbidden(`${role} role required`);
   };
 }
+
+/**
+ * M21.7.2 — reino PLATAFORMA. Alias explícito de `requireRole("admin")`.
+ *
+ * Representa la superficie de administración de la plataforma (usuarios,
+ * reglas globales y —en M21.7.3— la auditoría de plataforma). Deliberadamente
+ * NO requiere `resolvedOrgContext`: un admin global sin membership puede
+ * operar esta superficie. No otorga acceso a datos de negocio — eso exige
+ * `resolvedOrgContext` (el gate del reino organización).
+ */
+export function requirePlatformAdmin() {
+  return requireRole("admin");
+}

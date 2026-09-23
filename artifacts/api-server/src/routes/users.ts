@@ -8,7 +8,8 @@
  *   PATCH  /api/users/:sub/roles — reemplazar roles (backend-authoritative)
  *
  * Seguridad:
- * - Todos los endpoints exigen requireAuth() + requireRole("admin").
+ * - Todos los endpoints exigen requireAuth() + requirePlatformAdmin()
+ *   (reino plataforma: rol global `admin`, sin contexto de organización).
  * - NUNCA se devuelve passwordHash ni ninguna credencial.
  * - Los roles NUNCA provienen del cliente: se leen/escriben en `user_roles`.
  * - Protección del último administrador (6.3B.10): la invariante "siempre ≥ 1
@@ -19,7 +20,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { repos } from "../repositories";
-import { requireRole } from "../auth/middleware";
+import { requirePlatformAdmin } from "../auth/middleware";
 import { normalizeEmail, isValidName } from "../auth/validation";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { parsePagination } from "../lib/pagination";
@@ -51,8 +52,9 @@ function toPublicUser(user: {
   };
 }
 
-// Todas las rutas de este router requieren sesión válida + rol admin.
-router.use(requireRole("admin"));
+// M21.7.2 — reino PLATAFORMA: sesión válida + rol global `admin`. Sin contexto
+// de organización (un admin de plataforma no necesita membership para operar).
+router.use(requirePlatformAdmin());
 
 /** GET /api/users — listado seguro de usuarios con sus roles (paginado, F4). */
 router.get("/", async (req, res) => {

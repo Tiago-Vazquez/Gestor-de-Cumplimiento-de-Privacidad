@@ -56,7 +56,7 @@ import {
   mapSource,
 } from "../mappers";
 import { repos } from "../repositories";
-import { requireRole } from "../auth/middleware";
+import { requireRole, requirePlatformAdmin } from "../auth/middleware";
 import { resolvedOrgContext } from "../auth/org-context";
 import { runScan } from "../services/scanner";
 import { recordAuditEvent } from "../lib/audit";
@@ -149,7 +149,7 @@ router.get("/rules", async (req, res) => {
 // FASE 7.0.5 (M7): PATCH /api/rules/:id — actualizar únicamente `enabled`.
 // Solo admin. El resto de campos (patrón, severidad, regulación) es built-in.
 // El cambio es efectivo en el siguiente scan (resolveActiveRules lee BD).
-router.patch("/rules/:id", requireRole("admin"), async (req, res) => {
+router.patch("/rules/:id", requirePlatformAdmin(), async (req, res) => {
   const { id } = UpdateRuleParams.parse(req.params);
   const { enabled } = UpdateRuleBody.parse(req.body);
 

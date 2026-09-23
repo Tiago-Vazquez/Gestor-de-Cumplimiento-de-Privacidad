@@ -36,8 +36,13 @@ export interface OrgAuthedRequest extends AuthedRequest {
 }
 
 /**
- * Contexto de organización ya resuelto por `requireOrgContext` (router de
- * negocio). Lanza 403 si no existe — falla cerrada, igual que el middleware.
+ * M21.7.2 — gate del REINO ORGANIZACIÓN.
+ *
+ * Devuelve el contexto de organización ya resuelto (por `requireOrgContext` o
+ * `attachOrgContext`) y lanza 403 si no existe — fail-closed. Es el único
+ * camino de acceso a los datos de negocio, SIEMPRE scoped a la organización
+ * activa del request. Puede combinarse con `requireOrgRole` para las
+ * operaciones que además exigen un rol dentro de la organización.
  */
 export function resolvedOrgContext(req: Request): OrgContext {
   const context = (req as OrgAuthedRequest).orgContext;
@@ -45,18 +50,6 @@ export function resolvedOrgContext(req: Request): OrgContext {
     throw forbidden("No active organization");
   }
   return context;
-}
-
-/**
- * M21.3 (D2 transitorio) — contexto de organización OPCIONAL, sin lanzar.
- * Los routers de negocio lo usan para scoping: si el usuario aún no pertenece
- * a ninguna organización, `tenantId` queda `undefined` y las consultas del
- * repositorio no se scoped (compatibilidad legacy). El fail-closed estricto
- * sigue en `requireOrgContext`/`resolvedOrgContext` para los endpoints de
- * organizaciones.
- */
-export function optionalOrgContext(req: Request): OrgContext | null {
-  return (req as OrgAuthedRequest).orgContext ?? null;
 }
 
 /**

@@ -15,8 +15,11 @@ import { mapAuditEvent } from "../mappers";
  *   filtros combinables (actor, action, resourceType, resourceId, result,
  *   rango temporal from/to).
  *
- * Seguridad:
- * - SOLO rol `admin` (el `requireRole` del router se aplica a todas las rutas).
+ * Seguridad (M21.7.2, decisión B — reino ORGANIZACIÓN, org-scoped):
+ * - Requiere rol GLOBAL `admin` (el `requireRole` del router) Y contexto de
+ *   organización válido (`resolvedOrgContext` en el handler).
+ * - Por tanto: admin global + org → acceso; admin global sin org → 403 (falta
+ *   contexto); admin de org sin rol global → 403 (falta rol global).
  * - La paginación se resuelve en SQL (LIMIT/OFFSET, `parsePagination`): la
  *   tabla de auditoría nunca se devuelve completa y `limit > 100` → 400.
  * - `metadata` se sirve tal cual se persistió: su contenido seguro se garantiza
