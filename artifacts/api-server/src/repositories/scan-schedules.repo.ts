@@ -12,8 +12,7 @@ import { tenantScopeStrict } from "./tenant";
  * M21.3 — EXISTS: el schedule pertenece al tenant activo vía su source (FK).
  * Sin JOIN para que `SELECT *` siga devolviendo la fila `scan_schedules`.
  */
-function scheduleTenantExists(tenantId?: string) {
-  if (!tenantId) return undefined;
+function scheduleTenantExists(tenantId: string) {
   return exists(
     db
       .select({ id: sourcesTable.id })
@@ -159,7 +158,7 @@ export async function upsert(
     intervalMinutes?: number;
     at: Date;
   },
-  tenantId?: string,
+  tenantId: string,
 ): Promise<UpsertScheduleResult> {
   const normalized = normalizeIntervalMinutes({
     enabled: input.enabled,
@@ -175,7 +174,7 @@ export async function upsert(
       .where(
         and(
           eq(sourcesTable.id, input.sourceId),
-          tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
         ),
       )
       .for("update");
@@ -217,7 +216,7 @@ export async function upsert(
 /** Horario de una fuente (null si la fuente no tiene fila de schedule o es ajena). */
 export async function getBySourceId(
   sourceId: string,
-  tenantId?: string,
+  tenantId: string,
 ): Promise<ScanSchedule | null> {
   const [row] = await db
     .select()

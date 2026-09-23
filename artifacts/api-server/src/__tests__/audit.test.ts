@@ -562,7 +562,7 @@ describe("M17 — auditoría administrativa", () => {
           },
         },
       ] as never);
-      const startScan = vi.spyOn(repos.scans, "startScan").mockResolvedValue({
+      const startScan = vi.spyOn(repos.scans, "startScanInternal").mockResolvedValue({
         ok: true,
         scan: { id: "scan-sched-audit" },
         sourceName: "Analytics Warehouse",
@@ -609,7 +609,7 @@ describe("M17 — auditoría administrativa", () => {
         },
       ] as never);
       const startScan = vi
-        .spyOn(repos.scans, "startScan")
+        .spyOn(repos.scans, "startScanInternal")
         .mockRejectedValue(
           new Error('connection to server failed: password "db-secret" rejected'),
         );

@@ -24,14 +24,10 @@ export type DashboardData = {
  * findings por `findings.tenant_id`; sources por `sources.tenant_id`;
  * los scans (sin columna propia) por JOIN con su source.
  */
-export async function getDashboardData(tenantId?: string): Promise<DashboardData> {
-  const findingScope = tenantId
-    ? tenantScopeStrict(findingsTable.tenantId, tenantId)
-    : undefined;
-  // M21.3 — cada tabla usa SU propia columna tenant_id en el predicado.
-  const sourceScope = tenantId
-    ? tenantScopeStrict(sourcesTable.tenantId, tenantId)
-    : undefined;
+export async function getDashboardData(tenantId: string): Promise<DashboardData> {
+  const findingScope = tenantScopeStrict(findingsTable.tenantId, tenantId);
+  // M21.7 — cada tabla usa SU propia columna tenant_id en el predicado.
+  const sourceScope = tenantScopeStrict(sourcesTable.tenantId, tenantId);
 
   const severityRows = await db
     .select({ severity: findingsTable.severity, total: count() })
@@ -63,7 +59,7 @@ export async function getDashboardData(tenantId?: string): Promise<DashboardData
     .where(
       and(
         eq(scansTable.status, "running"),
-        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
+        tenantScopeStrict(sourcesTable.tenantId, tenantId),
       ),
     );
 

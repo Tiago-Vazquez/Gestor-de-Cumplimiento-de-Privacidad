@@ -6,6 +6,7 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { tenantScopeStrict } from "../repositories/tenant";
 
 /**
  * M21.5 — scoping estrictamente tenant-aware (retiro del fallback `IS NULL`).
@@ -77,5 +78,42 @@ describe("M21.5 — scoping estrictamente tenant-aware", () => {
     } finally {
       server.close();
     }
+  });
+
+  it("M21.7 — tenantScopeStrict lanza con organizationId falsy (undefined/null/'')", () => {
+    const column = {} as never;
+    const expected = "tenantScopeStrict requires a non-empty organizationId";
+    expect(() => tenantScopeStrict(column, undefined as unknown as string)).toThrow(expected);
+    expect(() => tenantScopeStrict(column, null as unknown as string)).toThrow(expected);
+    expect(() => tenantScopeStrict(column, "")).toThrow(expected);
+  });
+
+  it("M21.7 — los repos de negocio retiraron el fallback fail-open y los flujos internos son explícitos", () => {
+    const read = (rel: string) =>
+      readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), rel), "utf8");
+
+    for (const name of [
+      "activity.repo.ts",
+      "audit-events.repo.ts",
+      "compliance.repo.ts",
+      "dashboard.repo.ts",
+      "findings.repo.ts",
+      "masking.repo.ts",
+      "reports.repo.ts",
+      "scan-schedules.repo.ts",
+      "scans.repo.ts",
+      "sources.repo.ts",
+    ]) {
+      const src = read(`../repositories/${name}`);
+      expect(src, `${name} no debe conservar el fallback fail-open`).not.toContain(
+        "tenantId ? tenantScopeStrict",
+      );
+    }
+
+    // Los únicos caminos sin tenant son métodos internos con nombre explícito.
+    expect(read("../repositories/scans.repo.ts")).toContain("startScanInternal");
+    expect(read("../repositories/sources.repo.ts")).toContain("getByIdForScan");
+    expect(read("../services/scanner.ts")).toContain("getByIdForScan");
+    expect(read("../services/scan-scheduler.ts")).toContain("startScanInternal");
   });
 });

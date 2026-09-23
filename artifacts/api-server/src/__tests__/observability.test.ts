@@ -204,7 +204,7 @@ describe("M16.3/M16.4 — contadores de scans y scheduler (pipeline real, repos 
         },
       ] as never);
     const startScan = vi
-      .spyOn(repos.scans, "startScan")
+      .spyOn(repos.scans, "startScanInternal")
       .mockResolvedValue({ ok: true, scan: { id: "scan-obs-2" }, sourceName: "s", sourceTables: 1 } as never);
 
     const summary = await runSchedulerTick(new Date());
@@ -228,7 +228,7 @@ describe("M16.3/M16.4 — contadores de scans y scheduler (pipeline real, repos 
         { schedule: { id: "sched-obs-2", sourceId: "src-obs-2", enabled: true, intervalMinutes: 60 } },
       ] as never);
     const startScan = vi
-      .spyOn(repos.scans, "startScan")
+      .spyOn(repos.scans, "startScanInternal")
       .mockResolvedValue({ ok: false, reason: "scan_already_running" } as never);
 
     const summary = await runSchedulerTick(new Date());
@@ -245,7 +245,7 @@ describe("M16.3/M16.4 — contadores de scans y scheduler (pipeline real, repos 
       .mockResolvedValue([
         { schedule: { id: "sched-obs-3", sourceId: "src-obs-3", enabled: true, intervalMinutes: 60 } },
       ] as never);
-    const startScan = vi.spyOn(repos.scans, "startScan").mockRejectedValue(new Error("db down"));
+    const startScan = vi.spyOn(repos.scans, "startScanInternal").mockRejectedValue(new Error("db down"));
 
     const summary = await runSchedulerTick(new Date());
     expect(summary.failed).toBe(1);

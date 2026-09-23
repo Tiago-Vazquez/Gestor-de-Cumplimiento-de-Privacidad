@@ -16,5 +16,10 @@ export function tenantScopeStrict(
   column: AnyColumn,
   organizationId: string,
 ): SQL {
+  if (!organizationId) {
+    throw new Error(
+      "tenantScopeStrict requires a non-empty organizationId; refusing to build an unscoped query",
+    );
+  }
   return eq(column, organizationId);
 }

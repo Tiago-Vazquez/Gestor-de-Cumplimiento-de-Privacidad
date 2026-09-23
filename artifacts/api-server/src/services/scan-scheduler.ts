@@ -72,7 +72,7 @@ export async function runSchedulerTick(now: Date = new Date()): Promise<Schedule
 
   for (const { schedule } of claimed) {
     try {
-      const result = await repos.scans.startScan({
+      const result = await repos.scans.startScanInternal({
         sourceId: schedule.sourceId,
         startedAt: now,
       });

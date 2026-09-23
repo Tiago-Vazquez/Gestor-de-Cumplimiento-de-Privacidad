@@ -7,12 +7,12 @@ import { newId } from "./ids";
 import { tenantScopeStrict } from "./tenant";
 
 /** F4 (6.3B.20): paginación aplicada en SQL, orden estable. */
-export function list(pagination?: Pagination, tenantId?: string): Promise<Report[]> {
+export function list(pagination: Pagination | undefined, tenantId: string): Promise<Report[]> {
   let query = db
     .select()
     .from(reportsTable)
-    // M21.3 — scoping en el WHERE (D2: tenant activo o legacy NULL).
-    .where(tenantId ? tenantScopeStrict(reportsTable.tenantId, tenantId) : undefined)
+    // M21.7 — scoping ESTRICTO obligatorio en el WHERE.
+    .where(tenantScopeStrict(reportsTable.tenantId, tenantId))
     .orderBy(desc(reportsTable.createdAt), desc(reportsTable.id))
     .$dynamic();
   if (pagination) {
@@ -22,14 +22,14 @@ export function list(pagination?: Pagination, tenantId?: string): Promise<Report
 }
 
 /** F4 (M4): obtención puntual por id; null si no existe o es ajeno (404 uniforme). */
-export async function getById(id: string, tenantId?: string): Promise<Report | null> {
+export async function getById(id: string, tenantId: string): Promise<Report | null> {
   const [report] = await db
     .select()
     .from(reportsTable)
     .where(
       and(
         eq(reportsTable.id, id),
-        tenantId ? tenantScopeStrict(reportsTable.tenantId, tenantId) : undefined,
+        tenantScopeStrict(reportsTable.tenantId, tenantId),
       ),
     );
   return report ?? null;

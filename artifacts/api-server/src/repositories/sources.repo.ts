@@ -115,7 +115,7 @@ export async function createSource(input: CreateSourceInput): Promise<Source> {
 export async function updateSource(
   id: string,
   input: UpdateSourceInput,
-  tenantId?: string,
+  tenantId: string,
 ): Promise<Source | null> {
   const existing = await getById(id, tenantId);
   if (!existing) return null;
@@ -133,11 +133,11 @@ export async function updateSource(
   const [row] = await db
     .update(sourcesTable)
     .set(set)
-    // M21.3 — scoping en el WHERE de la mutación (no solo el pre-check).
+    // M21.7 — scoping ESTRICTO en el WHERE de la mutación (no solo el pre-check).
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
+        tenantScopeStrict(sourcesTable.tenantId, tenantId),
       ),
     )
     .returning();
@@ -150,14 +150,14 @@ export async function updateSource(
  * `source_id = NULL` como evidencia histórica de cumplimiento (ON DELETE
  * SET NULL), preservando `source_name` para la atribución.
  */
-export async function deleteSource(id: string, tenantId?: string): Promise<boolean> {
+export async function deleteSource(id: string, tenantId: string): Promise<boolean> {
   const [row] = await db
     .delete(sourcesTable)
-    // M21.3 — scoping en el DELETE (BOLA: borrar recurso ajeno → 0 filas).
+    // M21.7 — scoping ESTRICTO en el DELETE (BOLA: borrar recurso ajeno → 0 filas).
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
+        tenantScopeStrict(sourcesTable.tenantId, tenantId),
       ),
     )
     .returning({ id: sourcesTable.id });
@@ -171,7 +171,7 @@ export async function deleteSource(id: string, tenantId?: string): Promise<boole
  */
 export async function getByIdWithFindingsCount(
   id: string,
-  tenantId?: string,
+  tenantId: string,
 ): Promise<SourceWithFindingsCount | null> {
   const [row] = await db
     .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
@@ -180,7 +180,7 @@ export async function getByIdWithFindingsCount(
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
+        tenantScopeStrict(sourcesTable.tenantId, tenantId),
       ),
     )
     .groupBy(sourcesTable.id);
@@ -194,14 +194,14 @@ export async function getByIdWithFindingsCount(
  * F4 (6.3B.20): paginación aplicada en SQL (LIMIT/OFFSET sobre el GROUP BY).
  */
 export async function list(
-  pagination?: Pagination,
-  tenantId?: string,
+  pagination: Pagination | undefined,
+  tenantId: string,
 ): Promise<SourceWithFindingsCount[]> {
   let query = db
     .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
     .from(sourcesTable)
     .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
-    .where(tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined)
+    .where(tenantScopeStrict(sourcesTable.tenantId, tenantId))
     .groupBy(sourcesTable.id)
     .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id))
     .$dynamic();
@@ -213,37 +213,25 @@ export async function list(
   return rows.map((row) => ({ ...row.source, findingsCount: row.findingsCount }));
 }
 
-export async function getById(id: string, tenantId?: string): Promise<Source | null> {
+export async function getById(id: string, tenantId: string): Promise<Source | null> {
   const [row] = await db
     .select()
     .from(sourcesTable)
     .where(
       and(
         eq(sourcesTable.id, id),
-        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
+        tenantScopeStrict(sourcesTable.tenantId, tenantId),
       ),
     );
   return row ?? null;
 }
 
-/** Actualiza `last_scan_at` tras iniciar un escaneo (operación atómica de una
- * sola sentencia; las transacciones multi-tabla viven en scans.repo). */
-export async function touchLastScan({
-  id,
-  at,
-}: {
-  id: string;
-  at: Date;
-}, tenantId?: string): Promise<Source | null> {
-  const [row] = await db
-    .update(sourcesTable)
-    .set({ lastScanAt: at, updatedAt: new Date() })
-    .where(
-      and(
-        eq(sourcesTable.id, id),
-        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
-      ),
-    )
-    .returning();
+/**
+ * M21.7 — flujo interno (scanner): lectura de la fuente SIN scoping de tenant.
+ * El scanner procesa una fuente concreta que ya fue iniciada; el tenant se
+ * deriva de la propia fila (raíz de propiedad), no del contexto de un request.
+ */
+export async function getByIdForScan(id: string): Promise<Source | null> {
+  const [row] = await db.select().from(sourcesTable).where(eq(sourcesTable.id, id));
   return row ?? null;
 }

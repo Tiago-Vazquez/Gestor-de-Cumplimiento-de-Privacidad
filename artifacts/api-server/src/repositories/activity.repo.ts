@@ -4,12 +4,12 @@ import type { Pagination } from "../lib/pagination";
 import { tenantScopeStrict } from "./tenant";
 
 /** F4 (6.3B.20): paginación aplicada en SQL (LIMIT/OFFSET), orden estable. */
-export function list(pagination?: Pagination, tenantId?: string): Promise<Activity[]> {
+export function list(pagination: Pagination | undefined, tenantId: string): Promise<Activity[]> {
   let query = db
     .select()
     .from(activityTable)
-    // M21.3 — scoping en el WHERE (D2: tenant activo o legacy NULL).
-    .where(tenantId ? tenantScopeStrict(activityTable.tenantId, tenantId) : undefined)
+    // M21.7 — scoping ESTRICTO obligatorio por tenant (fail-closed en el contrato).
+    .where(tenantScopeStrict(activityTable.tenantId, tenantId))
     .orderBy(desc(activityTable.createdAt), desc(activityTable.id))
     .$dynamic();
   if (pagination) {

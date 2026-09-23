@@ -57,12 +57,12 @@ export type AuditEventFilters = {
   result?: string;
   from?: Date;
   to?: Date;
-  /** M21.3 — scoping por tenant activo (D2: incluye legacy NULL). */
-  tenantId?: string;
+  /** M21.7 — scoping ESTRICTO obligatorio por tenant. */
+  tenantId: string;
 };
 
 export async function list(
-  filters: AuditEventFilters = {},
+  filters: AuditEventFilters,
   pagination?: Pagination,
 ): Promise<AuditEvent[]> {
   const conditions: SQL[] = [];
@@ -87,11 +87,8 @@ export async function list(
   if (filters.to !== undefined) {
     conditions.push(lte(auditEventsTable.createdAt, filters.to));
   }
-  // M21.3 — scoping por tenant activo (D2: tenant o legacy NULL).
-  if (filters.tenantId !== undefined) {
-    const scope = tenantScopeStrict(auditEventsTable.tenantId, filters.tenantId);
-    if (scope) conditions.push(scope);
-  }
+  // M21.7 — scoping ESTRICTO obligatorio por tenant.
+  conditions.push(tenantScopeStrict(auditEventsTable.tenantId, filters.tenantId));
 
   let query = db
     .select()

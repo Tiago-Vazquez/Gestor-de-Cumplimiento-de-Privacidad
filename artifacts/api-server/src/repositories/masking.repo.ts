@@ -31,8 +31,7 @@ import { tenantScopeStrict } from "./tenant";
  * Sin JOIN para que `SELECT *` (getByIdWithDataset) siga devolviendo la fila
  * `masking_jobs` (y no una tupla de join).
  */
-function maskingTenantExists(tenantId?: string) {
-  if (!tenantId) return undefined;
+function maskingTenantExists(tenantId: string) {
   return exists(
     db
       .select({ id: sourcesTable.id })
@@ -213,8 +212,8 @@ export async function create(input: {
   sourceId: string;
   fields: string[];
   at: Date;
-  /** M21.3 — scoping de la fuente origen (job ajeno → source_not_found). */
-  tenantId?: string;
+  /** M21.7 — tenant obligatorio de la fuente origen (job ajeno → source_not_found). */
+  tenantId: string;
 }): Promise<MaskingJob> {
   const fields = assertMaskableFields(input.fields);
   const source = await sourcesRepo.getById(input.sourceId, input.tenantId);
@@ -284,15 +283,15 @@ export async function create(input: {
 
 /** Listado con columnas explícitas (SIN dataset), newest-first, paginado. */
 export async function list(
-  pagination?: Pagination,
-  tenantId?: string,
+  pagination: Pagination | undefined,
+  tenantId: string,
 ): Promise<MaskingJobRow[]> {
   let query = db
     .select(jobColumns)
     .from(maskingJobsTable)
-    // M21.3 — masking_jobs sin tenant propio: scoped vía JOIN con source.
+    // M21.7 — masking_jobs sin tenant propio: scoped vía JOIN con source.
     .innerJoin(sourcesTable, eq(maskingJobsTable.sourceId, sourcesTable.id))
-    .where(tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined)
+    .where(tenantScopeStrict(sourcesTable.tenantId, tenantId))
     .orderBy(desc(maskingJobsTable.createdAt), desc(maskingJobsTable.id))
     .$dynamic();
   if (pagination) {
@@ -302,7 +301,7 @@ export async function list(
 }
 
 /** Detalle con columnas explícitas (SIN dataset). */
-export async function getById(id: string, tenantId?: string): Promise<MaskingJobRow | null> {
+export async function getById(id: string, tenantId: string): Promise<MaskingJobRow | null> {
   const [row] = await db
     .select(jobColumns)
     .from(maskingJobsTable)
@@ -310,7 +309,7 @@ export async function getById(id: string, tenantId?: string): Promise<MaskingJob
     .where(
       and(
         eq(maskingJobsTable.id, id),
-        tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
+        tenantScopeStrict(sourcesTable.tenantId, tenantId),
       ),
     )
     .limit(1);
@@ -320,7 +319,7 @@ export async function getById(id: string, tenantId?: string): Promise<MaskingJob
 /** Solo para el download: única vía de salida del dataset persistido. */
 export async function getByIdWithDataset(
   id: string,
-  tenantId?: string,
+  tenantId: string,
 ): Promise<MaskingJobWithDataset | null> {
   const [row] = await db
     .select()

@@ -109,7 +109,7 @@ export function summarizeComplianceAggregates(input: {
 }
 
 /** Snapshot de métricas de compliance (contrato `ComplianceSummary`). */
-export async function getComplianceSummary(tenantId?: string): Promise<ComplianceSummaryData> {
+export async function getComplianceSummary(tenantId: string): Promise<ComplianceSummaryData> {
   const severityRows = await db
     .select({ severity: findingsTable.severity, total: count() })
     .from(findingsTable)
@@ -161,7 +161,7 @@ export async function getComplianceSummary(tenantId?: string): Promise<Complianc
 export async function getComplianceTrend(
   days: number,
   now: Date = new Date(),
-  tenantId?: string,
+  tenantId: string,
 ): Promise<ComplianceTrendData> {
   if (!Number.isInteger(days) || days < 1 || days > COMPLIANCE_TREND_MAX_DAYS) {
     throw new RangeError(`days debe ser un entero en 1..${COMPLIANCE_TREND_MAX_DAYS}, recibido ${days}`);
@@ -171,14 +171,10 @@ export async function getComplianceTrend(
   const windowStart = utcDayStart(dayKeys[0]);
   const windowEnd = new Date(utcDayStart(dayKeys[dayKeys.length - 1]).getTime() + UTC_MS_PER_DAY);
 
-  // M21.3 (D2) - scoping de la ventana por tenant activo. Los scans (sin
+  // M21.7 — scoping ESTRICTO obligatorio por tenant. Los scans (sin
   // columna tenant propia) se scoped via JOIN con su source.
-  const findingScope = tenantId
-    ? tenantScopeStrict(findingsTable.tenantId, tenantId)
-    : undefined;
-  const sourceScope = tenantId
-    ? tenantScopeStrict(sourcesTable.tenantId, tenantId)
-    : undefined;
+  const findingScope = tenantScopeStrict(findingsTable.tenantId, tenantId);
+  const sourceScope = tenantScopeStrict(sourcesTable.tenantId, tenantId);
 
   // Altas: canónicos (superseded = false) por firstSeenAt. El status actual
   // es irrelevante: un finding detectado lunes y resuelto martes SÍ cuenta el

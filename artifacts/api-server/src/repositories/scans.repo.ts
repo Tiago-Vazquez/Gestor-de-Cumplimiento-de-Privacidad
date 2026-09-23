@@ -1,4 +1,4 @@
-import { and, desc, eq, exists, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, exists, inArray, sql, type SQL } from "drizzle-orm";
 import {
   activityTable,
   db,
@@ -17,8 +17,7 @@ import { tenantScopeStrict } from "./tenant";
  * JOIN para que `SELECT *` siga devolviendo la fila `scans` (y no una tupla
  * de join) y el `FOR UPDATE` bloquee solo la fila del scan.
  */
-function scanTenantExists(tenantId?: string) {
-  if (!tenantId) return undefined;
+function scanTenantExists(tenantId: string) {
   return exists(
     db
       .select({ id: sourcesTable.id })
@@ -62,19 +61,19 @@ export type CancelScanResult =
  * `FOR UPDATE` sobre la fuente para devolver 409 limpio sin depender de
  * capturar el 23505.
  */
-export async function startScan(
-  { sourceId, startedAt, tenantId }: { sourceId: string; startedAt: Date; tenantId?: string },
+async function startScanTx(
+  { sourceId, startedAt, sourceWhere }: { sourceId: string; startedAt: Date; sourceWhere: SQL | undefined },
 ): Promise<StartScanResult> {
   return db.transaction(async (tx) => {
     const [source] = await tx
       .select()
       .from(sourcesTable)
-      // M21.3 — scoping en el SELECT FOR UPDATE (D2): una fuente ajena se
-      // reporta como `source_not_found` sin escribir nada (BOLA).
+      // M21.7 — el predicado de scoping lo aporta el llamador: `startScan` pasa
+      // `tenantScopeStrict(...)`; `startScanInternal` (scheduler) pasa undefined.
       .where(
         and(
           eq(sourcesTable.id, sourceId),
-          tenantId ? tenantScopeStrict(sourcesTable.tenantId, tenantId) : undefined,
+          sourceWhere,
         ),
       )
       .for("update");
@@ -118,6 +117,27 @@ export async function startScan(
 
     return { ok: true, scan, sourceName: source.name, sourceTables: source.tables };
   });
+}
+
+/**
+ * M21.7 — inicia un escaneo exigiéndole el tenant (camino HTTP). La fuente se
+ * valida scoped a la organización activa (BOLA: fuente ajena → source_not_found).
+ */
+export async function startScan(
+  { sourceId, startedAt, tenantId }: { sourceId: string; startedAt: Date; tenantId: string },
+): Promise<StartScanResult> {
+  return startScanTx({ sourceId, startedAt, sourceWhere: tenantScopeStrict(sourcesTable.tenantId, tenantId) });
+}
+
+/**
+ * M21.7 — flujo interno (scheduler): inicia el scan SIN scoping de tenant. Es
+ * el único camino cross-tenant de `startScan`; lo usa el scheduler, que reclama
+ * vencimientos de TODAS las organizaciones.
+ */
+export async function startScanInternal(
+  { sourceId, startedAt }: { sourceId: string; startedAt: Date },
+): Promise<StartScanResult> {
+  return startScanTx({ sourceId, startedAt, sourceWhere: undefined });
 }
 
 /**
@@ -211,7 +231,7 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
           .where(
             and(
               eq(findingsTable.sourceId, input.sourceId),
-              activeFindingsWhere(),
+              activeFindingsWhere(sourceRow.tenantId),
             ),
           )
       : [];
@@ -443,9 +463,9 @@ export async function heartbeatScan({
  * esto es una bitácora). Paginación aplicada en SQL.
  */
 export async function list(
-  filters: { sourceId?: string; status?: string } = {},
-  pagination?: Pagination,
-  tenantId?: string,
+  filters: { sourceId?: string; status?: string },
+  pagination: Pagination | undefined,
+  tenantId: string,
 ): Promise<Scan[]> {
   let query = db
     .select()
@@ -467,7 +487,7 @@ export async function list(
 }
 
 /** FASE 7.1.1 (M1): detalle de un scan por id (null si no existe o es ajeno). */
-export async function getById(id: string, tenantId?: string): Promise<Scan | null> {
+export async function getById(id: string, tenantId: string): Promise<Scan | null> {
   const [scan] = await db
     .select()
     .from(scansTable)
@@ -491,7 +511,7 @@ export async function getById(id: string, tenantId?: string): Promise<Scan | nul
  * éxito (segunda llamada retorna el scan ya marcado).
  */
 export async function requestCancel(
-  { scanId, tenantId }: { scanId: string; tenantId?: string },
+  { scanId, tenantId }: { scanId: string; tenantId: string },
 ): Promise<CancelScanResult> {
   return db.transaction(async (tx) => {
     const [scan] = await tx

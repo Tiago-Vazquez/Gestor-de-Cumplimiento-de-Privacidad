@@ -270,7 +270,7 @@ async function runScanInner(input: RunScanInput): Promise<void> {
 
   let source;
   try {
-    source = await repos.sources.getById(input.sourceId);
+    source = await repos.sources.getByIdForScan(input.sourceId);
   } catch (error) {
     logger.error({ err: error, scanId: input.scanId, sourceId: input.sourceId }, "Scan failed: could not load source");
     await failScanSafe(input.scanId, input.sourceId, "persist_failed", error, Date.now() - startedAtMs);

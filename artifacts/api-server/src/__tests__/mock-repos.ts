@@ -343,6 +343,10 @@ export function createMockRepos() {
           ) ?? null
         );
       },
+      // M21.7 — flujo interno (scanner): lectura SIN scoping de tenant.
+      async getByIdForScan(id: string) {
+        return state.sources.find((source) => source.id === id) ?? null;
+      },
       // FASE 7.0.5 (M1): réplica del repo real — devuelve la fuente con su
       // conteo real de hallazgos. Cada source del estado ya incluye el campo
       // findingsCount (se mantiene coherente con createSource que lo inicia en 0).
@@ -443,18 +447,6 @@ export function createMockRepos() {
         state.sources.splice(index, 1);
         return true;
       },
-      async touchLastScan(
-        { id, at }: { id: string; at: Date },
-        tenantId?: string,
-      ) {
-        const source = state.sources.find(
-          (item) => item.id === id && tenantVisible(item.tenantId, tenantId),
-        );
-        if (!source) return null;
-        source.lastScanAt = at;
-        source.updatedAt = at;
-        return { ...source };
-      },
     },
     findings: {
       async list(
@@ -471,13 +463,6 @@ export function createMockRepos() {
           )
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((finding) => ({ ...finding }));
-      },
-      async getById(id: string, tenantId?: string) {
-        return (
-          state.findings.find(
-            (finding) => finding.id === id && tenantVisible(finding.tenantId, tenantId),
-          ) ?? null
-        );
       },
       async updateStatus(
         { id, status, at }: { id: string; status: string; at: Date },
@@ -499,11 +484,6 @@ export function createMockRepos() {
           tenantId: finding.tenantId,
         });
         return { ...finding };
-      },
-      async countOpen(tenantId?: string) {
-        return state.findings.filter(
-          (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
-        ).length;
       },
     },
     rules: {
@@ -542,6 +522,35 @@ export function createMockRepos() {
           completedAt: null,
           findingsCreated: 0,
           // FASE 7.1.0 M0: espejo de los defaults de la migración 0006.
+          heartbeatAt: null,
+          tablesScanned: 0,
+          recordsRead: 0,
+          cancelRequested: false,
+        };
+        state.scans.push(scan);
+        source.lastScanAt = startedAt;
+        source.updatedAt = startedAt;
+        state.activity.unshift({
+          id: nextId("a"),
+          type: "scan",
+          title: "Escaneo iniciado",
+          description: `${source.name} · analizando ${source.tables} tablas`,
+          createdAt: startedAt,
+          severity: null,
+        });
+        return { ok: true, scan: { ...scan }, sourceName: source.name, sourceTables: source.tables };
+      },
+      // M21.7 — flujo interno (scheduler): inicia el scan SIN scoping de tenant.
+      async startScanInternal({ sourceId, startedAt }: { sourceId: string; startedAt: Date }) {
+        const source = state.sources.find((item) => item.id === sourceId);
+        if (!source) return { ok: false, reason: "source_not_found" as const };
+        const scan: MockRow<Scan> = {
+          id: nextId("scan"),
+          sourceId: source.id,
+          status: "running",
+          startedAt,
+          completedAt: null,
+          findingsCreated: 0,
           heartbeatAt: null,
           tablesScanned: 0,
           recordsRead: 0,

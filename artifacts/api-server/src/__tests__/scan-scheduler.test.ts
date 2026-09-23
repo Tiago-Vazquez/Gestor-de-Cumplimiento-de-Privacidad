@@ -13,7 +13,7 @@ process.env.AUTH_DISABLED = "false";
 vi.mock("../repositories", () => ({
   repos: {
     scanSchedules: { claimDue: vi.fn(), markResult: vi.fn() },
-    scans: { startScan: vi.fn() },
+    scans: { startScanInternal: vi.fn() },
   },
 }));
 vi.mock("../services/scanner", () => ({
@@ -33,7 +33,7 @@ import {
 
 const mockedClaimDue = vi.mocked(repos.scanSchedules.claimDue);
 const mockedMarkResult = vi.mocked(repos.scanSchedules.markResult);
-const mockedStartScan = vi.mocked(repos.scans.startScan);
+const mockedStartScan = vi.mocked(repos.scans.startScanInternal);
 const mockedRunScan = vi.mocked(runScan);
 
 const now = new Date("2026-01-15T12:00:00Z");
