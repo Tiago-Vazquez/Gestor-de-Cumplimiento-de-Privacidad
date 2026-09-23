@@ -67,6 +67,23 @@ export type AuditAction =
   | "invitation_accepted"
   | "security_violation";
 
+/**
+ * M21.7.3 — VOCABULARIO CERRADO de acciones de PLATAFORMA (tenant_id = NULL).
+ *
+ * Estas cuatro acciones operan sobre recursos globales de la plataforma
+ * (privilegios de usuario, reglas de detección y violaciones de seguridad) y
+ * NO pertenecen a ninguna organización. Se persisten SIEMPRE con
+ * `tenant_id = NULL`, con precedencia sobre `resolveAuditTenant` (aunque exista
+ * `req.orgContext`). Debe coincidir exactamente con las acciones que el
+ * backfill M21.4 (`0016`) dejó como NULL.
+ */
+export const PLATFORM_ACTIONS: ReadonlySet<AuditAction> = new Set<AuditAction>([
+  "user_roles_updated",
+  "rule_enabled",
+  "rule_disabled",
+  "security_violation",
+]);
+
 /** Tipos de recurso afectado. */
 export type AuditResourceType =
   | "session"
@@ -232,8 +249,12 @@ export async function recordAuditEvent(input: AuditEventInput): Promise<void> {
       result: input.result ?? "success",
       requestId: resolveAuditRequestId(input.req),
       metadata,
-      // M21.3 (D2) — tenant del evento: organización activa del request.
-      tenantId: input.tenantId ?? resolveAuditTenant(input.req),
+      // M21.7.3 — las acciones de PLATAFORMA escriben tenant_id = NULL SIEMPRE
+      // (preceden a `resolveAuditTenant`), aunque exista req.orgContext. El
+      // resto conserva el tenant explícito o el de la organización activa.
+      tenantId: PLATFORM_ACTIONS.has(input.action)
+        ? null
+        : input.tenantId ?? resolveAuditTenant(input.req),
     });
   } catch (error) {
     logger.error(

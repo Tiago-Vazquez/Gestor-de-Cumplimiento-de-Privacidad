@@ -739,6 +739,51 @@ export const ListAuditEventsResult = {
   failure: 'failure',
 } as const;
 
+export type ListAuditEventsPlatformParams = {
+/**
+ * actor_user_id exacto (sub del actor autenticado).
+ */
+actor?: string;
+/**
+ * Acción exacta (p. ej. user_roles_updated, rule_enabled).
+ */
+action?: string;
+/**
+ * Tipo de recurso exacto (session, user, rule, ...).
+ */
+resourceType?: string;
+/**
+ * Identificador exacto del recurso afectado.
+ */
+resourceId?: string;
+result?: ListAuditEventsPlatformResult;
+/**
+ * Límite inferior inclusivo, ISO-8601. Valor inválido → 400.
+ */
+from?: string;
+/**
+ * Límite superior inclusivo, ISO-8601. Valor inválido → 400.
+ */
+to?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+/**
+ * @minimum 0
+ */
+offset?: number;
+};
+
+export type ListAuditEventsPlatformResult = typeof ListAuditEventsPlatformResult[keyof typeof ListAuditEventsPlatformResult];
+
+
+export const ListAuditEventsPlatformResult = {
+  success: 'success',
+  failure: 'failure',
+} as const;
+
 export type GetComplianceTrendParams = {
 /**
  * Number of UTC calendar days to include, counting back from today (inclusive). Values outside 1..90 are rejected with 400.

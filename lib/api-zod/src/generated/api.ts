@@ -264,6 +264,44 @@ export const ListAuditEventsResponse = zod.array(ListAuditEventsResponseItem)
 
 
 /**
+ * Trazabilidad administrativa de PLATAFORMA (M21.7.3). Devuelve exclusivamente eventos con `tenant_id` NULL (acciones de plataforma y eventos de sistema sin organización). Solo rol global `admin`; NO requiere organización activa. Filtros opcionales combinables; consulta SIEMPRE paginada (limit/offset en SQL). Conjunto disjunto de `GET /api/audit-events` (org-scoped).
+ * @summary List platform administrative audit events (admin only)
+ */
+export const listAuditEventsPlatformQueryLimitDefault = 50;
+export const listAuditEventsPlatformQueryLimitMax = 100;
+
+export const listAuditEventsPlatformQueryOffsetDefault = 0;
+export const listAuditEventsPlatformQueryOffsetMin = 0;
+
+
+
+export const ListAuditEventsPlatformQueryParams = zod.object({
+  "actor": zod.coerce.string().optional().describe('actor_user_id exacto (sub del actor autenticado).'),
+  "action": zod.coerce.string().optional().describe('Acción exacta (p. ej. user_roles_updated, rule_enabled).'),
+  "resourceType": zod.coerce.string().optional().describe('Tipo de recurso exacto (session, user, rule, ...).'),
+  "resourceId": zod.coerce.string().optional().describe('Identificador exacto del recurso afectado.'),
+  "result": zod.enum(['success', 'failure']).optional(),
+  "from": zod.coerce.string().optional().describe('Límite inferior inclusivo, ISO-8601. Valor inválido → 400.'),
+  "to": zod.coerce.string().optional().describe('Límite superior inclusivo, ISO-8601. Valor inválido → 400.'),
+  "limit": zod.coerce.number().int().min(1).max(listAuditEventsPlatformQueryLimitMax).default(listAuditEventsPlatformQueryLimitDefault),
+  "offset": zod.coerce.number().int().min(listAuditEventsPlatformQueryOffsetMin).default(listAuditEventsPlatformQueryOffsetDefault)
+})
+
+export const ListAuditEventsPlatformResponseItem = zod.object({
+  "id": zod.string(),
+  "actorUserId": zod.string().nullish().describe('`sub` del actor autenticado que ejecutó la acción; `null` en acciones internas (scheduler de escaneos, recovery de scans huérfanos) donde no hay usuario humano.'),
+  "action": zod.string().describe('Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled.'),
+  "resourceType": zod.string().describe('Tipo de recurso afectado: session, user, source, schedule, scan, report, masking_job o rule.'),
+  "resourceId": zod.string().nullish().describe('Identificador del recurso afectado (`null` si no aplica).'),
+  "result": zod.enum(['success', 'failure']).describe('Resultado de la acción intentada.'),
+  "requestId": zod.string().nullish().describe('Correlation id del request (M16, header `X-Request-Id`); `null` en acciones internas sin request HTTP.'),
+  "metadata": zod.record(zod.string(), zod.unknown()).optional().describe('Información operacional segura (ids, contadores, tipos, estados, nombres de campos). NUNCA contraseñas, JWT, cookies, tokens CSRF, claves de cifrado, credenciales de conexión ni datos descubiertos por los scans.'),
+  "createdAt": zod.coerce.date()
+}).describe('Evento de auditoría administrativa (M17): quién hizo qué, cuándo y sobre qué recurso. Historia deliberadamente desacoplada de `users` (sin foreign key): sobrevive al borrado de la cuenta referenciada en `actorUserId`. La acción y el tipo de recurso son texto libre con vocabulario cerrado en la capa de dominio.')
+export const ListAuditEventsPlatformResponse = zod.array(ListAuditEventsPlatformResponseItem)
+
+
+/**
  * @summary Get compliance dashboard summary
  */
 export const GetDashboardResponse = zod.object({

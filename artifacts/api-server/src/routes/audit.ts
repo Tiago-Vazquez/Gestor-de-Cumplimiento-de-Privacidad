@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
-import { ListAuditEventsQueryParams, ListAuditEventsResponse } from "@workspace/api-zod";
+import { ListAuditEventsQueryParams, ListAuditEventsResponse, ListAuditEventsPlatformQueryParams, ListAuditEventsPlatformResponse } from "@workspace/api-zod";
 import { repos } from "../repositories";
-import { requireRole } from "../auth/middleware";
+import { requirePlatformAdmin } from "../auth/middleware";
 import { resolvedOrgContext } from "../auth/org-context";
 import { badRequest } from "../lib/errors";
 import { parsePagination } from "../lib/pagination";
@@ -27,7 +27,10 @@ import { mapAuditEvent } from "../mappers";
  */
 const router: IRouter = Router();
 
-router.use(requireRole("admin"));
+// M21.7.2/7.3 — ambos endpoints exigen rol global admin (reino plataforma).
+// El endpoint org-scoped añade resolvedOrgContext en el handler; el de
+// plataforma NO (un admin global sin membership debe poder consultarlo).
+router.use(requirePlatformAdmin());
 
 /**
  * Convierte un filtro temporal ISO-8601 en `Date`. Un valor no parseable → 400
@@ -43,6 +46,40 @@ function parseInstant(value: string | undefined, field: string): Date | undefine
   }
   return parsed;
 }
+
+/**
+ * GET /api/audit-events/platform — reino PLATAFORMA (M21.7.3).
+ *
+ * Devuelve SOLO eventos con `tenant_id IS NULL` (acciones de plataforma y
+ * eventos de sistema sin organización). NO usa `resolvedOrgContext`: un admin
+ * global sin membership puede consultarlo. Conjunto disjunto de
+ * `GET /api/audit-events` (org-scoped).
+ */
+router.get("/platform", async (req, res) => {
+  const params = ListAuditEventsPlatformQueryParams.parse(req.query);
+  const pagination = parsePagination(req.query);
+
+  const from = parseInstant(params.from, "from");
+  const to = parseInstant(params.to, "to");
+  if (from && to && from.getTime() > to.getTime()) {
+    throw badRequest("from must be earlier than or equal to to");
+  }
+
+  const rows = await repos.auditEvents.listPlatform(
+    {
+      actorUserId: params.actor,
+      action: params.action,
+      resourceType: params.resourceType,
+      resourceId: params.resourceId,
+      result: params.result,
+      from,
+      to,
+    },
+    pagination,
+  );
+
+  res.json(ListAuditEventsPlatformResponse.parse(rows.map(mapAuditEvent)));
+});
 
 router.get("/", async (req, res) => {
   const params = ListAuditEventsQueryParams.parse(req.query);

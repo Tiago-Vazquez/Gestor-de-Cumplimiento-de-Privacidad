@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, type SQL } from "drizzle-orm";
 import { auditEventsTable, db, type AuditEvent } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 import { tenantScopeStrict } from "./tenant";
@@ -61,10 +61,21 @@ export type AuditEventFilters = {
   tenantId: string;
 };
 
-export async function list(
-  filters: AuditEventFilters,
-  pagination?: Pagination,
-): Promise<AuditEvent[]> {
+/**
+ * M21.7.3 — filtros del endpoint de auditoría de PLATAFORMA. Igual que
+ * `AuditEventFilters` pero SIN `tenantId`: el scoping es fijo (`tenant_id IS
+ * NULL`), nunca aportado por el llamador.
+ */
+export type AuditEventPlatformFilters = Omit<AuditEventFilters, "tenantId">;
+
+/**
+ * Predicados de filtro comunes a `list` y `listPlatform` (actor, acción,
+ * recurso, resultado y rango temporal). NO incluyen scoping de tenant: cada
+ * método añade el suyo (`tenantScopeStrict` vs `isNull(tenantId)`), para que
+ * ningún cambio aquí introduzca tenant scoping accidental en el endpoint de
+ * plataforma.
+ */
+function buildSharedAuditFilters(filters: AuditEventPlatformFilters): SQL[] {
   const conditions: SQL[] = [];
   if (filters.actorUserId !== undefined) {
     conditions.push(eq(auditEventsTable.actorUserId, filters.actorUserId));
@@ -87,13 +98,46 @@ export async function list(
   if (filters.to !== undefined) {
     conditions.push(lte(auditEventsTable.createdAt, filters.to));
   }
+  return conditions;
+}
+
+export async function list(
+  filters: AuditEventFilters,
+  pagination?: Pagination,
+): Promise<AuditEvent[]> {
+  const conditions = buildSharedAuditFilters(filters);
   // M21.7 — scoping ESTRICTO obligatorio por tenant.
   conditions.push(tenantScopeStrict(auditEventsTable.tenantId, filters.tenantId));
 
   let query = db
     .select()
     .from(auditEventsTable)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(and(...conditions))
+    .orderBy(desc(auditEventsTable.createdAt), desc(auditEventsTable.id))
+    .$dynamic();
+  if (pagination) {
+    query = query.limit(pagination.limit).offset(pagination.offset);
+  }
+  return query;
+}
+
+/**
+ * M21.7.3 — listado de eventos de PLATAFORMA: SOLO `tenant_id IS NULL`.
+ * Conjunto disjunto de `list` (que devuelve `tenant_id = org`). No acepta
+ * `tenantId` por contrato.
+ */
+export async function listPlatform(
+  filters: AuditEventPlatformFilters,
+  pagination?: Pagination,
+): Promise<AuditEvent[]> {
+  const conditions = buildSharedAuditFilters(filters);
+  // M21.7.3 — exclusivamente eventos de plataforma (sin organización).
+  conditions.push(isNull(auditEventsTable.tenantId));
+
+  let query = db
+    .select()
+    .from(auditEventsTable)
+    .where(and(...conditions))
     .orderBy(desc(auditEventsTable.createdAt), desc(auditEventsTable.id))
     .$dynamic();
   if (pagination) {

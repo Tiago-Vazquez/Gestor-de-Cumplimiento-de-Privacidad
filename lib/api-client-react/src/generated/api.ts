@@ -38,6 +38,7 @@ import type {
   GetComplianceTrendParams,
   HealthStatus,
   ListAuditEventsParams,
+  ListAuditEventsPlatformParams,
   ListFindingsParams,
   ListMaskingJobsParams,
   ListReportsParams,
@@ -1135,6 +1136,91 @@ export function useListAuditEvents<TData = Awaited<ReturnType<typeof listAuditEv
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getListAuditEventsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAuditEventsPlatformUrl = (params?: ListAuditEventsPlatformParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/audit-events/platform?${stringifiedParams}` : `/api/audit-events/platform`
+}
+
+/**
+ * Trazabilidad administrativa de PLATAFORMA (M21.7.3). Devuelve exclusivamente eventos con `tenant_id` NULL (acciones de plataforma y eventos de sistema sin organización). Solo rol global `admin`; NO requiere organización activa. Filtros opcionales combinables; consulta SIEMPRE paginada (limit/offset en SQL). Conjunto disjunto de `GET /api/audit-events` (org-scoped).
+ * @summary List platform administrative audit events (admin only)
+ */
+export const listAuditEventsPlatform = async (params?: ListAuditEventsPlatformParams, options?: Parameters<typeof customFetch>[1]): Promise<AuditEvent[]> => {
+
+  return customFetch<AuditEvent[]>(getListAuditEventsPlatformUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAuditEventsPlatformQueryKey = (params?: ListAuditEventsPlatformParams,) => {
+    return [
+    `/api/audit-events/platform`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAuditEventsPlatformQueryOptions = <TData = Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError = ErrorType<void>>(params?: ListAuditEventsPlatformParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAuditEventsPlatformQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAuditEventsPlatform>>> = ({ signal }) => listAuditEventsPlatform(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAuditEventsPlatformQueryResult = NonNullable<Awaited<ReturnType<typeof listAuditEventsPlatform>>>
+export type ListAuditEventsPlatformQueryError = ErrorType<void>
+
+
+/**
+ * @summary List platform administrative audit events (admin only)
+ */
+
+export function useListAuditEventsPlatform<TData = Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError = ErrorType<void>>(
+ params?: ListAuditEventsPlatformParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAuditEventsPlatformQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

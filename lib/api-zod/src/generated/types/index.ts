@@ -43,6 +43,8 @@ export * from './getActivityParams';
 export * from './getComplianceTrendParams';
 export * from './healthStatus';
 export * from './listAuditEventsParams';
+export * from './listAuditEventsPlatformParams';
+export * from './listAuditEventsPlatformResult';
 export * from './listAuditEventsResult';
 export * from './listFindingsParams';
 export * from './listFindingsSeverity';

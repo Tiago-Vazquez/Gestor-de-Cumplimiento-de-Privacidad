@@ -883,6 +883,42 @@ export function createMockRepos() {
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((event) => ({ ...event }));
       },
+      /**
+       * M21.7.3 — SOLO eventos de plataforma (tenant_id IS NULL). Disjunto de
+       * `list` (que scoped por organización).
+       */
+      async listPlatform(
+        filters: {
+          actorUserId?: string;
+          action?: string;
+          resourceType?: string;
+          resourceId?: string;
+          result?: string;
+          from?: Date;
+          to?: Date;
+        } = {},
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+      ) {
+        return state.auditEvents
+          .filter((event) => {
+            if (event.tenantId !== null && event.tenantId !== undefined) return false;
+            if (filters.actorUserId !== undefined && event.actorUserId !== filters.actorUserId) return false;
+            if (filters.action !== undefined && event.action !== filters.action) return false;
+            if (filters.resourceType !== undefined && event.resourceType !== filters.resourceType) return false;
+            if (filters.resourceId !== undefined && event.resourceId !== filters.resourceId) return false;
+            if (filters.result !== undefined && event.result !== filters.result) return false;
+            if (filters.from !== undefined && event.createdAt.getTime() < filters.from.getTime()) return false;
+            if (filters.to !== undefined && event.createdAt.getTime() > filters.to.getTime()) return false;
+            return true;
+          })
+          .sort(
+            (a, b) =>
+              b.createdAt.getTime() - a.createdAt.getTime() ||
+              (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+          )
+          .slice(pagination.offset, pagination.offset + pagination.limit)
+          .map((event) => ({ ...event }));
+      },
     },
     reports: {
       async list(
