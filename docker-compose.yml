@@ -6,7 +6,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-privacy}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-privacy-dev-only}
+      # M22 — sin password hardcodeado: el superusuario `privacy` se crea con un
+      # secreto externo (generar con `openssl rand -base64 48` y ponerlo en `.env`).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatorio (openssl rand -base64 48)}
       POSTGRES_DB: ${POSTGRES_DB:-privacy}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -23,12 +25,16 @@ services:
       context: .
       dockerfile: Dockerfile.api
       target: migrate
-    command: ["pnpm", "--filter", "@workspace/db", "run", "db:migrate"]
+    # M22 — migra (0000..0019) y luego provisiona las contraseñas de app_role/bg_role
+    # desde APP_ROLE_PASSWORD / BG_ROLE_PASSWORD (la migración 0019 las deja en NULL).
+    command: ["sh", "-c", "pnpm --filter @workspace/db run db:migrate && pnpm --filter @workspace/db run db:provision-roles"]
     depends_on:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-privacy}:${POSTGRES_PASSWORD:-privacy-dev-only}@db:5432/${POSTGRES_DB:-privacy}
+      ADMIN_DATABASE_URL: postgresql://${POSTGRES_USER:-privacy}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-privacy}
+      APP_ROLE_PASSWORD: ${APP_ROLE_PASSWORD:?APP_ROLE_PASSWORD es obligatorio}
+      BG_ROLE_PASSWORD: ${BG_ROLE_PASSWORD:?BG_ROLE_PASSWORD es obligatorio}
     restart: "no"
 
   api:
@@ -47,17 +53,16 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: "5000"
       HOST: "0.0.0.0"
-      DATABASE_URL: postgresql://app_role:${APP_ROLE_PASSWORD:-app-role-dev-only}@db:5432/${POSTGRES_DB:-privacy}
+      DATABASE_URL: postgresql://app_role:${APP_ROLE_PASSWORD}@db:5432/${POSTGRES_DB:-privacy}
       # M21.9 — pool background (bg_role/BYPASSRLS) para scanner/scheduler/recovery.
       # Apunta explícitamente a bg_role; SIN fallback a DATABASE_URL/privacy.
-      BG_DATABASE_URL: postgresql://bg_role:${BG_ROLE_PASSWORD:-bg-role-dev-only}@db:5432/${POSTGRES_DB:-privacy}
+      BG_DATABASE_URL: postgresql://bg_role:${BG_ROLE_PASSWORD}@db:5432/${POSTGRES_DB:-privacy}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET es obligatorio (openssl rand -base64 48)}
       SOURCE_ENCRYPTION_KEY: ${SOURCE_ENCRYPTION_KEY:?SOURCE_ENCRYPTION_KEY es obligatorio (>= 32 chars)}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       TRUST_PROXY: ${TRUST_PROXY:-1}
       AUTH_RATE_LIMIT_STORE: ${AUTH_RATE_LIMIT_STORE:-memory}
       AUTH_REGISTRATION_ENABLED: ${AUTH_REGISTRATION_ENABLED:-false}
-      AUTH_BOOTSTRAP_ENABLED: ${AUTH_BOOTSTRAP_ENABLED:-false}
       SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-1800}
       SCAN_SCHEDULER_TICK_MS: ${SCAN_SCHEDULER_TICK_MS:-60000}
       SCAN_SCHEDULER_BATCH: ${SCAN_SCHEDULER_BATCH:-5}

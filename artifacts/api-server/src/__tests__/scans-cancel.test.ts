@@ -14,13 +14,11 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
-import { fetchCsrfToken } from "./test-utils";
+import { fetchCsrfToken, seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
 process.env.SOURCE_ENCRYPTION_KEY = "test-source-encryption-key-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true";
 process.env.AUTH_REGISTRATION_ENABLED = "true";
 
 const mocks = vi.hoisted(() => ({ state: undefined as MockState | undefined }));
@@ -91,10 +89,11 @@ describe("Scans cancel (FASE 7.1.2 M2)", () => {
   beforeAll(async () => {
     server = app.listen(0);
 
+    await seedProvisionedAdmin(state());
     const boot = await request(server)
       .post("/api/auth/login")
       .set("X-Forwarded-For", nextIp())
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(boot.status).toBe(200);
     adminCookie = cookieOf(boot);
     adminCsrf = await fetchCsrfToken(server, adminCookie);

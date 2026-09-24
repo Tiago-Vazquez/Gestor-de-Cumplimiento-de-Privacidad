@@ -15,8 +15,6 @@ import { fetchCsrfToken } from "./test-utils";
  */
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
 process.env.AUTH_REGISTRATION_ENABLED = "true";
 process.env.SOURCE_ENCRYPTION_KEY = "test-source-encryption-key-of-at-least-32-characters!!";
 

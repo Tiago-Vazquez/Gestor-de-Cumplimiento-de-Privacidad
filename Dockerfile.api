@@ -42,8 +42,11 @@ RUN pnpm deploy --filter @workspace/api-server --prod --legacy /out
 # con drizzle-kit) y conserva lo que `drizzle.config.ts` necesita:
 # config + src/schema/** + drizzle/*.sql. El compose lo usa con `target:
 # migrate` como job one-shot; `api/runtime` NO incluye nada de esto.
+# M22: `db:provision-admin` (dentro de este stage) importa `@workspace/auth`
+# (hash scrypt), así que también se copia `lib/auth` (workspace package).
 FROM deps AS migrate
 COPY lib/db ./lib/db
+COPY lib/auth ./lib/auth
 CMD ["pnpm", "--filter", "@workspace/db", "run", "db:migrate"]
 
 # M12 — runtime mínimo: solo dist/ + dependencias prod; usuario no root.

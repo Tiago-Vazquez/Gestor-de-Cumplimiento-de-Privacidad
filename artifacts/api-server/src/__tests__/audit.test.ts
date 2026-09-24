@@ -21,7 +21,7 @@ import type { Express } from "express";
 import app from "../app";
 import { repos } from "../repositories";
 import type { MockState } from "./mock-repos";
-import { fetchCsrfToken } from "./test-utils";
+import { fetchCsrfToken, seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 import { sanitizeAuditMetadata } from "../lib/audit";
 import { runSchedulerTick } from "../services/scan-scheduler";
 import { recoverOrphanedScansAtBoot } from "../services/scan-recovery";
@@ -29,11 +29,8 @@ import { recoverOrphanedScansAtBoot } from "../services/scan-recovery";
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
 process.env.SOURCE_ENCRYPTION_KEY = "test-source-encryption-key-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true";
 process.env.AUTH_REGISTRATION_ENABLED = "true";
 
-const BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
 const AUDITOR_EMAIL = "auditor-audit@example.com";
 const AUDITOR_PASSWORD = "secure-password-123";
 const SESSIONS_EMAIL = "auditor-sessions@example.com";
@@ -110,14 +107,16 @@ describe("M17 — auditoría administrativa", () => {
   beforeAll(async () => {
     server = app.listen(0);
 
+    await seedProvisionedAdmin(state());
     const boot = await request(server)
       .post("/api/auth/login")
       .set("X-Forwarded-For", nextIp())
-      .send({ token: BOOTSTRAP_TOKEN });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(boot.status).toBe(200);
     adminCookie = cookieOf(boot);
     adminCsrf = await fetchCsrfToken(server, adminCookie);
 
+    await seedProvisionedAdmin(state());
     const reg = await request(server)
       .post("/api/auth/register")
       .set("X-Forwarded-For", nextIp())
@@ -148,22 +147,22 @@ describe("M17 — auditoría administrativa", () => {
   });
 
   describe("login y sesiones", () => {
-    it("audita el login bootstrap con actor y el X-Request-Id del request", async () => {
+    it("audita el login local con actor y el X-Request-Id del request", async () => {
       const res = await request(server)
         .post("/api/auth/login")
         .set("X-Forwarded-For", nextIp())
         .set("X-Request-Id", "audit-corr-bootstrap")
-        .send({ token: BOOTSTRAP_TOKEN });
+        .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
       expect(res.status).toBe(200);
 
       const event = byAction("login_success").find(
         (e) => e.requestId === "audit-corr-bootstrap",
       );
       expect(event).toBeDefined();
-      expect(event?.actorUserId).toBe("bootstrap-admin");
+      expect(event?.actorUserId).toBe("admin-provisioned");
       expect(event?.resourceType).toBe("session");
       expect(event?.result).toBe("success");
-      expect(event?.metadata).toMatchObject({ method: "bootstrap" });
+      expect(event?.metadata).toMatchObject({ method: "local" });
     });
 
     it("audita el login local exitoso sin secretos", async () => {
@@ -279,7 +278,7 @@ describe("M17 — auditoría administrativa", () => {
       expect(res.status).toBe(200);
 
       const event = byAction("user_updated")[0];
-      expect(event.actorUserId).toBe("bootstrap-admin");
+      expect(event.actorUserId).toBe("admin-provisioned");
       expect(event.resourceType).toBe("user");
       expect(event.resourceId).toBe(auditorSub);
       // Solo NOMBRES de campos: el email (dato personal) no se persiste.
@@ -303,7 +302,7 @@ describe("M17 — auditoría administrativa", () => {
       expect(res.status).toBe(200);
 
       const event = byAction("user_roles_updated")[0];
-      expect(event.actorUserId).toBe("bootstrap-admin");
+      expect(event.actorUserId).toBe("admin-provisioned");
       expect(event.resourceId).toBe(sub);
       expect(event.metadata).toMatchObject({
         roles: ["auditor", "admin"],
@@ -335,7 +334,7 @@ describe("M17 — auditoría administrativa", () => {
       expect(res.status).toBe(201);
 
       const event = byAction("source_created")[0];
-      expect(event.actorUserId).toBe("bootstrap-admin");
+      expect(event.actorUserId).toBe("admin-provisioned");
       expect(event.resourceId).toBe(res.body.id);
       expect(event.metadata).toMatchObject({
         kind: "postgresql",
@@ -376,7 +375,7 @@ describe("M17 — auditoría administrativa", () => {
         .set("X-CSRF-Token", adminCsrf);
       expect(deleted.status).toBe(204);
       const removed = byAction("source_deleted")[0];
-      expect(removed.actorUserId).toBe("bootstrap-admin");
+      expect(removed.actorUserId).toBe("admin-provisioned");
       expect(removed.resourceId).toBe(created.body.id);
       expect(removed.metadata).toEqual({});
     });
@@ -462,7 +461,7 @@ describe("M17 — auditoría administrativa", () => {
       expect(started.status).toBe(202);
 
       const startEvent = byAction("scan_started")[0];
-      expect(startEvent.actorUserId).toBe("bootstrap-admin");
+      expect(startEvent.actorUserId).toBe("admin-provisioned");
       expect(startEvent.resourceType).toBe("scan");
       expect(startEvent.resourceId).toBe(started.body.id);
       expect(startEvent.metadata).toMatchObject({ sourceId: "src-002", trigger: "manual" });
@@ -476,7 +475,7 @@ describe("M17 — auditoría administrativa", () => {
         .set("X-CSRF-Token", adminCsrf);
       expect(cancelled.status).toBe(202);
       const cancelEvent = byAction("scan_cancelled")[0];
-      expect(cancelEvent.actorUserId).toBe("bootstrap-admin");
+      expect(cancelEvent.actorUserId).toBe("admin-provisioned");
       expect(cancelEvent.resourceId).toBe("scan-audit-cancel");
       expect(cancelEvent.metadata).toMatchObject({ sourceId: "src-003" });
     });
@@ -503,7 +502,7 @@ describe("M17 — auditoría administrativa", () => {
         .set("Cookie", adminCookie);
       expect(download.status).toBe(200);
       const downloadEvent = byAction("report_downloaded")[0];
-      expect(downloadEvent.actorUserId).toBe("bootstrap-admin");
+      expect(downloadEvent.actorUserId).toBe("admin-provisioned");
       expect(downloadEvent.resourceId).toBe(created.body.id);
     });
 
@@ -535,7 +534,7 @@ describe("M17 — auditoría administrativa", () => {
           .set("Cookie", adminCookie);
         expect(download.status).toBe(200);
         const downloadEvent = byAction("dataset_downloaded")[0];
-        expect(downloadEvent.actorUserId).toBe("bootstrap-admin");
+        expect(downloadEvent.actorUserId).toBe("admin-provisioned");
         expect(downloadEvent.resourceId).toBe(created.body.id);
         expect(Number(downloadEvent.metadata.records)).toBeGreaterThan(0);
       } finally {
@@ -778,12 +777,12 @@ describe("M17 — auditoría administrativa", () => {
       expect(byAction.body.every((e: { action: string }) => e.action === "source_created")).toBe(true);
 
       const byActor = await request(server)
-        .get("/api/audit-events?actor=bootstrap-admin")
+        .get("/api/audit-events?actor=admin-provisioned")
         .set("X-Forwarded-For", nextIp())
         .set("Cookie", adminCookie);
       expect(byActor.body.length).toBeGreaterThanOrEqual(1);
       expect(
-        byActor.body.every((e: { actorUserId: string | null }) => e.actorUserId === "bootstrap-admin"),
+        byActor.body.every((e: { actorUserId: string | null }) => e.actorUserId === "admin-provisioned"),
       ).toBe(true);
 
       const byResult = await request(server)

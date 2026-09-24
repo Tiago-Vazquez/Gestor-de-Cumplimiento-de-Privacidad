@@ -18,18 +18,15 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
- * @summary Login with local credentials (email + password) or legacy bootstrap token
+ * @summary Login with local credentials (email + password)
  */
 
 
 
-
-export const AuthLoginBody = zod.union([zod.object({
-  "token": zod.string().min(1)
-}),zod.object({
+export const AuthLoginBody = zod.object({
   "email": zod.string().describe('User email (normalized to lowercase server-side)'),
   "password": zod.string().min(1)
-})])
+})
 
 export const AuthLoginResponse = zod.object({
   "sub": zod.string(),

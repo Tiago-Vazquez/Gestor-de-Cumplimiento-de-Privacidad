@@ -66,8 +66,6 @@ interface AuthContextValue {
   /**
    * Dispara POST /api/auth/login con email + password (login local). La
    * mutación generada por Orval espera la variable `{ data: AuthLoginInput }`.
-   * El bootstrap token sigue soportado por el backend como mecanismo legacy
-   * temporal, pero la UI ya no lo utiliza ni lo solicita.
    */
   login: (email: string, password: string, callbacks?: LoginCallbacks) => void;
   /** Roles del usuario autenticado (p.ej. ['admin']) o lista vacía. */

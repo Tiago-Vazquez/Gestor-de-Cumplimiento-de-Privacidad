@@ -574,6 +574,9 @@ importers:
 
   lib/db:
     dependencies:
+      '@workspace/auth':
+        specifier: workspace:*
+        version: link:../auth
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@types/pg@8.20.0)(pg@8.22.0)

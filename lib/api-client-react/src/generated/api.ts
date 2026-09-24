@@ -182,7 +182,7 @@ export const getAuthLoginUrl = () => {
 }
 
 /**
- * @summary Login with local credentials (email + password) or legacy bootstrap token
+ * @summary Login with local credentials (email + password)
  */
 export const authLogin = async (authLoginInput: AuthLoginInput, options?: Parameters<typeof customFetch>[1]): Promise<AuthUser> => {
 
@@ -231,7 +231,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type AuthLoginMutationError = ErrorType<void>
 
     /**
- * @summary Login with local credentials (email + password) or legacy bootstrap token
+ * @summary Login with local credentials (email + password)
  */
 export const useAuthLogin = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authLogin>>, TError,{data: BodyType<AuthLoginInput>}, TContext>, request?: SecondParameter<typeof customFetch>}

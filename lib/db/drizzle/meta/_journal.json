@@ -132,6 +132,13 @@
       "when": 1790200000000,
       "tag": "0018_rls_tenant_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790400000000,
+      "tag": "0019_neutralize_dev_role_passwords",
+      "breakpoints": true
     }
   ],
   "version": "7",

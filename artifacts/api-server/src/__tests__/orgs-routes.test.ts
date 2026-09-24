@@ -3,12 +3,10 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
-import { fetchCsrfToken } from "./test-utils";
+import { fetchCsrfToken, seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in
 process.env.AUTH_REGISTRATION_ENABLED = "true";
 
 // El factory de vi.mock corre durante la evaluación de imports (antes del body
@@ -30,7 +28,6 @@ function extractJwt(setCookie: string | string[] | undefined): string {
   return match[1];
 }
 
-const BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
 
 /**
  * M21.2 — Organizaciones, membresías e invitaciones (ADR-002).
@@ -51,10 +48,11 @@ describe("Organizations routes (M21.2)", () => {
     server = app.listen(0);
 
     // Owner: login bootstrap (crea org-bootstrap + membership owner, M21.2).
+    await seedProvisionedAdmin(mocks.state!);
     const ownerLogin = await request(server)
       .post("/api/auth/login")
       .set("X-Forwarded-For", "10.21.0.1")
-      .send({ token: BOOTSTRAP_TOKEN });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(ownerLogin.status).toBe(200);
     ownerCookie = `session=${extractJwt(ownerLogin.headers["set-cookie"])}`;
     ownerCsrf = await fetchCsrfToken(server, ownerCookie);
@@ -112,7 +110,7 @@ describe("Organizations routes (M21.2)", () => {
 
   it("member role cannot govern (role checks)", async () => {
     const denied = await request(server)
-      .patch("/api/orgs/current/members/bootstrap-admin")
+      .patch("/api/orgs/current/members/admin-provisioned")
       .set("Cookie", memberCookie)
       .set("X-CSRF-Token", memberCsrf)
       .send({ role: "admin" });
@@ -321,14 +319,14 @@ describe("Organizations routes (M21.2)", () => {
   it("owner membership is immutable and member removal revokes access", async () => {
     // `owner` no es editable ni removible vía API en M21.2.
     const patchOwner = await request(server)
-      .patch("/api/orgs/current/members/bootstrap-admin")
+      .patch("/api/orgs/current/members/admin-provisioned")
       .set("Cookie", ownerCookie)
       .set("X-CSRF-Token", ownerCsrf)
       .send({ role: "member" });
     expect(patchOwner.status).toBe(403);
 
     const deleteOwner = await request(server)
-      .delete("/api/orgs/current/members/bootstrap-admin")
+      .delete("/api/orgs/current/members/admin-provisioned")
       .set("Cookie", ownerCookie)
       .set("X-CSRF-Token", ownerCsrf);
     expect(deleteOwner.status).toBe(403);

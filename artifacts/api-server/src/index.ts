@@ -4,7 +4,6 @@ import type { Server } from "node:http";
 import app from "./app";
 import { assertAuthConfigForEnv } from "./auth/tokens";
 import { assertSourceEncryptionKeyForEnv } from "./lib/secret-manager";
-import { bootstrapProductionWarning } from "./routes/auth";
 import { logger } from "./lib/logger";
 import {
   recoverOrphanedScansAtBoot,
@@ -22,15 +21,6 @@ assertAuthConfigForEnv();
 // FASE 7.0.5 (M9): fail-fast para SOURCE_ENCRYPTION_KEY en producción.
 // En development/test, si falta la clave se emite un warning y se continúa.
 assertSourceEncryptionKeyForEnv();
-
-// Hardening 6.3B.15: el bootstrap de admin es opt-in (AUTH_BOOTSTRAP_ENABLED
-// ausente = deshabilitado). Si un despliegue lo habilita explícitamente en
-// producción, dejar huella en el log de arranque (no está prohibido, pero sí
-// desaconsejado: identidad fija con rol admin y token estático).
-const bootstrapWarning = bootstrapProductionWarning();
-if (bootstrapWarning) {
-  logger.warn(bootstrapWarning);
-}
 
 // FASE 7.0.4: timestamp de inicio del proceso, capturado ANTES de abrir el
 // puerto. El sweep de arranque lo usa como límite (`before = bootStartedAt`):

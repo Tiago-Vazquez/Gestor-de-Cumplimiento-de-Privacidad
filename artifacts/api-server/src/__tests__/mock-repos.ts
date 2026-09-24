@@ -1508,19 +1508,6 @@ export function createMockRepos() {
 
     // ---- M21.2: organizaciones ----
     organizations: {
-      /** Bootstrap idempotente (id determinístico + no-op si ya existe). */
-      async ensureBootstrapOrganization() {
-        const orgs = (state.organizations ??= []);
-        if (!orgs.some((org) => org.id === "org-bootstrap")) {
-          orgs.push({
-            id: "org-bootstrap",
-            name: "Bootstrap Organization",
-            slug: "bootstrap",
-            status: "active",
-            createdAt: new Date(),
-          });
-        }
-      },
       async getByIds(ids: string[]) {
         const orgs = (state.organizations ??= []);
         const map = new Map<

@@ -16,9 +16,11 @@ docker compose logs -f api web
 ## Flujo de arranque
 
 1. `db` (postgres:16-alpine, volumen `pgdata`, healthcheck `pg_isready`).
-2. `migrate` (job one-shot con la imagen del API): `pnpm --filter @workspace/db
-   run db:migrate`. **Las migraciones NO corren dentro de las réplicas del API**
-   para evitar carreras; el API solo arranca cuando el job termina
+2. `migrate` (job one-shot con la imagen del API): `db:migrate && db:provision-roles`
+   (migra `0000..0019` y provisiona las contraseñas de `app_role`/`bg_role` desde
+   `APP_ROLE_PASSWORD`/`BG_ROLE_PASSWORD`; la migración `0019` las deja en NULL).
+   **Las migraciones NO corren dentro de las réplicas del API** para evitar
+   carreras; el API solo arranca cuando el job termina
    (`service_completed_successfully`).
 3. `api` (Node 22, usuario no-root, healthcheck `/api/livez`).
 4. `web` (nginx:alpine con `dist/public`, SPA fallback a `index.html`,
@@ -51,8 +53,24 @@ docker compose down -v         # detener + borrar datos (¡destructivo!)
 ## Variables (ver `.env.example`)
 
 Obligatorias en producción: `JWT_SECRET` (>= 32 chars, fail-fast en startup),
-`SOURCE_ENCRYPTION_KEY` (>= 32 chars, fail-fast), `DATABASE_URL` (la compone
-el compose desde `POSTGRES_*`, salvo override).
+`SOURCE_ENCRYPTION_KEY` (>= 32 chars, fail-fast), `POSTGRES_PASSWORD`
+(superusuario `privacy`), `APP_ROLE_PASSWORD` y `BG_ROLE_PASSWORD` (roles de
+aplicación; provisionadas por `db:provision-roles`). `DATABASE_URL`/`BG_DATABASE_URL`
+las compone el compose a partir de esos secretos; `ADMIN_DATABASE_URL` es la
+conexión de superusuario usada por migraciones/provisioning.
+
+## Primer administrador (instalación nueva)
+
+El bootstrap legacy fue eliminado. Provisionar el primer admin una sola vez:
+
+```bash
+ADMIN_DATABASE_URL='postgresql://privacy:...@db:5432/privacy' \
+PROVISION_ADMIN_EMAIL='admin@example.com' \
+PROVISION_ADMIN_PASSWORD='...' \
+pnpm --filter @workspace/db run db:provision-admin
+```
+
+Luego el admin inicia sesión con email + password. Idempotente.
 
 ## Notas de seguridad
 

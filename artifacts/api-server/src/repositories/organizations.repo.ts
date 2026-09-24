@@ -2,28 +2,12 @@ import { eq, inArray } from "drizzle-orm";
 import { db, organizationsTable } from "@workspace/db";
 
 /**
- * M21.2 — Repositorio mínimo de organizaciones.
+ * M21.2 — Repositorio de organizaciones (lectura).
  *
- * MVP: las organizaciones se crean SOLO aquí (bootstrap) — no existe todavía
- * self-service signup de organizaciones (el flujo de entrada es por
- * invitación a una organización existente). `ensureBootstrapOrganization` es
- * idempotente (id determinístico + ON CONFLICT DO NOTHING) para que cada
- * login bootstrap deje la organización inicial en el mismo estado.
+ * Las organizaciones NO se crean por HTTP en MVP: la primera organización y el
+ * primer administrador se provisionan con `db:provision-admin` (M22 P0-2), y
+ * el alta de miembros es por invitación a una organización existente.
  */
-export const BOOTSTRAP_ORGANIZATION_ID = "org-bootstrap";
-export const BOOTSTRAP_ORGANIZATION_SLUG = "bootstrap";
-
-export async function ensureBootstrapOrganization(): Promise<void> {
-  await db
-    .insert(organizationsTable)
-    .values({
-      id: BOOTSTRAP_ORGANIZATION_ID,
-      name: "Bootstrap Organization",
-      slug: BOOTSTRAP_ORGANIZATION_SLUG,
-      status: "active",
-    })
-    .onConflictDoNothing({ target: organizationsTable.id });
-}
 
 /** Detalle de organizaciones por id (para respuestas de org context). */
 export async function getByIds(

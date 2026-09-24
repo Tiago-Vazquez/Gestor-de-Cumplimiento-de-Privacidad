@@ -1,11 +1,10 @@
-import { timingSafeEqual, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { rateLimit } from "express-rate-limit";
 import { optionalPersistentStore } from "../lib/rate-limit-store";
 import { logger } from "../lib/logger";
 import { repos } from "../repositories";
-import { BOOTSTRAP_ORGANIZATION_ID } from "../repositories/organizations.repo";
-import { isProductionEnv, signToken, verifyToken } from "../auth/tokens";
+import { signToken, verifyToken } from "../auth/tokens";
 import { requireAuth, type AuthedRequest } from "../auth/middleware";
 import { requireCsrf } from "../auth/csrf";
 import {
@@ -28,65 +27,9 @@ import {
 
 const router: IRouter = Router();
 
-// Identidad del usuario inicial que crea el login vía bootstrap. Determinístico
-// para que el upsert sea idempotente en cada arranque.
-const BOOTSTRAP_SUB = "bootstrap-admin";
-const BOOTSTRAP_EMAIL = "admin@local";
-const BOOTSTRAP_NAME = "Bootstrap Admin";
-
-/**
- * Compara en tiempo constante el token recibido contra el configurado para
- * evitar ataques de timing. Si AUTH_BOOTSTRAP_TOKEN no está configurado se
- * considera un error de despliegue (500) y no se expone el valor esperado.
- */
-function compareBootstrapToken(provided: string): boolean {
-  const expected = process.env.AUTH_BOOTSTRAP_TOKEN;
-  if (!expected) {
-    throw new Error(
-      "AUTH_BOOTSTRAP_TOKEN is not configured; login is disabled",
-    );
-  }
-  const providedBuffer = Buffer.from(provided);
-  const expectedBuffer = Buffer.from(expected);
-  if (providedBuffer.length !== expectedBuffer.length) return false;
-  return timingSafeEqual(providedBuffer, expectedBuffer);
-}
-
-/**
- * Kill switch del login bootstrap (legacy). Hardening 6.3B.15: el default es
- * DESHABILITADO (fail-closed). Solo se habilita de forma explícita con
- * `AUTH_BOOTSTRAP_ENABLED=true|1`; ausente, vacío o cualquier otro valor
- * (incluido "TRUE", "False", "yes" o typos) lo mantiene apagado. Conceder la
- * identidad admin de arranque exige una acción positiva de configuración,
- * nunca una omisión (mismo espíritu opt-in que AUTH_DISABLED, con polaridad
- * inversa al contrato pre-6.3B.15, que era fail-open por compatibilidad).
- */
-export function bootstrapEnabled(): boolean {
-  const raw = process.env.AUTH_BOOTSTRAP_ENABLED;
-  return raw === "true" || raw === "1";
-}
-
-/**
- * Aviso de arranque (6.3B.15): el bootstrap de admin es opt-in y legacy.
- * Si un despliegue lo habilita explícitamente en producción, el entrypoint
- * registra una advertencia (no es una configuración prohibida —a diferencia
- * de AUTH_DISABLED— pero sí desaconsejada: identidad fija con rol admin y
- * token estático sujeto a filtración). Devuelve null cuando no procede.
- */
-export function bootstrapProductionWarning(): string | null {
-  if (isProductionEnv() && bootstrapEnabled()) {
-    return (
-      "AUTH_BOOTSTRAP_ENABLED is active in production: the fixed 'bootstrap-admin' " +
-      "identity can regain the admin role on every login while it stays enabled. " +
-      "Disable it (unset AUTH_BOOTSTRAP_ENABLED or set it to false) once local admins exist."
-    );
-  }
-  return null;
-}
-
 /**
  * Kill switch del registro público (F2, 6.3B.20). Fail-closed con el mismo
- * contrato estricto que `bootstrapEnabled()`: SOLO "true"|"1" habilita;
+ * contrato estricto (solo "true"|"1"): habilita;
  * ausente, vacío o cualquier otro valor (incluido "TRUE", "False", "yes" o
  * typos) lo mantiene deshabilitado. El registro es la vía por la que un
  * anónimo obtiene el rol `auditor` (acceso de lectura al dataset global),
@@ -101,11 +44,6 @@ export function registrationEnabled(): boolean {
  * Rate limit específico para login local (email+password): máximo 5 intentos
  * por IP cada 15 minutos. Protege contra ataques de fuerza bruta sobre
  * credenciales locales sin afectar al rate limiter general de la API.
- *
- * El login bootstrap ({token}) está EXENTO de este limiter: tiene su propio
- * `bootstrapLimiter` con bucket independiente (fase 6.3B.9, hallazgo B4), de
- * modo que agotar uno no afecta al otro y una misma IP no puede usar el flujo
- * bootstrap para eludir el límite del login local (ni viceversa).
  */
 /**
  * Rate limit dedicado al registro público (F7, 6.3B.20): 10 intentos /
@@ -128,7 +66,6 @@ export function registrationEnabled(): boolean {
 // El namespace replica el aislamiento que MemoryStore daba gratis.
 const registerStore = optionalPersistentStore("register");
 const loginStore = optionalPersistentStore("login");
-const bootstrapStore = optionalPersistentStore("bootstrap");
 const passwordChangeStore = optionalPersistentStore("password-change");
 
 const registerLimiter = rateLimit({
@@ -177,187 +114,29 @@ const loginLimiter = rateLimit({
     const email = typeof body.email === "string" ? normalizeEmail(body.email) : null;
     return email ? `${ip}:${email}` : ip;
   },
-  // Solo rate-limitear login local (email+password), no bootstrap token.
-  skip: (req) => {
-    const body = req.body ?? {};
-    return typeof body.token === "string";
-  },
-});
-
-/**
- * Rate limit dedicado al login bootstrap ({token}): máximo 5 intentos por IP
- * cada 15 minutos (fase 6.3B.9, recomendación B del diagnóstico 6.3B.8).
- *
- * Antes de este limiter el bootstrap quedaba exento del `loginLimiter` y solo
- * protegido por los limiters globales (≈30 req/min/IP), lo que permitía
- * ~43k intentos de fuerza bruta diarios contra `AUTH_BOOTSTRAP_TOKEN`.
- *
- * Bucket INDEPENDIENTE del login local: cada flujo consume únicamente su
- * propio limiter (los skips son mutuamente excluyentes) más los limiters
- * globales de `app.ts` como segunda capa de defensa.
- */
-const bootstrapLimiter = rateLimit({
-  store: bootstrapStore,
-  windowMs: 15 * 60 * 1000,
-  limit: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  handler: (_req, res) => {
-    sendProblemJson(res, {
-      type: "about:blank",
-      title: "Too Many Requests",
-      status: 429,
-      detail: "Too many bootstrap login attempts, please try again later.",
-    });
-  },
-  // Solo rate-limitear el flujo bootstrap ({token}), no el login local.
-  skip: (req) => {
-    const body = req.body ?? {};
-    return typeof body.token !== "string";
-  },
 });
 
 /**
  * POST /api/auth/login
  *
- * Soporta dos flujos (mutuamente excluyentes):
+ * Login local con email + password:
+ *   - Busca usuario por email normalizado.
+ *   - Verifica contraseña con scrypt.
+ *   - Obtiene roles reales desde user_roles.
+ *   - Actualiza last_login_at.
  *
- * 1. Bootstrap (legacy, opt-in): { token: "..." }
- *    - Requiere AUTH_BOOTSTRAP_ENABLED=true|1 (6.3B.15: ausente = off).
- *    - Compara contra AUTH_BOOTSTRAP_TOKEN.
- *    - Usa identidad fija "bootstrap-admin" con rol admin.
- *    - TODO: Eliminar cuando se migre completamente a usuarios locales.
- *
- * 2. Local: { email: "...", password: "..." }
- *    - Busca usuario por email normalizado.
- *    - Verifica contraseña con scrypt.
- *    - Obtiene roles reales desde user_roles.
- *    - Actualiza last_login_at.
- *
- * Respuesta (ambos casos): { sub, email, roles }
+ * Respuesta: { sub, email, roles }
  */
-router.post("/login", loginLimiter, bootstrapLimiter, async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   const body = req.body ?? {};
 
-  // Flujo 1: Bootstrap token (legacy)
-  if (typeof body.token === "string") {
-    return handleBootstrapLogin(req, res, body.token);
-  }
-
-  // Flujo 2: Login local con email + password
   if (typeof body.email === "string" && typeof body.password === "string") {
     return handleLocalLogin(req, res, body.email, body.password);
   }
 
-  throw badRequest("Request must contain either 'token' or 'email' + 'password'");
+  throw badRequest("Request must contain 'email' + 'password'");
 });
 
-
-/**
- * Maneja el login vía bootstrap token (legacy).
- * TODO: Eliminar cuando se migre completamente a usuarios locales.
- */
-async function handleBootstrapLogin(
-  req: import("express").Request,
-  res: import("express").Response,
-  provided: string,
-): Promise<void> {
-  if (provided.length === 0) {
-    throw badRequest("Missing bootstrap token in request body");
-  }
-
-  // Feature flag AUTH_BOOTSTRAP_ENABLED (opt-in: solo "true"|"1"; ausente =
-  // deshabilitado, 6.3B.15). Si está deshabilitado, el bootstrap falla con la
-  // MISMA respuesta que una credencial inválida (no filtra el estado del
-  // mecanismo) y NO se emite JWT ni se crea sesión: el flujo se corta antes
-  // de tocar repos/users, de firmar y de cualquier escritura en DB.
-  if (!bootstrapEnabled()) {
-    // Auditoría del intento (sin exponer el token ni estado interno).
-    logger.info({ event: "bootstrap_login_rejected" }, "Bootstrap login disabled by flag");
-    // M17 — intento fallido registrado con actor desconocido y sin el token.
-    await recordAuditEvent({
-      req,
-      actorUserId: null,
-      action: "login_failure",
-      resourceType: "session",
-      result: "failure",
-      metadata: { method: "bootstrap", reason: "bootstrap_disabled" },
-    });
-    throw unauthorized("Invalid credentials");
-  }
-
-  if (!compareBootstrapToken(provided)) {
-    // M17 — mismo registro para credencial inválida (respuesta uniforme).
-    await recordAuditEvent({
-      req,
-      actorUserId: null,
-      action: "login_failure",
-      resourceType: "session",
-      result: "failure",
-      metadata: { method: "bootstrap", reason: "invalid_credentials" },
-    });
-    throw unauthorized("Invalid credentials");
-  }
-
-  // Persistir/actualizar al usuario y asegurar rol admin (idempotente).
-  const user = await repos.users.upsertBySub({
-    sub: BOOTSTRAP_SUB,
-    email: BOOTSTRAP_EMAIL,
-    name: BOOTSTRAP_NAME,
-  });
-  await repos.userRoles.addRole(user.sub, "admin");
-
-  // M21.2 - bootstrap multi-tenancy: asegura la organizacion inicial y el
-  // membership `owner` del administrador de arranque (ambos idempotentes) y
-  // fija el contexto de organizacion de la sesion recien creada.
-  await repos.organizations.ensureBootstrapOrganization();
-  await repos.memberships.create({
-    organizationId: BOOTSTRAP_ORGANIZATION_ID,
-    userSub: user.sub,
-    role: "owner",
-  });
-  const activeOrgId = await repos.memberships.getFirstOrgForUser(user.sub);
-
-  // [6.3B.12] Login transaccional (mismo patron que el login local): lock de
-  // la fila del usuario + lectura de roles reales + firma + alta de sesion en
-  // UNA transaccion, para no emitir un JWT admin stale tras una demosion
-  // concurrente (cierre del riesgo U3).
-  // M11.1: el JWT emite el claim `csrf` (synchronizer token ligado a esta
-  // sesión) generado una única vez por sesión; nunca se regenera por request.
-  const { jwt, roles } = await repos.sessions.createSessionForUser(
-    user.sub,
-    async (roles) =>
-      signToken({
-        sub: user.sub,
-        email: user.email,
-        name: user.name,
-        roles,
-        csrf: generateCsrfToken(),
-      }),
-    activeOrgId,
-  );
-
-  res.cookie(sessionCookieName(), jwt, sessionCookieOptions());
-
-  // Auditoría: se registra el login exitoso, NUNCA el token/JWT.
-  logger.info({ sub: user.sub, event: "login", method: "bootstrap" }, "User logged in");
-
-  // M17 — trazabilidad administrativa del login (método + actor, sin secretos).
-  await recordAuditEvent({
-    req,
-    actorUserId: user.sub,
-    action: "login_success",
-    resourceType: "session",
-    result: "success",
-    metadata: { method: "bootstrap", roles },
-  });
-
-  res.status(200).json({
-    sub: user.sub,
-    email: user.email,
-    roles,
-  });
-}
 
 /**
  * Maneja el login local con email + password.
@@ -624,7 +403,7 @@ router.post(
       throw unauthorized("Missing or invalid session");
     }
     if (!account.passwordHash) {
-      // Cuentas sin contraseña local (bootstrap-admin, futuros OIDC): no hay
+      // Cuentas sin contraseña local (ej. usuarios OIDC futuros): no hay
       // hash contra el que verificar la contraseña actual.
       throw badRequest("Password change is not available for this account");
     }

@@ -49,7 +49,7 @@ paths:
     post:
       operationId: authLogin
       tags: [auth]
-      summary: Login with local credentials (email + password) or legacy bootstrap token
+      summary: Login with local credentials (email + password)
       security: []
       requestBody:
         required: true
@@ -1140,15 +1140,6 @@ components:
       bearerFormat: JWT
   schemas:
     AuthLoginInput:
-      oneOf:
-        - $ref: "#/components/schemas/BootstrapLoginInput"
-        - $ref: "#/components/schemas/LocalLoginInput"
-    BootstrapLoginInput:
-      type: object
-      required: [token]
-      properties:
-        token: { type: string, minLength: 1 }
-    LocalLoginInput:
       type: object
       required: [email, password]
       properties:

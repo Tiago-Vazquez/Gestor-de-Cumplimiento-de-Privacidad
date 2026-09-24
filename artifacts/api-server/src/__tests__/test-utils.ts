@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import { vi } from "vitest";
+import { hashPassword } from "@workspace/auth";
+import type { MockState } from "./mock-repos";
 
 export interface MockResponse extends Response {
   statusCode: number;
@@ -71,4 +73,71 @@ export async function fetchCsrfToken(
     throw new Error("csrf-token endpoint did not return a token");
   }
   return res.body.csrfToken as string;
+}
+
+/**
+ * M22 (P0-2) — reemplaza al bootstrap legacy en los tests HTTP.
+ *
+ * Siembra directamente el estado mock con el equivalente de lo que antes hacía
+ * `POST /api/auth/login { token }` (identidad fija `bootstrap-admin`): un
+ * usuario admin local (con hash scrypt real), rol GLOBAL `admin`, organización
+ * inicial y membership `owner`. Después el test inicia sesión por el flujo
+ * local (email + password), idéntico al provisioning de producción.
+ */
+export const TEST_ADMIN_EMAIL = "admin@test.local";
+export const TEST_ADMIN_PASSWORD = "secure-password-123";
+export const TEST_ADMIN_SUB = "admin-provisioned";
+export const TEST_ORG_ID = "org-bootstrap";
+
+export async function seedProvisionedAdmin(
+  state: MockState,
+  opts: { email?: string; sub?: string; orgId?: string } = {},
+): Promise<void> {
+  const email = opts.email ?? TEST_ADMIN_EMAIL;
+  const sub = opts.sub ?? TEST_ADMIN_SUB;
+  const orgId = opts.orgId ?? TEST_ORG_ID;
+
+  // 1. Usuario admin (crear si no existe; conserva el hash si ya existe).
+  if (!state.users.some((u) => u.sub === sub)) {
+    const passwordHash = await hashPassword(TEST_ADMIN_PASSWORD);
+    state.users.push({
+      sub,
+      email,
+      name: "Provisioned Admin",
+      passwordHash,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastLoginAt: null,
+    });
+  }
+
+  // 2. Rol global `admin` (re-afirmado, idempotente): espejo del `addRole`
+  //    que ejecutaba el bootstrap en cada login.
+  if (!state.userRoles.some((r) => r.userSub === sub && r.role === "admin")) {
+    state.userRoles.push({ userSub: sub, role: "admin", createdAt: new Date() });
+  }
+
+  // 3. Organización inicial (idempotente).
+  const orgs = (state.organizations ??= []);
+  if (!orgs.some((o) => o.id === orgId)) {
+    orgs.push({
+      id: orgId,
+      name: "Test Organization",
+      slug: orgId.replace(/^org-/, ""),
+      status: "active",
+      createdAt: new Date(),
+    });
+  }
+
+  // 4. Membership `owner` (idempotente).
+  const memberships = (state.memberships ??= []);
+  if (!memberships.some((m) => m.organizationId === orgId && m.userSub === sub)) {
+    memberships.push({
+      organizationId: orgId,
+      userSub: sub,
+      role: "owner",
+      invitedBy: null,
+      joinedAt: new Date(),
+    });
+  }
 }
