@@ -6,7 +6,8 @@ import {
   type ScanSchedule,
 } from "@workspace/db";
 import { newId } from "./ids";
-import { tenantScopeStrict } from "./tenant";
+import { tenantScopeStrict, withTenant, setTenantLocal } from "./tenant";
+import { bgDb } from "@workspace/db/background";
 
 /**
  * M21.3 — EXISTS: el schedule pertenece al tenant activo vía su source (FK).
@@ -167,6 +168,9 @@ export async function upsert(
   if (!normalized.ok) return { ok: false, reason: "invalid_interval" as const };
 
   return db.transaction(async (tx) => {
+    // M21.8 — tenant context transaccional (RLS).
+    await setTenantLocal(tx, tenantId);
+
     const [source] = await tx
       .select({ id: sourcesTable.id })
       .from(sourcesTable)
@@ -218,18 +222,20 @@ export async function getBySourceId(
   sourceId: string,
   tenantId: string,
 ): Promise<ScanSchedule | null> {
-  const [row] = await db
-    .select()
-    .from(scanSchedulesTable)
-    .where(
-      and(
-        eq(scanSchedulesTable.sourceId, sourceId),
-        // M21.3 — scoping vía source (D2).
-        scheduleTenantExists(tenantId),
-      ),
-    )
-    .limit(1);
-  return row ?? null;
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(scanSchedulesTable)
+      .where(
+        and(
+          eq(scanSchedulesTable.sourceId, sourceId),
+          // M21.3 — scoping vía source (D2).
+          scheduleTenantExists(tenantId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  });
 }
 
 export type ClaimedSchedule = { schedule: ScanSchedule };
@@ -248,7 +254,7 @@ export async function claimDue({
   now: Date;
   limit: number;
 }): Promise<ClaimedSchedule[]> {
-  return db.transaction(async (tx) => {
+  return bgDb().transaction(async (tx) => {
     const candidates = await tx
       .select()
       .from(scanSchedulesTable)
@@ -296,7 +302,7 @@ export async function markResult(input: {
   error?: string | null;
   at: Date;
 }): Promise<void> {
-  await db
+  await bgDb()
     .update(scanSchedulesTable)
     .set({
       lastStatus: input.status,

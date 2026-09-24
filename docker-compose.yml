@@ -47,7 +47,10 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: "5000"
       HOST: "0.0.0.0"
-      DATABASE_URL: postgresql://${POSTGRES_USER:-privacy}:${POSTGRES_PASSWORD:-privacy-dev-only}@db:5432/${POSTGRES_DB:-privacy}
+      DATABASE_URL: postgresql://app_role:${APP_ROLE_PASSWORD:-app-role-dev-only}@db:5432/${POSTGRES_DB:-privacy}
+      # M21.9 — pool background (bg_role/BYPASSRLS) para scanner/scheduler/recovery.
+      # Apunta explícitamente a bg_role; SIN fallback a DATABASE_URL/privacy.
+      BG_DATABASE_URL: postgresql://bg_role:${BG_ROLE_PASSWORD:-bg-role-dev-only}@db:5432/${POSTGRES_DB:-privacy}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET es obligatorio (openssl rand -base64 48)}
       SOURCE_ENCRYPTION_KEY: ${SOURCE_ENCRYPTION_KEY:?SOURCE_ENCRYPTION_KEY es obligatorio (>= 32 chars)}
       CORS_ORIGINS: ${CORS_ORIGINS:-}

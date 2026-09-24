@@ -125,6 +125,13 @@
       "when": 1790103446162,
       "tag": "0017_naive_proudstar",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790200000000,
+      "tag": "0018_rls_tenant_policies",
+      "breakpoints": true
     }
   ],
   "version": "7",

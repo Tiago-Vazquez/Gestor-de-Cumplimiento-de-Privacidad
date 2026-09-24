@@ -1,4 +1,5 @@
 import { pool } from "@workspace/db";
+import { closeBgPool } from "@workspace/db/background";
 import type { Server } from "node:http";
 import app from "./app";
 import { assertAuthConfigForEnv } from "./auth/tokens";
@@ -126,16 +127,18 @@ function shutdown(signal: NodeJS.Signals): void {
   watchdog.unref();
 
   server.close((closeErr) => {
-    void pool
-      .end()
-      .then(() => {
+    // M21.8 — cerrar también el pool background (bg_role) si llegó a inicializarse.
+    void Promise.allSettled([pool.end(), closeBgPool()])
+      .then((results) => {
+        const poolFailed = results.some((r) => r.status === "rejected");
+        for (const result of results) {
+          if (result.status === "rejected") {
+            logger.error({ err: result.reason }, "Error closing database pool");
+          }
+        }
         clearTimeout(watchdog);
         logger.info("Shutdown complete");
-        process.exit(closeErr ? 1 : 0);
-      })
-      .catch((poolErr) => {
-        logger.error({ err: poolErr }, "Error closing database pool");
-        process.exit(1);
+        process.exit(closeErr || poolFailed ? 1 : 0);
       });
   });
 }

@@ -4,35 +4,39 @@ import type { Pagination } from "../lib/pagination";
 import { activeFindingsWhere } from "./findings.repo";
 import { computeComplianceScore } from "./compliance-score";
 import { newId } from "./ids";
-import { tenantScopeStrict } from "./tenant";
+import { tenantScopeStrict, withTenant, setTenantLocal } from "./tenant";
 
 /** F4 (6.3B.20): paginación aplicada en SQL, orden estable. */
-export function list(pagination: Pagination | undefined, tenantId: string): Promise<Report[]> {
-  let query = db
-    .select()
-    .from(reportsTable)
-    // M21.7 — scoping ESTRICTO obligatorio en el WHERE.
-    .where(tenantScopeStrict(reportsTable.tenantId, tenantId))
-    .orderBy(desc(reportsTable.createdAt), desc(reportsTable.id))
-    .$dynamic();
-  if (pagination) {
-    query = query.limit(pagination.limit).offset(pagination.offset);
-  }
-  return query;
+export async function list(pagination: Pagination | undefined, tenantId: string): Promise<Report[]> {
+  return withTenant(tenantId, async (tx) => {
+    let query = tx
+      .select()
+      .from(reportsTable)
+      // M21.8 — scoping por tenant en el WHERE + tenant context transaccional.
+      .where(tenantScopeStrict(reportsTable.tenantId, tenantId))
+      .orderBy(desc(reportsTable.createdAt), desc(reportsTable.id))
+      .$dynamic();
+    if (pagination) {
+      query = query.limit(pagination.limit).offset(pagination.offset);
+    }
+    return query;
+  });
 }
 
 /** F4 (M4): obtención puntual por id; null si no existe o es ajeno (404 uniforme). */
 export async function getById(id: string, tenantId: string): Promise<Report | null> {
-  const [report] = await db
-    .select()
-    .from(reportsTable)
-    .where(
-      and(
-        eq(reportsTable.id, id),
-        tenantScopeStrict(reportsTable.tenantId, tenantId),
-      ),
-    );
-  return report ?? null;
+  return withTenant(tenantId, async (tx) => {
+    const [report] = await tx
+      .select()
+      .from(reportsTable)
+      .where(
+        and(
+          eq(reportsTable.id, id),
+          tenantScopeStrict(reportsTable.tenantId, tenantId),
+        ),
+      );
+    return report ?? null;
+  });
 }
 
 /**
@@ -55,6 +59,9 @@ export async function create({
   tenantId: string;
 }): Promise<Report> {
   return db.transaction(async (tx) => {
+    // M21.8 — tenant context transaccional (RLS).
+    await setTenantLocal(tx, tenantId);
+
     const [openRow] = await tx
       .select({ total: count() })
       .from(findingsTable)

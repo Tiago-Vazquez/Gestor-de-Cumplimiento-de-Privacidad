@@ -24,7 +24,7 @@ import * as activityRepo from "./activity.repo";
 import { newId } from "./ids";
 import * as sourcesRepo from "./sources.repo";
 import type { SourceConnectionConfig } from "./sources.repo";
-import { tenantScopeStrict } from "./tenant";
+import { tenantScopeStrict, withTenant } from "./tenant";
 
 /**
  * M21.3 — EXISTS: el masking job pertenece al tenant activo vía su source (FK).
@@ -234,20 +234,22 @@ export async function create(input: {
       throw new MaskingFailure("dataset_too_large");
     }
     const completedAt = new Date();
-    const [row] = await db
-      .insert(maskingJobsTable)
-      .values({
-        id: newId("mj"),
-        sourceId: input.sourceId,
-        fields,
-        status: "ready",
-        records: dataset.rows.length,
-        error: null,
-        dataset,
-        createdAt: input.at,
-        completedAt,
-      })
-      .returning();
+    const [row] = await withTenant(input.tenantId, (tx) =>
+      tx
+        .insert(maskingJobsTable)
+        .values({
+          id: newId("mj"),
+          sourceId: input.sourceId,
+          fields,
+          status: "ready",
+          records: dataset.rows.length,
+          error: null,
+          dataset,
+          createdAt: input.at,
+          completedAt,
+        })
+        .returning(),
+    );
     await activityRepo.create({
       id: newId("act"),
       type: "masking",
@@ -263,20 +265,22 @@ export async function create(input: {
     const code = classifyMaskingError(err);
     // Log sin credenciales, connectionConfig ni PII: solo IDs y código.
     logger.error({ sourceId: input.sourceId, code }, "masking job failed");
-    const [failed] = await db
-      .insert(maskingJobsTable)
-      .values({
-        id: newId("mj"),
-        sourceId: input.sourceId,
-        fields,
-        status: "failed",
-        records: 0,
-        error: code,
-        dataset: null,
-        createdAt: input.at,
-        completedAt: new Date(),
-      })
-      .returning();
+    const [failed] = await withTenant(input.tenantId, (tx) =>
+      tx
+        .insert(maskingJobsTable)
+        .values({
+          id: newId("mj"),
+          sourceId: input.sourceId,
+          fields,
+          status: "failed",
+          records: 0,
+          error: code,
+          dataset: null,
+          createdAt: input.at,
+          completedAt: new Date(),
+        })
+        .returning(),
+    );
     return failed;
   }
 }
@@ -286,34 +290,38 @@ export async function list(
   pagination: Pagination | undefined,
   tenantId: string,
 ): Promise<MaskingJobRow[]> {
-  let query = db
-    .select(jobColumns)
-    .from(maskingJobsTable)
-    // M21.7 — masking_jobs sin tenant propio: scoped vía JOIN con source.
-    .innerJoin(sourcesTable, eq(maskingJobsTable.sourceId, sourcesTable.id))
-    .where(tenantScopeStrict(sourcesTable.tenantId, tenantId))
-    .orderBy(desc(maskingJobsTable.createdAt), desc(maskingJobsTable.id))
-    .$dynamic();
-  if (pagination) {
-    query = query.limit(pagination.limit).offset(pagination.offset);
-  }
-  return query;
+  return withTenant(tenantId, async (tx) => {
+    let query = tx
+      .select(jobColumns)
+      .from(maskingJobsTable)
+      // M21.8 — masking_jobs sin tenant propio: scoped vía JOIN con source.
+      .innerJoin(sourcesTable, eq(maskingJobsTable.sourceId, sourcesTable.id))
+      .where(tenantScopeStrict(sourcesTable.tenantId, tenantId))
+      .orderBy(desc(maskingJobsTable.createdAt), desc(maskingJobsTable.id))
+      .$dynamic();
+    if (pagination) {
+      query = query.limit(pagination.limit).offset(pagination.offset);
+    }
+    return query;
+  });
 }
 
 /** Detalle con columnas explícitas (SIN dataset). */
 export async function getById(id: string, tenantId: string): Promise<MaskingJobRow | null> {
-  const [row] = await db
-    .select(jobColumns)
-    .from(maskingJobsTable)
-    .innerJoin(sourcesTable, eq(maskingJobsTable.sourceId, sourcesTable.id))
-    .where(
-      and(
-        eq(maskingJobsTable.id, id),
-        tenantScopeStrict(sourcesTable.tenantId, tenantId),
-      ),
-    )
-    .limit(1);
-  return row ?? null;
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select(jobColumns)
+      .from(maskingJobsTable)
+      .innerJoin(sourcesTable, eq(maskingJobsTable.sourceId, sourcesTable.id))
+      .where(
+        and(
+          eq(maskingJobsTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  });
 }
 
 /** Solo para el download: única vía de salida del dataset persistido. */
@@ -321,16 +329,18 @@ export async function getByIdWithDataset(
   id: string,
   tenantId: string,
 ): Promise<MaskingJobWithDataset | null> {
-  const [row] = await db
-    .select()
-    .from(maskingJobsTable)
-    .where(
-      and(
-        eq(maskingJobsTable.id, id),
-        maskingTenantExists(tenantId),
-      ),
-    )
-    .limit(1);
-  return row ?? null;
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(maskingJobsTable)
+      .where(
+        and(
+          eq(maskingJobsTable.id, id),
+          maskingTenantExists(tenantId),
+        ),
+      )
+      .limit(1);
+    return row ?? null;
+  });
 }
 

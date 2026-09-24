@@ -4,7 +4,8 @@ import type { Pagination } from "../lib/pagination";
 import { decrypt, encrypt } from "../lib/secret-manager";
 import { logger } from "../lib/logger";
 import { newId } from "./ids";
-import { tenantScopeStrict } from "./tenant";
+import { tenantScopeStrict, withTenant } from "./tenant";
+import { bgDb } from "@workspace/db/background";
 
 export type SourceWithFindingsCount = Source & { findingsCount: number };
 
@@ -103,8 +104,10 @@ export async function createSource(input: CreateSourceInput): Promise<Source> {
     createdAt: now,
     updatedAt: now,
   };
-  const [row] = await db.insert(sourcesTable).values(values).returning();
-  return row;
+  return withTenant(input.tenantId, async (tx) => {
+    const [row] = await tx.insert(sourcesTable).values(values).returning();
+    return row;
+  });
 }
 
 /**
@@ -130,18 +133,20 @@ export async function updateSource(
       : null;
   }
 
-  const [row] = await db
-    .update(sourcesTable)
-    .set(set)
-    // M21.7 — scoping ESTRICTO en el WHERE de la mutación (no solo el pre-check).
-    .where(
-      and(
-        eq(sourcesTable.id, id),
-        tenantScopeStrict(sourcesTable.tenantId, tenantId),
-      ),
-    )
-    .returning();
-  return row ?? null;
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .update(sourcesTable)
+      .set(set)
+      // M21.8 — scoping ESTRICTO en el WHERE + tenant context transaccional.
+      .where(
+        and(
+          eq(sourcesTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      )
+      .returning();
+    return row ?? null;
+  });
 }
 
 /**
@@ -151,17 +156,19 @@ export async function updateSource(
  * SET NULL), preservando `source_name` para la atribución.
  */
 export async function deleteSource(id: string, tenantId: string): Promise<boolean> {
-  const [row] = await db
-    .delete(sourcesTable)
-    // M21.7 — scoping ESTRICTO en el DELETE (BOLA: borrar recurso ajeno → 0 filas).
-    .where(
-      and(
-        eq(sourcesTable.id, id),
-        tenantScopeStrict(sourcesTable.tenantId, tenantId),
-      ),
-    )
-    .returning({ id: sourcesTable.id });
-  return row !== undefined;
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .delete(sourcesTable)
+      // M21.8 — scoping ESTRICTO en el DELETE + tenant context transaccional.
+      .where(
+        and(
+          eq(sourcesTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      )
+      .returning({ id: sourcesTable.id });
+    return row !== undefined;
+  });
 }
 
 /**
@@ -173,18 +180,20 @@ export async function getByIdWithFindingsCount(
   id: string,
   tenantId: string,
 ): Promise<SourceWithFindingsCount | null> {
-  const [row] = await db
-    .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
-    .from(sourcesTable)
-    .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
-    .where(
-      and(
-        eq(sourcesTable.id, id),
-        tenantScopeStrict(sourcesTable.tenantId, tenantId),
-      ),
-    )
-    .groupBy(sourcesTable.id);
-  return row ? { ...row.source, findingsCount: row.findingsCount } : null;
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
+      .from(sourcesTable)
+      .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
+      .where(
+        and(
+          eq(sourcesTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      )
+      .groupBy(sourcesTable.id);
+    return row ? { ...row.source, findingsCount: row.findingsCount } : null;
+  });
 }
 
 /**
@@ -197,33 +206,37 @@ export async function list(
   pagination: Pagination | undefined,
   tenantId: string,
 ): Promise<SourceWithFindingsCount[]> {
-  let query = db
-    .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
-    .from(sourcesTable)
-    .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
-    .where(tenantScopeStrict(sourcesTable.tenantId, tenantId))
-    .groupBy(sourcesTable.id)
-    .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id))
-    .$dynamic();
-  if (pagination) {
-    query = query.limit(pagination.limit).offset(pagination.offset);
-  }
+  return withTenant(tenantId, async (tx) => {
+    let query = tx
+      .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
+      .from(sourcesTable)
+      .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
+      .where(tenantScopeStrict(sourcesTable.tenantId, tenantId))
+      .groupBy(sourcesTable.id)
+      .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id))
+      .$dynamic();
+    if (pagination) {
+      query = query.limit(pagination.limit).offset(pagination.offset);
+    }
 
-  const rows = await query;
-  return rows.map((row) => ({ ...row.source, findingsCount: row.findingsCount }));
+    const rows = await query;
+    return rows.map((row) => ({ ...row.source, findingsCount: row.findingsCount }));
+  });
 }
 
 export async function getById(id: string, tenantId: string): Promise<Source | null> {
-  const [row] = await db
-    .select()
-    .from(sourcesTable)
-    .where(
-      and(
-        eq(sourcesTable.id, id),
-        tenantScopeStrict(sourcesTable.tenantId, tenantId),
-      ),
-    );
-  return row ?? null;
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(sourcesTable)
+      .where(
+        and(
+          eq(sourcesTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      );
+    return row ?? null;
+  });
 }
 
 /**
@@ -232,6 +245,6 @@ export async function getById(id: string, tenantId: string): Promise<Source | nu
  * deriva de la propia fila (raíz de propiedad), no del contexto de un request.
  */
 export async function getByIdForScan(id: string): Promise<Source | null> {
-  const [row] = await db.select().from(sourcesTable).where(eq(sourcesTable.id, id));
+  const [row] = await bgDb().select().from(sourcesTable).where(eq(sourcesTable.id, id));
   return row ?? null;
 }

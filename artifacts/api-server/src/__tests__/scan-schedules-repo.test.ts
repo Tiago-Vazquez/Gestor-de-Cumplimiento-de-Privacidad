@@ -25,6 +25,16 @@ vi.mock("@workspace/db", () => ({
   sourcesTable: {},
 }));
 
+// M21.8 — `claimDue` corre en el pool background (bg_role/BYPASSRLS), no en
+// `db`. Se stub-ea `@workspace/db/background` con un `transaction` estable.
+const { bgTransaction } = vi.hoisted(() => ({
+  bgTransaction: vi.fn(),
+}));
+
+vi.mock("@workspace/db/background", () => ({
+  bgDb: () => ({ transaction: bgTransaction }),
+}));
+
 import {
   SCAN_SCHEDULE_DEFAULT_MINUTES,
   SCAN_SCHEDULE_MAX_MINUTES,
@@ -216,8 +226,7 @@ describe("claimDue (orquestación transaccional anti doble-despacho)", () => {
 
   it("avanza nextRunAt DENTRO de la transacción: el segundo claim no devuelve nada", async () => {
     const row = schedule({ nextRunAt: new Date(now.getTime() - 60_000) });
-    const { db } = await import("@workspace/db");
-    vi.mocked(db.transaction).mockImplementation(
+    bgTransaction.mockImplementation(
       async (fn: (tx: unknown) => Promise<unknown>) => fn(makeTx(row)),
     );
 

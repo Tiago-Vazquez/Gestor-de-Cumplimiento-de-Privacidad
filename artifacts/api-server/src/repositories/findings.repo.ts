@@ -2,7 +2,7 @@ import { and, asc, desc, eq, ne, type SQL } from "drizzle-orm";
 import { activityTable, db, findingsTable, type Finding } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 import { newId } from "./ids";
-import { tenantScopeStrict } from "./tenant";
+import { tenantScopeStrict, withTenant, setTenantLocal } from "./tenant";
 
 export type FindingsFilter = { status?: string; severity?: string };
 
@@ -23,27 +23,29 @@ export function activeFindingsWhere(tenantId: string): SQL | undefined {
  * F4 (6.3B.20): LIMIT/OFFSET se aplican en la sentencia SQL (nunca solo en
  * cliente). Sin paginación explícita la consulta queda como antes.
  */
-export function list(
+export async function list(
   filter: FindingsFilter,
   pagination: Pagination | undefined,
   tenantId: string,
 ): Promise<Finding[]> {
-  const conditions: SQL[] = [];
-  if (filter.status) conditions.push(eq(findingsTable.status, filter.status));
-  if (filter.severity) conditions.push(eq(findingsTable.severity, filter.severity));
-  // M21.7 — scoping ESTRICTO obligatorio en el WHERE.
-  conditions.push(tenantScopeStrict(findingsTable.tenantId, tenantId));
+  return withTenant(tenantId, async (tx) => {
+    const conditions: SQL[] = [];
+    if (filter.status) conditions.push(eq(findingsTable.status, filter.status));
+    if (filter.severity) conditions.push(eq(findingsTable.severity, filter.severity));
+    // M21.8 — scoping ESTRICTO obligatorio en el WHERE.
+    conditions.push(tenantScopeStrict(findingsTable.tenantId, tenantId));
 
-  let query = db
-    .select()
-    .from(findingsTable)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(findingsTable.detectedAt), asc(findingsTable.id))
-    .$dynamic();
-  if (pagination) {
-    query = query.limit(pagination.limit).offset(pagination.offset);
-  }
-  return query;
+    let query = tx
+      .select()
+      .from(findingsTable)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(findingsTable.detectedAt), asc(findingsTable.id))
+      .$dynamic();
+    if (pagination) {
+      query = query.limit(pagination.limit).offset(pagination.offset);
+    }
+    return query;
+  });
 }
 
 /**
@@ -57,6 +59,9 @@ export async function updateStatus(
   tenantId: string,
 ): Promise<Finding | null> {
   return db.transaction(async (tx) => {
+    // M21.8 — tenant context transaccional (RLS).
+    await setTenantLocal(tx, tenantId);
+
     const [updated] = await tx
       .update(findingsTable)
       .set({ status, updatedAt: at })
