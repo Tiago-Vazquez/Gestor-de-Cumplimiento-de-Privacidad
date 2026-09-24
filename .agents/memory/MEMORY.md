@@ -1,2 +1,4 @@
 - [OpenAPI y Zod](openapi-zod-compatibility.md) — prefer números compatibles con Zod 3 para evitar que el generador emita `z.int()`.
 - [Namespacing del store de rate limiting](rate-limit-store-namespacing.md) — el store persistente es una tabla compartida: sin prefijo por limiter, los buckets (`login` vs `register`) colisionan.
+- [Unión discriminada de conexión de fuentes](source-connection-discriminated-union.md) — M23.1: `SourceConnectionInput` es `oneOf` por `kind`; agregar un motor exige schema + conector + registry y sostener `connection.kind === source.kind`.
+- [Detalles del conector MySQL](mysql-connector-details.md) — `information_schema` en mayúsculas, namespace = database, watchdog de query porque `mysql2` no tiene timeout por statement.

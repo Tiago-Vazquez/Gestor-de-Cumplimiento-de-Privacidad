@@ -324,6 +324,7 @@ describe("M17 — auditoría administrativa", () => {
           kind: "postgresql",
           environment: "staging",
           connection: {
+            kind: "postgresql",
             host: "db.audit.local",
             port: 5432,
             database: "app",

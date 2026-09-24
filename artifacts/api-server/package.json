@@ -9,6 +9,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:integration": "vitest run src/__tests__/connectors-integration.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
@@ -22,6 +23,7 @@
     "express-rate-limit": "^7.5.0",
     "helmet": "^8.0.0",
     "jose": "^6.2.10",
+    "mysql2": "^3.24.4",
     "pino": "^9.14.0",
     "pino-http": "^10.5.0",
     "zod": "catalog:"

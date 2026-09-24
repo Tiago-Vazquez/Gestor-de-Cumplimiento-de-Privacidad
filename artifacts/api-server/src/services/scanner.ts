@@ -1,12 +1,8 @@
 import { repos } from "../repositories";
 import { logger } from "../lib/logger";
 import { activeScans, scansCompletedTotal, scansFailedTotal, scansStartedTotal } from "../lib/metrics";
-import {
-  connectPg,
-  listTables,
-  readPage,
-  type PgConnector,
-} from "../connectors/postgres";
+import { getConnector, isSupportedKind } from "../connectors/registry";
+import type { SourceConnector, TableRef } from "../connectors/types";
 
 /**
  * Scanner PostgreSQL MVP (FASE 7.0.1).
@@ -113,8 +109,8 @@ export function scanHeartbeatIntervalMs(): number {
 export interface RunScanInput {
   scanId: string;
   sourceId: string;
-  /** Inyectable en tests; por defecto el conector real. */
-  connector?: PgConnector;
+  /** Inyectable en tests; por defecto se resuelve via registry por source.kind. */
+  connector?: SourceConnector;
   /**
    * FASE 7.1.0 M0: intervalo mínimo entre latidos (ms). Inyectable en tests;
    * por defecto resuelve SCAN_HEARTBEAT_INTERVAL_MS (clamp [1 s, 60 s], 10 s).
@@ -262,12 +258,6 @@ async function failScanSafe(
 async function runScanInner(input: RunScanInput): Promise<void> {
   // M16.3 — reloj del scan: duración total del pipeline para los eventos.
   const startedAtMs = Date.now();
-  const connector = input.connector ?? {
-    connect: connectPg,
-    listTables,
-    readPage,
-  };
-
   let source;
   try {
     source = await repos.sources.getByIdForScan(input.sourceId);
@@ -283,6 +273,18 @@ async function runScanInner(input: RunScanInput): Promise<void> {
     return;
   }
 
+  // M23.1 — gate de kind ANTES de tocar credenciales: un kind sin conector
+  // (mongodb/snowflake/bigquery) NUNCA intenta conectarse vía PostgreSQL.
+  // El log solo incluye scanId/sourceId/kind (enum de BD), jamás la config.
+  if (!isSupportedKind(source.kind)) {
+    logger.warn(
+      { scanId: input.scanId, sourceId: input.sourceId, kind: source.kind },
+      "Scan failed: unsupported source kind",
+    );
+    await failScanSafe(input.scanId, input.sourceId, "source_not_scannable", undefined, Date.now() - startedAtMs);
+    return;
+  }
+
   const config = repos.sources.decryptConnectionConfig(source);
   if (!config) {
     logger.warn(
@@ -293,14 +295,17 @@ async function runScanInner(input: RunScanInput): Promise<void> {
     return;
   }
 
+  // M23.1 — el conector se resuelve por el kind de la fuente via registry
+  // (inyección en tests conserva el mismo contrato de SourceConnector).
+  const connector: SourceConnector = input.connector ?? getConnector(source.kind);
+
   const rules = await resolveActiveRules();
   const matches = new Map<string, MatchAgg>();
   let connection;
 
-  const schema = config.schema ?? "public";
   let scannedTables: string[] = [];
   let recordsRead = 0;
-  let tables: string[] = [];
+  let tables: TableRef[] = [];
 
   // FASE 7.1.0 M0: heartbeat con throttle (sin timers que limpiar). El primer
   // latido es inmediato tras listar tablas; los siguientes respetan el
@@ -339,7 +344,11 @@ async function runScanInner(input: RunScanInput): Promise<void> {
 
   scanTables: try {
     connection = await connector.connect(config);
-    tables = await listTables(connection, schema);
+    // M23.1 — deuda corregida: el listado va por el conector (factory), no
+    // importando funciones PostgreSQL directamente. El namespace default lo
+    // resuelve cada motor desde su config (PG: schema ?? "public"; MySQL:
+    // schema ?? database).
+    tables = await connector.listTables(connection);
     await heartbeat(true);
     // FASE 7.1.2 (M2) YIELD A: cancelación solicitada antes de la primera tabla.
     if (cancelRequested) break scanTables;
@@ -350,7 +359,7 @@ async function runScanInner(input: RunScanInput): Promise<void> {
         const rows = await connector.readPage(connection, table, { limit: PAGE_SIZE, offset });
         if (rows.length === 0) break;
         recordsRead += rows.length;
-        detectRows(table, rows, rules, matches);
+        detectRows(table.name, rows, rules, matches);
         offset += PAGE_SIZE;
         await heartbeat(false);
         // FASE 7.1.2 (M2) YIELD B: cancelación tras una página leída.
@@ -358,7 +367,7 @@ async function runScanInner(input: RunScanInput): Promise<void> {
         if (rows.length < PAGE_SIZE) break;
       }
       if (tableCompleted) {
-        scannedTables.push(table);
+        scannedTables.push(table.name);
         await heartbeat(false);
         // FASE 7.1.2 (M2) YIELD C: cancelación tras completar una tabla.
         if (cancelRequested) break scanTables;
@@ -378,7 +387,14 @@ async function runScanInner(input: RunScanInput): Promise<void> {
       );
     }
   } catch (error) {
-    logger.error({ err: error, scanId: input.scanId, sourceId: input.sourceId }, "Scan failed: connection/read error");
+    const connectorCode =
+      error instanceof Error && "code" in error && typeof (error as { code?: unknown }).code === "string"
+        ? (error as { code: string }).code
+        : undefined;
+    logger.error(
+      { err: error, connectorCode, scanId: input.scanId, sourceId: input.sourceId },
+      "Scan failed: connection/read error",
+    );
     if (connection) {
       await connection.close().catch(() => undefined);
     }

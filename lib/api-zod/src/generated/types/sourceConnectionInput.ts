@@ -5,44 +5,10 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { MySqlConnectionInput } from './mySqlConnectionInput';
+import type { PostgresConnectionInput } from './postgresConnectionInput';
 
 /**
- * Database connection credentials for an external source. The password is write-only: it is encrypted at rest and never returned in any response.
+ * Database connection credentials for an external source, discriminated by `kind` (postgresql | mysql; more engines arrive in M23.2). The password is write-only: it is encrypted at rest and never returned in any response. The `kind` must match the source's `kind`.
  */
-export interface SourceConnectionInput {
-  /**
-     * Database host (hostname or IP)
-     * @minLength 1
-     * @maxLength 253
-     */
-  host: string;
-  /**
-     * Database port (1-65535)
-     * @minimum 1
-     * @maximum 65535
-     */
-  port: number;
-  /**
-     * Database name
-     * @minLength 1
-     * @maxLength 128
-     */
-  database: string;
-  /**
-     * Username for authentication
-     * @minLength 1
-     * @maxLength 128
-     */
-  user: string;
-  /**
-     * Password (write-only, never returned in responses)
-     * @minLength 1
-     * @maxLength 256
-     */
-  password: string;
-  /**
-     * Database schema (optional)
-     * @maxLength 128
-     */
-  schema?: string;
-}
+export type SourceConnectionInput = PostgresConnectionInput | MySqlConnectionInput;

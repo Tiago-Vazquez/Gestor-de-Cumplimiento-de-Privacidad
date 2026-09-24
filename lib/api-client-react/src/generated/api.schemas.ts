@@ -263,10 +263,18 @@ export interface DataSource {
   findings: number;
 }
 
+export type PostgresConnectionInputKind = typeof PostgresConnectionInputKind[keyof typeof PostgresConnectionInputKind];
+
+
+export const PostgresConnectionInputKind = {
+  postgresql: 'postgresql',
+} as const;
+
 /**
- * Database connection credentials for an external source. The password is write-only: it is encrypted at rest and never returned in any response.
+ * PostgreSQL connection credentials. Discriminated by kind=postgresql.
  */
-export interface SourceConnectionInput {
+export interface PostgresConnectionInput {
+  kind: PostgresConnectionInputKind;
   /**
      * Database host (hostname or IP)
      * @minLength 1
@@ -274,7 +282,7 @@ export interface SourceConnectionInput {
      */
   host: string;
   /**
-     * Database port (1-65535)
+     * PostgreSQL port (1-65535), typically 5432
      * @minimum 1
      * @maximum 65535
      */
@@ -298,11 +306,65 @@ export interface SourceConnectionInput {
      */
   password: string;
   /**
-     * Database schema (optional)
+     * Database schema (optional, defaults to public)
      * @maxLength 128
      */
   schema?: string;
 }
+
+export type MySqlConnectionInputKind = typeof MySqlConnectionInputKind[keyof typeof MySqlConnectionInputKind];
+
+
+export const MySqlConnectionInputKind = {
+  mysql: 'mysql',
+} as const;
+
+/**
+ * MySQL connection credentials. Discriminated by kind=mysql.
+ */
+export interface MySqlConnectionInput {
+  kind: MySqlConnectionInputKind;
+  /**
+     * Database host (hostname or IP)
+     * @minLength 1
+     * @maxLength 253
+     */
+  host: string;
+  /**
+     * MySQL port (1-65535), typically 3306
+     * @minimum 1
+     * @maximum 65535
+     */
+  port: number;
+  /**
+     * Database name
+     * @minLength 1
+     * @maxLength 128
+     */
+  database: string;
+  /**
+     * Username for authentication
+     * @minLength 1
+     * @maxLength 128
+     */
+  user: string;
+  /**
+     * Password (write-only, never returned in responses)
+     * @minLength 1
+     * @maxLength 256
+     */
+  password: string;
+  /**
+     * MySQL schema (optional, defaults to the database)
+     * @maxLength 128
+     */
+  schema?: string;
+}
+
+/**
+ * Database connection credentials for an external source, discriminated by `kind` (postgresql | mysql; more engines arrive in M23.2). The password is write-only: it is encrypted at rest and never returned in any response. The `kind` must match the source's `kind`.
+ */
+export type SourceConnectionInput = PostgresConnectionInput | MySqlConnectionInput;
 
 export type SourceCreateKind = typeof SourceCreateKind[keyof typeof SourceCreateKind];
 

@@ -16,7 +16,8 @@ import {
   BUILT_IN_RULES,
   PAGE_SIZE,
 } from "../services/scanner";
-import { connectPg, listTables, readPage, type PgConnector, type PgConnection } from "../connectors/postgres";
+import { connectPg, listTables, readPage, type PgConnection } from "../connectors/postgres";
+import type { SourceConnector } from "../connectors/types";
 import type { MockState } from "./mock-repos";
 import { fetchCsrfToken, seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
@@ -42,14 +43,30 @@ vi.mock("../repositories", async () => {
 });
 // El conector REAL se mockea a nivel de módulo para el test de integración
 // HTTP (el camino feliz no debe abrir sockets). Los unit tests inyectan su
-// propio conector y no dependen de este mock.
+// propio conector y no dependen de este mock. M23.1: el mock reconstruye
+// `postgresConnector` sobre las funciones mockeadas para que el registry
+// (scanner por defecto) también quede interceptado.
 vi.mock("../connectors/postgres", async () => {
   const actual = await vi.importActual<typeof import("../connectors/postgres")>("../connectors/postgres");
+  const connectPg = vi.fn();
+  const listTables = vi.fn();
+  const readPage = vi.fn();
   return {
     ...actual,
-    connectPg: vi.fn(),
-    listTables: vi.fn(),
-    readPage: vi.fn(),
+    connectPg,
+    listTables,
+    readPage,
+    postgresConnector: {
+      ...actual.postgresConnector,
+      connect: connectPg,
+      async listTables(conn: unknown, opts?: { namespace?: string }) {
+        const names = (await listTables(conn, opts?.namespace)) as string[];
+        return names.map((name) => ({ name }));
+      },
+      async readPage(conn: unknown, table: { name: string }, p: { limit: number; offset: number }) {
+        return readPage(conn, table.name, p);
+      },
+    },
   };
 });
 
@@ -70,11 +87,11 @@ function reposPatch(): {
 }
 
 /** Source escaneable para los tests (connectionConfig cifrado simulado). */
-function addScannableSource(id: string): void {
+function addScannableSource(id: string, kind = "postgresql"): void {
   state().sources.push({
     id,
     name: "Scannable Source",
-    kind: "postgresql",
+    kind,
     environment: "production",
     status: "healthy",
     lastScanAt: null,
@@ -89,24 +106,37 @@ function addScannableSource(id: string): void {
   });
 }
 
+/** Capacidades de test (paridad con SQL_CAPABILITIES sin importar drivers). */
+const TEST_CAPABILITIES = {
+  relational: true,
+  namespaces: true,
+  offsetPagination: true,
+  enumeratesTables: true,
+} as const;
+
+/** Envuelve un conector parcial en el contrato SourceConnector (M23.1). */
+function asConnector(partial: Omit<SourceConnector, "kind" | "capabilities">): SourceConnector {
+  return { kind: "postgresql", capabilities: TEST_CAPABILITIES, ...partial };
+}
+
 function fakeConnector(
   tables: string[],
   pages: Record<string, unknown>[][],
-): PgConnector {
+): SourceConnector {
   const conn: PgConnection = {
     query: vi.fn().mockResolvedValue([]),
     close: vi.fn().mockResolvedValue(undefined),
   };
   let pageIndex = 0;
-  return {
+  return asConnector({
     connect: vi.fn().mockResolvedValue(conn),
-    listTables: vi.fn().mockResolvedValue(tables),
+    listTables: vi.fn().mockResolvedValue(tables.map((name) => ({ name }))),
     readPage: vi.fn().mockImplementation(async () => {
       const page = pages[Math.min(pageIndex, pages.length - 1)] ?? [];
       pageIndex += 1;
       return page;
     }),
-  };
+  });
 }
 
 /** Sustituye las reglas del estado (tests de gobierno enabled/disabled, HIGH #1). */
@@ -141,6 +171,52 @@ function addRunningScan(id: string, sourceId: string): void {
 }
 
 describe("runScan (unit, conector inyectado)", () => {
+  it("kind sin conector (mongodb) → source_not_scannable SIN abrir conexión", async () => {
+    // M23.1 — el gate de kind corre antes de tocar credenciales: la fuente
+    // declara un kind sin conector y JAMÁS se intenta conectar (ni vía PG).
+    addScannableSource("src-unsupported", "mongodb");
+    const scans = reposPatch().scans;
+    const failSpy = vi.spyOn(scans, "failScan");
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    const connector = fakeConnector(["users"], [[{ contact: "x@example.com" }], []]);
+
+    await runScan({ scanId: "scan-kind-1", sourceId: "src-unsupported", connector });
+
+    expect(failSpy).toHaveBeenCalledTimes(1);
+    expect(failSpy).toHaveBeenCalledWith(expect.objectContaining({ reason: "source_not_scannable" }));
+    expect(finalizeSpy).not.toHaveBeenCalled();
+    expect((connector.connect as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    // El conector PostgreSQL del módulo (mock) tampoco se usó.
+    expect(vi.mocked(connectPg)).not.toHaveBeenCalled();
+    failSpy.mockRestore();
+    finalizeSpy.mockRestore();
+  });
+
+  it("kind mysql soportado → escanea con el conector resuelto (factory/inyección)", async () => {
+    addScannableSource("src-mysql-scan", "mysql");
+    const scans = reposPatch().scans;
+    const finalizeSpy = vi.spyOn(scans, "finalizeScan");
+    const connector = fakeConnector(["clientes"], [
+      [{ contacto: "ana@example.com" }],
+      [],
+    ]);
+
+    await runScan({ scanId: "scan-kind-2", sourceId: "src-mysql-scan", connector });
+
+    expect((connector.listTables as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+    // El conector recibe el TableRef (no un string suelto) y la paginación.
+    expect((connector.readPage as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.anything(),
+      { name: "clientes" },
+      { limit: PAGE_SIZE, offset: 0 },
+    );
+    expect(finalizeSpy).toHaveBeenCalledTimes(1);
+    const payload = finalizeSpy.mock.calls[0][0] as { findings: { location: string }[] };
+    // location conserva el formato histórico `tabla.columna`.
+    expect(payload.findings.some((f) => f.location === "clientes.contacto")).toBe(true);
+    finalizeSpy.mockRestore();
+  });
+
   it("fuente no escaneable → failScan(source_not_scannable), sin conectar", async () => {
     const scans = reposPatch().scans;
     const failSpy = vi.spyOn(scans, "failScan");
@@ -213,11 +289,11 @@ describe("runScan (unit, conector inyectado)", () => {
     const failSpy = vi.spyOn(scans, "failScan");
     const finalizeSpy = vi.spyOn(scans, "finalizeScan");
 
-    const connector: PgConnector = {
+    const connector = asConnector({
       connect: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
       listTables: vi.fn(),
       readPage: vi.fn(),
-    };
+    });
     await runScan({ scanId: "scan-u4", sourceId: "src-scan-broken", connector });
 
     expect(failSpy).toHaveBeenCalledTimes(1);
@@ -350,12 +426,13 @@ describe("runScan ciclo de vida — scans nunca stuck en running (HIGH #2, 7.0.2
 
     const close = vi.fn().mockResolvedValue(undefined);
     const conn: PgConnection = { query: vi.fn().mockResolvedValue([]), close };
-    const connector: PgConnector = {
+    const connector = asConnector({
       connect: vi.fn().mockResolvedValue(conn),
-      listTables: vi.fn(),
+      // M23.1 — el scanner usa connector.listTables (no la función del módulo):
+      // la deuda de inyección directa quedó eliminada.
+      listTables: vi.fn().mockRejectedValue(new Error("read exploded")),
       readPage: vi.fn(),
-    };
-    vi.mocked(listTables).mockRejectedValue(new Error("read exploded"));
+    });
     await runScan({ scanId: "scan-f5", sourceId: "src-scan-readfail", connector });
 
     expect(close).toHaveBeenCalledTimes(1);
@@ -576,9 +653,9 @@ describe("heartbeat del scanner (FASE 7.1.0 M0)", () => {
     const advances = [6_000, 1_000, 6_000, 6_000, 6_000];
     let page = 0;
     let elapsed = 0;
-    const connector: PgConnector = {
+    const connector = asConnector({
       connect: vi.fn().mockResolvedValue(conn),
-      listTables: vi.fn().mockResolvedValue(["users"]),
+      listTables: vi.fn().mockResolvedValue([{ name: "users" }]),
       readPage: vi.fn().mockImplementation(async () => {
         const current = pages[Math.min(page, pages.length - 1)] ?? [];
         elapsed += advances[Math.min(page, advances.length - 1)];
@@ -586,7 +663,7 @@ describe("heartbeat del scanner (FASE 7.1.0 M0)", () => {
         vi.setSystemTime(new Date(t0.getTime() + elapsed));
         return current;
       }),
-    };
+    });
 
     await runScan({ scanId: "scan-hb2", sourceId: "src-hb2", connector, heartbeatIntervalMs: 5_000 });
 
@@ -664,15 +741,15 @@ describe("cancelación cooperativa (FASE 7.1.2 M2)", () => {
     };
     const pages = [fullPage(), fullPage(), []];
     let page = 0;
-    const connector: PgConnector = {
+    const connector = asConnector({
       connect: vi.fn().mockResolvedValue(conn),
-      listTables: vi.fn().mockResolvedValue(["users"]),
+      listTables: vi.fn().mockResolvedValue([{ name: "users" }]),
       readPage: vi.fn().mockImplementation(async () => {
         const current = pages[Math.min(page, pages.length - 1)] ?? [];
         page += 1;
         return current;
       }),
-    };
+    });
     let beat = 0;
     // El flag llega a BD en el 3er latido (inicial + página 1 + página 2):
     // el scanner debe detenerse tras leer la 2ª página.
@@ -707,11 +784,11 @@ describe("cancelación cooperativa (FASE 7.1.2 M2)", () => {
       query: vi.fn().mockResolvedValue([]),
       close: vi.fn().mockResolvedValue(undefined),
     };
-    const connector: PgConnector = {
+    const connector = asConnector({
       connect: vi.fn().mockResolvedValue(conn),
-      listTables: vi.fn().mockResolvedValue(["users"]),
+      listTables: vi.fn().mockResolvedValue([{ name: "users" }]),
       readPage: vi.fn(),
-    };
+    });
     // El flag ya está en BD cuando ocurre el latido inicial (forzado).
     vi.spyOn(scans, "heartbeatScan").mockImplementation(async () => {
       const scan = state().scans.find((item) => item.id === "scan-c2");

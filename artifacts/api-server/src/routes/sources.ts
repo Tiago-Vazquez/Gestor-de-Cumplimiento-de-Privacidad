@@ -39,16 +39,16 @@ router.post("/", requireRole("admin"), async (req, res) => {
   const body = CreateSourceBody.parse(req.body);
   // M21.4 — crear una fuente exige organización activa (tenant_id NOT NULL).
   const tenantId = resolvedOrgContext(req).organizationId;
-  const connection: SourceConnectionConfig | undefined = body.connection
-    ? {
-        host: body.connection.host,
-        port: body.connection.port,
-        database: body.connection.database,
-        user: body.connection.user,
-        password: body.connection.password,
-        schema: body.connection.schema,
-      }
-    : undefined;
+  // M23.1 — la config de conexión es una unión discriminada por `kind` y DEBE
+  // coincidir con el kind de la fuente: una config MySQL jamás se persistirá
+  // bajo una fuente PostgreSQL (ni viceversa). Validación server-side.
+  let connection: SourceConnectionConfig | undefined = undefined;
+  if (body.connection) {
+    if (body.connection.kind !== body.kind) {
+      throw badRequest("connection.kind must match the source kind");
+    }
+    connection = body.connection;
+  }
 
   const created = await repos.sources.createSource({
     name: body.name,
@@ -119,16 +119,21 @@ router.patch("/:id", requireRole("admin"), async (req, res) => {
   const body = UpdateSourceBody.parse(req.body);
   const tenantId = resolvedOrgContext(req).organizationId;
 
+  // M23.1 — para validar el match connection.kind ↔ kind efectivo necesitamos
+  // la fuente actual (kind puede omitirse en el PATCH). 404 sin mutar si no
+  // existe o es de otro tenant (mismo contrato que updateSource → null).
+  const existing = await repos.sources.getById(id, tenantId);
+  if (!existing) {
+    throw notFound("Source not found");
+  }
+
   let connection: SourceConnectionConfig | undefined = undefined;
-  if ("connection" in body && body.connection) {
-    connection = {
-      host: body.connection.host,
-      port: body.connection.port,
-      database: body.connection.database,
-      user: body.connection.user,
-      password: body.connection.password,
-      schema: body.connection.schema,
-    };
+  if (body.connection) {
+    const effectiveKind = body.kind ?? existing.kind;
+    if (body.connection.kind !== effectiveKind) {
+      throw badRequest("connection.kind must match the source kind");
+    }
+    connection = body.connection;
   }
 
   const updated = await repos.sources.updateSource(id, {

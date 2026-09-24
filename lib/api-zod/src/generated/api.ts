@@ -493,17 +493,29 @@ export const ListSourcesResponse = zod.array(ListSourcesResponseItem)
  */
 export const createSourceBodyNameMax = 256;
 
-export const createSourceBodyConnectionHostMax = 253;
+export const createSourceBodyConnectionOneHostMax = 253;
 
-export const createSourceBodyConnectionPortMax = 65535;
+export const createSourceBodyConnectionOnePortMax = 65535;
 
-export const createSourceBodyConnectionDatabaseMax = 128;
+export const createSourceBodyConnectionOneDatabaseMax = 128;
 
-export const createSourceBodyConnectionUserMax = 128;
+export const createSourceBodyConnectionOneUserMax = 128;
 
-export const createSourceBodyConnectionPasswordMax = 256;
+export const createSourceBodyConnectionOnePasswordMax = 256;
 
-export const createSourceBodyConnectionSchemaMax = 128;
+export const createSourceBodyConnectionOneSchemaMax = 128;
+
+export const createSourceBodyConnectionTwoHostMax = 253;
+
+export const createSourceBodyConnectionTwoPortMax = 65535;
+
+export const createSourceBodyConnectionTwoDatabaseMax = 128;
+
+export const createSourceBodyConnectionTwoUserMax = 128;
+
+export const createSourceBodyConnectionTwoPasswordMax = 256;
+
+export const createSourceBodyConnectionTwoSchemaMax = 128;
 
 
 
@@ -511,14 +523,23 @@ export const CreateSourceBody = zod.object({
   "name": zod.string().min(1).max(createSourceBodyNameMax),
   "kind": zod.enum(['postgresql', 'mysql', 'mongodb', 'snowflake', 'bigquery']),
   "environment": zod.enum(['production', 'staging', 'development']),
-  "connection": zod.object({
-  "host": zod.string().min(1).max(createSourceBodyConnectionHostMax).describe('Database host (hostname or IP)'),
-  "port": zod.coerce.number().int().min(1).max(createSourceBodyConnectionPortMax).describe('Database port (1-65535)'),
-  "database": zod.string().min(1).max(createSourceBodyConnectionDatabaseMax).describe('Database name'),
-  "user": zod.string().min(1).max(createSourceBodyConnectionUserMax).describe('Username for authentication'),
-  "password": zod.string().min(1).max(createSourceBodyConnectionPasswordMax).describe('Password (write-only, never returned in responses)'),
-  "schema": zod.string().max(createSourceBodyConnectionSchemaMax).optional().describe('Database schema (optional)')
-}).optional().describe('Optional connection credentials. When omitted, the source is created without credentials (connectionConfig = null) and is not scannable until configuration is provided via PATCH.')
+  "connection": zod.union([zod.object({
+  "kind": zod.enum(['postgresql']),
+  "host": zod.string().min(1).max(createSourceBodyConnectionOneHostMax).describe('Database host (hostname or IP)'),
+  "port": zod.coerce.number().int().min(1).max(createSourceBodyConnectionOnePortMax).describe('PostgreSQL port (1-65535), typically 5432'),
+  "database": zod.string().min(1).max(createSourceBodyConnectionOneDatabaseMax).describe('Database name'),
+  "user": zod.string().min(1).max(createSourceBodyConnectionOneUserMax).describe('Username for authentication'),
+  "password": zod.string().min(1).max(createSourceBodyConnectionOnePasswordMax).describe('Password (write-only, never returned in responses)'),
+  "schema": zod.string().max(createSourceBodyConnectionOneSchemaMax).optional().describe('Database schema (optional, defaults to public)')
+}).describe('PostgreSQL connection credentials. Discriminated by kind=postgresql.'),zod.object({
+  "kind": zod.enum(['mysql']),
+  "host": zod.string().min(1).max(createSourceBodyConnectionTwoHostMax).describe('Database host (hostname or IP)'),
+  "port": zod.coerce.number().int().min(1).max(createSourceBodyConnectionTwoPortMax).describe('MySQL port (1-65535), typically 3306'),
+  "database": zod.string().min(1).max(createSourceBodyConnectionTwoDatabaseMax).describe('Database name'),
+  "user": zod.string().min(1).max(createSourceBodyConnectionTwoUserMax).describe('Username for authentication'),
+  "password": zod.string().min(1).max(createSourceBodyConnectionTwoPasswordMax).describe('Password (write-only, never returned in responses)'),
+  "schema": zod.string().max(createSourceBodyConnectionTwoSchemaMax).optional().describe('MySQL schema (optional, defaults to the database)')
+}).describe('MySQL connection credentials. Discriminated by kind=mysql.')]).optional().describe('Optional connection credentials. When omitted, the source is created without credentials (connectionConfig = null) and is not scannable until configuration is provided via PATCH.')
 })
 
 export const CreateSourceResponse = zod.object({
@@ -566,17 +587,29 @@ export const UpdateSourceParams = zod.object({
 
 export const updateSourceBodyNameMax = 256;
 
-export const updateSourceBodyConnectionHostMax = 253;
+export const updateSourceBodyConnectionOneHostMax = 253;
 
-export const updateSourceBodyConnectionPortMax = 65535;
+export const updateSourceBodyConnectionOnePortMax = 65535;
 
-export const updateSourceBodyConnectionDatabaseMax = 128;
+export const updateSourceBodyConnectionOneDatabaseMax = 128;
 
-export const updateSourceBodyConnectionUserMax = 128;
+export const updateSourceBodyConnectionOneUserMax = 128;
 
-export const updateSourceBodyConnectionPasswordMax = 256;
+export const updateSourceBodyConnectionOnePasswordMax = 256;
 
-export const updateSourceBodyConnectionSchemaMax = 128;
+export const updateSourceBodyConnectionOneSchemaMax = 128;
+
+export const updateSourceBodyConnectionTwoHostMax = 253;
+
+export const updateSourceBodyConnectionTwoPortMax = 65535;
+
+export const updateSourceBodyConnectionTwoDatabaseMax = 128;
+
+export const updateSourceBodyConnectionTwoUserMax = 128;
+
+export const updateSourceBodyConnectionTwoPasswordMax = 256;
+
+export const updateSourceBodyConnectionTwoSchemaMax = 128;
 
 
 
@@ -584,14 +617,23 @@ export const UpdateSourceBody = zod.object({
   "name": zod.string().min(1).max(updateSourceBodyNameMax).optional(),
   "kind": zod.enum(['postgresql', 'mysql', 'mongodb', 'snowflake', 'bigquery']).optional(),
   "environment": zod.enum(['production', 'staging', 'development']).optional(),
-  "connection": zod.object({
-  "host": zod.string().min(1).max(updateSourceBodyConnectionHostMax).describe('Database host (hostname or IP)'),
-  "port": zod.coerce.number().int().min(1).max(updateSourceBodyConnectionPortMax).describe('Database port (1-65535)'),
-  "database": zod.string().min(1).max(updateSourceBodyConnectionDatabaseMax).describe('Database name'),
-  "user": zod.string().min(1).max(updateSourceBodyConnectionUserMax).describe('Username for authentication'),
-  "password": zod.string().min(1).max(updateSourceBodyConnectionPasswordMax).describe('Password (write-only, never returned in responses)'),
-  "schema": zod.string().max(updateSourceBodyConnectionSchemaMax).optional().describe('Database schema (optional)')
-}).optional().describe('New connection configuration to store (encrypted). Omit to keep the existing configuration.')
+  "connection": zod.union([zod.object({
+  "kind": zod.enum(['postgresql']),
+  "host": zod.string().min(1).max(updateSourceBodyConnectionOneHostMax).describe('Database host (hostname or IP)'),
+  "port": zod.coerce.number().int().min(1).max(updateSourceBodyConnectionOnePortMax).describe('PostgreSQL port (1-65535), typically 5432'),
+  "database": zod.string().min(1).max(updateSourceBodyConnectionOneDatabaseMax).describe('Database name'),
+  "user": zod.string().min(1).max(updateSourceBodyConnectionOneUserMax).describe('Username for authentication'),
+  "password": zod.string().min(1).max(updateSourceBodyConnectionOnePasswordMax).describe('Password (write-only, never returned in responses)'),
+  "schema": zod.string().max(updateSourceBodyConnectionOneSchemaMax).optional().describe('Database schema (optional, defaults to public)')
+}).describe('PostgreSQL connection credentials. Discriminated by kind=postgresql.'),zod.object({
+  "kind": zod.enum(['mysql']),
+  "host": zod.string().min(1).max(updateSourceBodyConnectionTwoHostMax).describe('Database host (hostname or IP)'),
+  "port": zod.coerce.number().int().min(1).max(updateSourceBodyConnectionTwoPortMax).describe('MySQL port (1-65535), typically 3306'),
+  "database": zod.string().min(1).max(updateSourceBodyConnectionTwoDatabaseMax).describe('Database name'),
+  "user": zod.string().min(1).max(updateSourceBodyConnectionTwoUserMax).describe('Username for authentication'),
+  "password": zod.string().min(1).max(updateSourceBodyConnectionTwoPasswordMax).describe('Password (write-only, never returned in responses)'),
+  "schema": zod.string().max(updateSourceBodyConnectionTwoSchemaMax).optional().describe('MySQL schema (optional, defaults to the database)')
+}).describe('MySQL connection credentials. Discriminated by kind=mysql.')]).optional().describe('New connection configuration to store (encrypted). Omit to keep the existing configuration.')
 })
 
 export const UpdateSourceResponse = zod.object({

@@ -358,9 +358,12 @@ export function createMockRepos() {
       },
       // FASE 7.0.1: réplica del repo real — connectionConfig cifrado (mock) se
       // traduce a una configuración; null (legacy) se queda como null.
-      decryptConnectionConfig(source: { connectionConfig: unknown }) {
+      // M23.1: la config devuelve el discriminador `kind` (source.kind es la
+      // fuente de verdad; el scanner gates por kind antes de llegar aquí).
+      decryptConnectionConfig(source: { connectionConfig: unknown; kind?: string }) {
         if (source.connectionConfig == null) return null;
         return {
+          kind: source.kind === "mysql" ? ("mysql" as const) : ("postgresql" as const),
           host: "mock-host",
           port: 5432,
           database: "mock-db",

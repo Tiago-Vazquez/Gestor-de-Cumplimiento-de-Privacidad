@@ -72,6 +72,7 @@ const validSourceBody = {
   kind: "postgresql",
   environment: "production",
   connection: {
+    kind: "postgresql",
     host: "db.internal.example.com",
     port: 5432,
     database: "app",

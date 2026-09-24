@@ -55,6 +55,17 @@ const describeError = (error: unknown, fallback: string) => {
 /** Límites copiados del contrato (SourceCreate / SourceConnectionInput / SourceUpdate). */
 const MAX_LENGTHS = { name: 256, host: 253, database: 128, user: 128, password: 256, schema: 128 } as const;
 
+/**
+ * M23.1 — kinds con formulario de conexión disponible (unión discriminada de
+ * SourceConnectionInput). El resto (mongodb/snowflake/bigquery) llega en M23.2:
+ * aquí NO se envía connection para esos kinds (el server la rechazaría).
+ */
+const CONNECTION_KINDS = ['postgresql', 'mysql'] as const;
+type ConnectionKind = (typeof CONNECTION_KINDS)[number];
+const isConnectionKind = (kind: string): kind is ConnectionKind =>
+  (CONNECTION_KINDS as readonly string[]).includes(kind);
+const defaultPortFor = (kind: string): string => (kind === 'mysql' ? '3306' : '5432');
+
 interface ConnectionDraft {
   host: string;
   port: string;
@@ -101,16 +112,17 @@ const buildConnectionError = (connection: ConnectionDraft): string | null => {
   return null;
 };
 
-const buildConnection = (connection: ConnectionDraft): SourceConnectionInput => {
-  const built: SourceConnectionInput = {
+const buildConnection = (connection: ConnectionDraft, kind: ConnectionKind): SourceConnectionInput => {
+  const built = {
+    kind,
     host: connection.host.trim(),
     port: Number(connection.port),
     database: connection.database.trim(),
     user: connection.user.trim(),
     password: connection.password,
-  };
+  } as SourceConnectionInput;
   const schema = connection.schema.trim();
-  if (schema) built.schema = schema;
+  if (schema && 'schema' in built) built.schema = schema;
   return built;
 };
 
@@ -123,9 +135,13 @@ const buildSourceCreate = (values: SourceFormValues): { source: SourceCreate; er
     // Sin credenciales: la fuente se crea como no escaneable (contrato).
     return { source: base, error: null };
   }
+  if (!isConnectionKind(values.kind)) {
+    // M23.1: la conexión solo existe para PostgreSQL/MySQL (M23.2 amplía).
+    return { source: null, error: 'La conexión solo está disponible para PostgreSQL y MySQL.' };
+  }
   const connectionError = buildConnectionError(values.connection);
   if (connectionError) return { source: null, error: connectionError };
-  return { source: { ...base, connection: buildConnection(values.connection) }, error: null };
+  return { source: { ...base, connection: buildConnection(values.connection, values.kind) }, error: null };
 };
 
 const buildSourceUpdate = (values: SourceFormValues): { source: SourceUpdate; error: null } | { source: null; error: string } => {
@@ -137,9 +153,12 @@ const buildSourceUpdate = (values: SourceFormValues): { source: SourceUpdate; er
   // usuario cargó datos nuevos. Si todos los campos quedan vacíos, el campo no
   // se envía y el backend conserva la configuración existente.
   if (hasConnectionInput(values.connection)) {
+    if (!isConnectionKind(values.kind)) {
+      return { source: null, error: 'La conexión solo está disponible para PostgreSQL y MySQL.' };
+    }
     const connectionError = buildConnectionError(values.connection);
     if (connectionError) return { source: null, error: connectionError };
-    update.connection = buildConnection(values.connection);
+    update.connection = buildConnection(values.connection, values.kind);
   }
   return { source: update, error: null };
 };
@@ -170,13 +189,15 @@ function SourceFields({ values, onChange, mode }: { values: SourceFormValues; on
           {Object.values(SourceCreateEnvironment).map((environment) => <option key={environment} value={environment}>{environment}</option>)}
         </select>
       </div>
-      <div className="grid gap-3 rounded-xl border border-border bg-[#f8fafb] p-4">
+      <div className="grid gap-3 rounded-xl border border-border bg-[#f8fafb] p-4" data-testid="connection-section">
         <div>
           <p className="label-caps">Conexión (opcional)</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {mode === 'edit'
-              ? 'Dejá todos los campos vacíos para conservar la configuración actual. La contraseña guardada nunca se muestra: para rotarla completá la conexión completa con la nueva contraseña.'
-              : 'Omitila para crear la fuente sin credenciales (no será escaneable hasta configurarla).'}
+            {!isConnectionKind(values.kind)
+              ? `El conector ${sourceNames[values.kind] ?? values.kind} todavía no admite credenciales (M23.2): la fuente se crea sin configuración y no será escaneable.`
+              : mode === 'edit'
+                ? 'Dejá todos los campos vacíos para conservar la configuración actual. La contraseña guardada nunca se muestra: para rotarla completá la conexión completa con la nueva contraseña.'
+                : 'Omitila para crear la fuente sin credenciales (no será escaneable hasta configurarla).'}
           </p>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
@@ -186,7 +207,7 @@ function SourceFields({ values, onChange, mode }: { values: SourceFormValues; on
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="source-port">Puerto</Label>
-            <Input id="source-port" data-testid="input-source-port" inputMode="numeric" value={values.connection.port} onChange={(event) => setConnection({ port: event.target.value })} placeholder="5432" />
+            <Input id="source-port" data-testid="input-source-port" inputMode="numeric" value={values.connection.port} onChange={(event) => setConnection({ port: event.target.value })} placeholder={defaultPortFor(values.kind)} />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="source-database">Base de datos</Label>
@@ -211,7 +232,7 @@ function SourceFields({ values, onChange, mode }: { values: SourceFormValues; on
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="source-schema">Esquema (opcional)</Label>
-            <Input id="source-schema" data-testid="input-source-schema" value={values.connection.schema} onChange={(event) => setConnection({ schema: event.target.value })} placeholder="public" maxLength={MAX_LENGTHS.schema} />
+            <Input id="source-schema" data-testid="input-source-schema" value={values.connection.schema} onChange={(event) => setConnection({ schema: event.target.value })} placeholder={values.kind === 'mysql' ? 'misma base de datos' : 'public'} maxLength={MAX_LENGTHS.schema} />
           </div>
         </div>
       </div>

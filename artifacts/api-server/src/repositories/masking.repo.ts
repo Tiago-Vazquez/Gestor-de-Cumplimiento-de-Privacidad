@@ -6,7 +6,7 @@ import {
   sourcesTable,
   type MaskingJob,
 } from "@workspace/db";
-import { connectPg, readPage } from "../connectors/postgres";
+import { getConnector, isSupportedKind } from "../connectors/registry";
 import { badRequest, notFound } from "../lib/errors";
 import { logger } from "../lib/logger";
 import {
@@ -167,6 +167,8 @@ async function resolveSensitiveColumns(
 /**
  * Lee de la fuente (paginado con cap), anonimiza con el masker M5.b y
  * construye el dataset completo EN MEMORIA antes de persistir.
+ * M23.1 — el conector se resuelve via registry por el kind de la fuente
+ * (mismo camino que el scanner); masking ya NO importa PostgreSQL directo.
  */
 async function buildDataset(
   config: SourceConnectionConfig,
@@ -174,7 +176,11 @@ async function buildDataset(
   fields: string[],
   key: string,
 ): Promise<MaskingDatasetPayload> {
-  const conn = await connectPg(config).catch(() => {
+  if (!isSupportedKind(config.kind)) {
+    throw new MaskingFailure("source_unsupported");
+  }
+  const connector = getConnector(config.kind);
+  const conn = await connector.connect(config).catch(() => {
     throw new MaskingFailure("source_unreachable");
   });
   const rows: Record<string, string>[] = [];
@@ -182,11 +188,11 @@ async function buildDataset(
     for (const [table, columns] of columnsByTable) {
       const budget = MAX_MASKING_RECORDS - rows.length;
       if (budget <= 0) break;
-      const raw = await readPage(conn, table, { limit: budget, offset: 0 }).catch(
-        () => {
+      const raw = await connector
+        .readPage(conn, { name: table }, { limit: budget, offset: 0 })
+        .catch(() => {
           throw new MaskingFailure("source_read_failed");
-        },
-      );
+        });
       for (const record of raw) {
         const masked: Record<string, string> = {};
         for (const { column, type } of columns) {
@@ -223,6 +229,11 @@ export async function create(input: {
   try {
     const config = sourcesRepo.decryptConnectionConfig(source);
     if (!config) {
+      // M23.1 — distinguir "sin conector para el kind" de "sin credenciales":
+      // ambos son auditables con códigos estables y sin datos sensibles.
+      if (source.connectionConfig != null && !isSupportedKind(source.kind)) {
+        throw new MaskingFailure("source_unsupported");
+      }
       throw new MaskingFailure("source_not_configured");
     }
     const columnsByTable = await resolveSensitiveColumns(input.sourceId, fields);

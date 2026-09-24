@@ -3,6 +3,7 @@ import { db, findingsTable, sourcesTable, type Source } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 import { decrypt, encrypt } from "../lib/secret-manager";
 import { logger } from "../lib/logger";
+import { normalizeConnectionConfig, type ConnectionConfig } from "../connectors/types";
 import { newId } from "./ids";
 import { tenantScopeStrict, withTenant } from "./tenant";
 import { bgDb } from "@workspace/db/background";
@@ -10,32 +11,30 @@ import { bgDb } from "@workspace/db/background";
 export type SourceWithFindingsCount = Source & { findingsCount: number };
 
 /**
- * Configuración de conexión para fuentes externas (FASE 7.0.0).
- * Se almacena cifrada en `sources.connection_config` y solo se descifra
- * cuando el scanner necesita abrir la conexión.
+ * Configuración de conexión para fuentes externas (FASE 7.0.0; M23.1).
+ * Unión discriminada por `kind` (postgresql | mysql) definida en
+ * `connectors/types.ts`. Se almacena cifrada en `sources.connection_config`
+ * y solo se descifra cuando el scanner/masking necesita abrir la conexión.
+ * Alias mantenido por compatibilidad con rutas y tests existentes.
  */
-export interface SourceConnectionConfig {
-  host: string;
-  port: number;
-  database: string;
-  user: string;
-  password: string;
-  schema?: string;
-}
+export type SourceConnectionConfig = ConnectionConfig;
 
 /**
  * Cifra la configuración de conexión antes de persistirla.
  * Fail-closed: si SOURCE_ENCRYPTION_KEY no está configurada, lanza error.
  */
-export function encryptConnectionConfig(config: SourceConnectionConfig): string {
+export function encryptConnectionConfig(config: ConnectionConfig): string {
   return encrypt(JSON.stringify(config));
 }
 
 /**
- * Descifra la configuración de conexión desde su representación almacenada.
- * Retorna null si la fuente no tiene configuración (fuentes legacy).
+ * Descifra y VALIDA la configuración de conexión (M23.1, server-side):
+ * devuelve la unión discriminada por `kind` o `null` (fail-closed) si la
+ * fuente no tiene configuración, el descifrado falla, el kind no tiene
+ * conector, el kind guardado no coincide con el de la fuente, o la forma no
+ * cumple el contrato. Nunca lanza con contenido de config en el log.
  */
-export function decryptConnectionConfig(source: Source): SourceConnectionConfig | null {
+export function decryptConnectionConfig(source: Source): ConnectionConfig | null {
   if (!source.connectionConfig) {
     return null;
   }
@@ -43,8 +42,9 @@ export function decryptConnectionConfig(source: Source): SourceConnectionConfig 
   const encrypted = typeof source.connectionConfig === "string"
     ? source.connectionConfig
     : String(source.connectionConfig);
+  let parsed: unknown;
   try {
-    return JSON.parse(decrypt(encrypted));
+    parsed = JSON.parse(decrypt(encrypted));
   } catch (error) {
     // FASE 7.0.5 (M8): distinguir ausencia de configuración (null limpio arriba)
     // de fallo de descifrado. Se registra con sourceId para diagnóstico, sin
@@ -55,6 +55,16 @@ export function decryptConnectionConfig(source: Source): SourceConnectionConfig 
     );
     return null;
   }
+  const config = normalizeConnectionConfig(source.kind, parsed);
+  if (!config) {
+    // Forma inválida / kind sin conector / kind mismatch → fail-closed.
+    logger.warn(
+      { sourceId: source.id, kind: source.kind },
+      "Connection config failed validation; treated as not scannable",
+    );
+    return null;
+  }
+  return config;
 }
 
 /**

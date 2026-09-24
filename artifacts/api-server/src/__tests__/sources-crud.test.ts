@@ -51,6 +51,7 @@ const validBody = {
   kind: "postgresql",
   environment: "production",
   connection: {
+    kind: "postgresql",
     host: "db.internal.example.com",
     port: 5432,
     database: "app",
@@ -155,6 +156,102 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     expect(state().sources.length).toBe(before + 1);
   });
 
+  it("POST /api/sources (admin) MySQL → 201, cifra con kind mysql y no filtra secretos", async () => {
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({
+        name: "MySQL CRM",
+        kind: "mysql",
+        environment: "production",
+        connection: {
+          kind: "mysql",
+          host: "mysql.internal.example.com",
+          port: 3306,
+          database: "crm",
+          user: "scanner",
+          password: "mysql-super-secret-456",
+        },
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.kind).toBe("mysql");
+    expect(res.body.scannable).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain("mysql-super-secret-456");
+    expect("connection" in res.body).toBe(false);
+    const created = state().sources.find((s) => s.name === "MySQL CRM");
+    // El ciphertext no contiene el kind en claro ni las credenciales.
+    expect(created?.connectionConfig).toBeTruthy();
+    expect(created?.connectionConfig ?? "").not.toContain("mysql-super-secret-456");
+    expect(created?.connectionConfig ?? "").not.toContain("3306");
+  });
+
+  it("POST /api/sources con kind mismatch (source mysql / connection postgresql) → 400 sin crear", async () => {
+    const before = state().sources.length;
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ ...validBody, name: "Mismatch", kind: "mysql" });
+    expect(res.status).toBe(400);
+    expect(state().sources.length).toBe(before);
+    expect(state().sources.some((s) => s.name === "Mismatch")).toBe(false);
+  });
+
+  it("POST /api/sources con connection para kind sin conector (mongodb) → 400 sin crear", async () => {
+    const before = state().sources.length;
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ ...validBody, name: "Mongo", kind: "mongodb" });
+    expect(res.status).toBe(400);
+    expect(state().sources.length).toBe(before);
+  });
+
+  it("POST /api/sources kind mongodb sin connection → 201 scannable=false (declarable, no escaneable)", async () => {
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ name: "Mongo Placeholder", kind: "mongodb", environment: "staging" });
+    expect(res.status).toBe(201);
+    expect(res.body.kind).toBe("mongodb");
+    expect(res.body.scannable).toBe(false);
+  });
+
+  it("POST /api/sources ignora campos desconocidos de connection (no se persisten)", async () => {
+    const { repos } = await import("../repositories");
+    const spy = vi.spyOn(repos.sources, "createSource");
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({
+        ...validBody,
+        name: "Campos extra",
+        connection: { ...validBody.connection, connectTimeoutMs: 999999, rce: "payload()" },
+      });
+    expect(res.status).toBe(201);
+    // La ruta reenvía la config YA normalizada (solo campos conocidos).
+    const forwarded = spy.mock.calls.at(-1)?.[0] as { connection?: Record<string, unknown> };
+    expect(forwarded.connection).toEqual({
+      kind: "postgresql",
+      host: validBody.connection.host,
+      port: validBody.connection.port,
+      database: validBody.connection.database,
+      user: validBody.connection.user,
+      password: validBody.connection.password,
+      schema: "public",
+    });
+    expect(Object.keys(forwarded.connection ?? {})).not.toContain("connectTimeoutMs");
+    expect(Object.keys(forwarded.connection ?? {})).not.toContain("rce");
+    // El mock persiste un marcador opaco: nunca el plaintext de la credencial.
+    const created = state().sources.find((s) => s.name === "Campos extra");
+    expect(created?.connectionConfig).toBe("mock-encrypted-connection-string");
+    spy.mockRestore();
+  });
+
   it("POST /api/sources body inválido → 400", async () => {
     const before = state().sources.length;
     const res = await request(server)
@@ -193,6 +290,59 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     expect(res.body.id).toBe("src-002");
     const row = state().sources.find((s) => s.id === "src-002");
     expect(row?.name).toBe("Warehouse Renombrado");
+  });
+
+  it("PATCH /api/sources/:id con kind mismatch (kind mysql / connection postgresql) → 400 sin mutar", async () => {
+    const before = state().sources.find((s) => s.id === "src-004");
+    const res = await request(server)
+      .patch("/api/sources/src-004")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ kind: "mysql", connection: { ...validBody.connection } });
+    expect(res.status).toBe(400);
+    const after = state().sources.find((s) => s.id === "src-004");
+    expect(after?.kind).toBe(before?.kind);
+    expect(after?.connectionConfig).toBe(before?.connectionConfig ?? null);
+  });
+
+  it("PATCH /api/sources/:id connection MySQL sobre fuente MySQL → 200 y config aceptada", async () => {
+    const created = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ name: "MySQL PATCH target", kind: "mysql", environment: "production" });
+    expect(created.status).toBe(201);
+
+    const res = await request(server)
+      .patch(`/api/sources/${created.body.id}`)
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({
+        connection: {
+          kind: "mysql",
+          host: "mysql2.internal.example.com",
+          port: 3307,
+          database: "crm2",
+          user: "scanner2",
+          password: "rotated-mysql-secret-789",
+        },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.scannable).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain("rotated-mysql-secret-789");
+    const row = state().sources.find((s) => s.id === created.body.id);
+    expect(row?.connectionConfig).toBe("mock-encrypted-connection-string");
+  });
+
+  it("PATCH /api/sources/:id connection para kind sin conector (snowflake) → 400 sin mutar", async () => {
+    // src-002 es un kind sin conector en M23.1: no puede recibir credenciales.
+    const res = await request(server)
+      .patch("/api/sources/src-002")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ connection: { ...validBody.connection } });
+    expect(res.status).toBe(400);
+    expect(state().sources.find((s) => s.id === "src-002")?.connectionConfig ?? null).toBeNull();
   });
 
   it("PATCH /api/sources/:id (auditor) → 403 sin mutar", async () => {
