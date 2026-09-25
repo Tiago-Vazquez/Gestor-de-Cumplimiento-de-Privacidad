@@ -194,7 +194,40 @@ alterar datos, restaura según DR y valida conteos/RLS antes del cierre.
 5. Usa `RESTORE_KEEP=1` solo para inspección/cutover; después limpia el proyecto
    con `docker compose -p <project> -f scripts/ops/docker-compose.restore.yml down --volumes --remove-orphans`.
 
-## 7. Observabilidad mínima actual
+## 7. El backup no arranca porque hay otro en ejecución
+
+### Identificar
+
+Un backup que termina con código **75** no está fallando: significa que otro
+proceso ya tiene el lock. El mensaje incluye el PID:
+
+```text
+backup: another backup already holds /secure/backups/privacy/postgres/.m24-backup.lock (pid 1026); not starting
+```
+
+### Resolver
+
+1. Comprueba si realmente hay un backup en curso antes de tocar nada:
+
+   ```bash
+   cat /secure/backups/privacy/postgres/.m24-backup.lock/pid
+   ps -p "$(cat /secure/backups/privacy/postgres/.m24-backup.lock/pid)"
+   ```
+
+2. Si el proceso existe, **espera**: el lock se libera solo al terminar. No lo
+   borres a la fuerza, porque Could dos backups correr a la vez.
+
+3. Si el proceso **no** existe, el lock es residual. Puedes esperar a que el
+   script lo reclame solo (comprueba la liveness del PID), o borrarlo y reintentar:
+
+   ```bash
+   rm -rf /secure/backups/privacy/postgres/.m24-backup.lock
+   ```
+
+   El código 75 debe tratarse como "reintentar más tarde" en cualquier
+   planificador, nunca como fallo definitivo.
+
+## 8. Observabilidad mínima actual
 
 ```bash
 docker compose ps

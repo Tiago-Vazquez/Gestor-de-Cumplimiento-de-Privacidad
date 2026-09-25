@@ -10,6 +10,72 @@ BACKUP_DIR="${BACKUP_DIR:-}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
 fail() { echo "backup: $*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# M25.2 concurrency guard
+#
+# A logical backup is a multi-step operation against one database. Two
+# overlapping runs would race on artefact names and could publish a partially
+# written dump. A lock directory is used rather than flock(1) so the guard also
+# works on the minimal shells this repository is developed against, where flock
+# is not present. The lock is released by the EXIT trap on success, on error
+# and on SIGINT/SIGTERM; a process killed with SIGKILL cannot run any trap, so
+# the PID liveness check reclaims the lock it leaves behind.
+# ---------------------------------------------------------------------------
+# 75 is EX_TEMPFAIL: another instance holds the lock, retry later.
+EXIT_LOCKED=75
+# Resolved after BACKUP_DIR_ABS is known; an override may still be supplied.
+LOCK_DIR="${BACKUP_LOCK_DIR:-}"
+LOCK_GRACE_SECONDS="${BACKUP_LOCK_GRACE_SECONDS:-120}"
+LOCK_HELD=""
+
+lock_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
+
+lock_holder_pid() {
+  [[ -f "$LOCK_DIR/pid" ]] || return 0
+  tr -dc '0-9' < "$LOCK_DIR/pid" 2>/dev/null || true
+}
+
+write_lock_files() {
+  printf '%s\n' "$$" > "$LOCK_DIR/pid"
+  printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$LOCK_DIR/acquired_at"
+}
+
+release_lock() {
+  [[ "$LOCK_HELD" == "1" ]] || return 0
+  rm -rf "$LOCK_DIR"
+  LOCK_HELD=""
+  return 0
+}
+
+acquire_lock() {
+  local holder dir_age
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    write_lock_files
+    LOCK_HELD=1
+    return 0
+  fi
+
+  holder="$(lock_holder_pid)"
+  if [[ -n "$holder" ]] && kill -0 "$holder" 2>/dev/null; then
+    return 1
+  fi
+
+  # Without a readable holder, only reclaim once the directory is older than the
+  # grace period: a just-created lock may simply not have written its pid yet.
+  if [[ -z "$holder" ]]; then
+    dir_age=$(( $(date +%s) - $(lock_mtime "$LOCK_DIR") ))
+    [[ "$dir_age" -ge "$LOCK_GRACE_SECONDS" ]] || return 1
+  fi
+
+  echo "backup: reclaiming stale lock (holder pid=${holder:-unknown}, age=${dir_age:-0}s)" >&2
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" 2>/dev/null || return 1
+  write_lock_files
+  LOCK_HELD=1
+  return 0
+}
+
 # Git Bash/MSYS rewrites POSIX-looking arguments passed to native Windows
 # executables. Keep paths that belong inside the container untouched.
 docker_exec() { MSYS_NO_PATHCONV=1 docker exec "$@"; }
@@ -25,6 +91,30 @@ if [[ "${ALLOW_LOCAL_BACKUP:-0}" != "1" && ( "$BACKUP_DIR_ABS" == "$ROOT_ABS" ||
   fail "BACKUP_DIR must be outside the repository (or explicitly opt in for a drill)"
 fi
 
+[[ -n "$LOCK_DIR" ]] || LOCK_DIR="$BACKUP_DIR_ABS/.m24-backup.lock"
+
+if ! acquire_lock; then
+  echo "backup: another backup already holds $LOCK_DIR (pid $(lock_holder_pid || true)); not starting" >&2
+  echo "backup: if no backup is actually running, remove $LOCK_DIR and retry" >&2
+  exit "$EXIT_LOCKED"
+fi
+
+# Installed before any work so the lock is released on every exit path,
+# including a failure that happens before db_id and remote_dump exist.
+cleanup() {
+  if [[ -n "${db_id:-}" && -n "${remote_dump:-}" ]]; then
+    docker_exec "$db_id" rm -f "$remote_dump" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${tmp_dir:-}" ]]; then
+    rm -rf "$tmp_dir"
+  fi
+  release_lock
+  return 0
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 COMPOSE_ARGS=(-f "$COMPOSE_FILE")
 if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then COMPOSE_ARGS+=(-p "$COMPOSE_PROJECT_NAME"); fi
 compose() { docker compose "${COMPOSE_ARGS[@]}" "$@"; }
@@ -33,15 +123,16 @@ db_id="$(compose ps -q db)"
 [[ -n "$db_id" ]] || fail "the Compose db service is not running"
 compose exec -T db true >/dev/null
 
+# mktemp guarantees an unused name, so its random suffix makes the artefact base
+# unique even when two runs land in the same wall-clock second. The lock above
+# serialises runs; this suffix removes the remaining same-second collision when a
+# backup is repeated immediately.
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-base="m24-postgres-$timestamp"
 tmp_dir="$(mktemp -d "$BACKUP_DIR/.m24-tmp.XXXXXX")"
+run_suffix="${tmp_dir##*.}"
+[[ -n "$run_suffix" && "$run_suffix" != "$tmp_dir" ]] || fail "could not derive a unique run suffix from $tmp_dir"
+base="m24-postgres-$timestamp-$run_suffix"
 remote_dump="/tmp/$base.dump"
-cleanup() {
-  docker_exec "$db_id" rm -f "$remote_dump" >/dev/null 2>&1 || true
-  rm -rf "$tmp_dir"
-}
-trap cleanup EXIT
 
 dump_tmp="$tmp_dir/$base.dump"
 roles_tmp="$tmp_dir/$base.roles.sql"

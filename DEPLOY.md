@@ -47,10 +47,54 @@ BACKUP_RETENTION_DAYS=14 \\
 Salida típica:
 
 ```text
-backup=/secure/backups/privacy/postgres/m24-postgres-<timestamp>.dump
+backup=/secure/backups/privacy/postgres/m24-postgres-<timestamp>-<sufijo>.dump
 roles=...roles.sql
 manifest=...manifest
 ```
+
+#### Concurrencia, unicidad y códigos de salida (M25.2)
+
+El script está preparado para ejecución desatendida. No implementa todavía ningún
+disparador (ni cron ni scheduled actions): eso es M25.3.
+
+**Lock.** Se usa un **lock-dir**, no `flock(1)`, porque `flock` no existe en las
+shells mínimas contra las que se desarrolla este repositorio y porque un lock-dir
+funciona igual en el contenedor de backup y en el host. El lock es
+`$BACKUP_DIR/.m24-backup.lock` (configurable con `BACKUP_LOCK_DIR`).
+
+- Se toma **antes de cualquier trabajo** y se libera con el trap `EXIT` tanto en
+  éxito como en error, y también con `SIGINT`/`SIGTERM`.
+- Un proceso terminado con `SIGKILL` no puede ejecutar ningún trap, así que el
+  lock se recupera comprobando la liveness del PID: si el PID ya no existe, el
+  lock se considera obsoleto y se reclama. Si el fichero `pid` no es legible, solo
+  se reclama cuando el lock es más antiguo que `BACKUP_LOCK_GRACE_SECONDS`
+  (120 s por defecto), para no robarle el lock a una ejecución que aún no lo
+  escribió.
+- Si el lock está tomado, el script **no hace nada** y lo dice explícitamente.
+
+**Códigos de salida**
+
+| Código | Significado |
+| --- | --- |
+| `0` | Backup completo y verificado |
+| `1` | Error (dump vacío, base inaccesible, `BACKUP_DIR` inválido…) |
+| `75` | `EX_TEMPFAIL`: hay otro backup en ejecución, no se inicia nada |
+
+`75` es el valor que un planificador debe tratar como "reintentar más tarde", no
+como fallo definitivo.
+
+**Unicidad de artefactos.** El nombre base es
+`m24-postgres-<timestamp-UTC>-<sufijo>`, donde el sufijo son los 6 caracteres
+aleatorios que `mktemp` ya usaba para el directorio temporal. `mktemp` garantiza
+que ese nombre no está en uso, de modo que **dos ejecuciones dentro del mismo
+segundo no pueden colisionar**, incluso si se repiten de inmediato. El lock
+serializa ejecuciones concurrentes; el sufijo cubre la colisión restante entre
+ejecuciones consecutivas en el mismo segundo.
+
+**Limpieza.** El lock nunca debe quedar en el directorio tras una ejecución
+correcta. Si aparece y no hay ningún backup corriendo, se puede borrar a mano y
+reintentar; el script también lo reclamo solo por las reglas de obsolescencia
+descritas arriba.
 
 El export `.roles.sql` es inventario de cluster y **no se ejecuta durante el
 restore** (contiene el rol administrativo original). El restore crea los roles
