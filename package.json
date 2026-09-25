@@ -4,11 +4,22 @@
   "license": "MIT",
   "scripts": {
     "preinstall": "node -e \"const fs=require('fs');for(const f of ['package-lock.json','yarn.lock'])fs.rmSync(f,{force:true});if(!(process.env.npm_config_user_agent||'').startsWith('pnpm/')){console.error('Use pnpm instead');process.exit(1)}\"",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "build": "pnpm run typecheck:product && pnpm run build:product",
+    "build:product": "pnpm --filter @workspace/api-server run build && pnpm --filter @workspace/privacy-compliance-manager run build",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck:product": "pnpm run typecheck:libs && pnpm --filter @workspace/api-server run typecheck && pnpm --filter @workspace/privacy-compliance-manager run typecheck",
+    "typecheck:sandbox": "pnpm --filter @workspace/mockup-sandbox run typecheck",
+    "typecheck": "pnpm run typecheck:product",
+    "test:product": "pnpm --filter @workspace/api-server run test && pnpm --filter @workspace/privacy-compliance-manager run test",
+    "ops:backup": "bash scripts/ops/postgres-backup.sh",
+    "ops:restore": "bash scripts/ops/postgres-restore.sh",
+    "audit:high": "pnpm audit --audit-level high"
   },
   "private": true,
+  "packageManager": "pnpm@10.18.3",
+  "engines": {
+    "node": ">=22.22.2"
+  },
   "devDependencies": {
     "prettier": "^3.9.6",
     "typescript": "~5.9.3"

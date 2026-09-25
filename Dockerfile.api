@@ -1,5 +1,5 @@
 # M12 — etage base: Node 22 + pnpm via corepack.
-FROM node:22-alpine AS base
+FROM node:22.22.2-alpine AS base
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
 WORKDIR /repo
@@ -50,16 +50,15 @@ COPY lib/auth ./lib/auth
 CMD ["pnpm", "--filter", "@workspace/db", "run", "db:migrate"]
 
 # M12 — runtime mínimo: solo dist/ + dependencias prod; usuario no root.
-FROM node:22-alpine AS runtime
+FROM node:22.22.2-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app
-COPY --from=build /repo/artifacts/api-server/dist ./dist
-COPY --from=build /repo/artifacts/api-server/package.json ./
+COPY --chown=app:app --from=build /repo/artifacts/api-server/dist ./dist
+COPY --chown=app:app --from=build /repo/artifacts/api-server/package.json ./
 # M20.2-C — node_modules podado (solo prod: express, pg, drizzle, pino,
 # rate-limit...) generado por `pnpm deploy` en el stage prod-deps.
-COPY --from=prod-deps /out/node_modules ./node_modules
-RUN chown -R app:app /app
+COPY --chown=app:app --from=prod-deps /out/node_modules ./node_modules
 USER app
 EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

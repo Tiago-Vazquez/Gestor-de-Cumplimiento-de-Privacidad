@@ -1,5 +1,133 @@
 # M12 — Despliegue local con Docker Compose
 
+## M24 — Backups y Disaster Recovery
+
+El despliegue Compose actual usa PostgreSQL 16 Alpine y un volumen Docker nombrado
+`pgdata` (`/var/lib/postgresql/data`). El backup operativo de M24 es **lógico**:
+`pg_dump` en formato custom, acompañado de un export de roles sin contraseñas y
+un manifiesto con SHA-256, versión de PostgreSQL, número de migraciones y conteos
+de tablas esenciales. No se respaldan los secretos de `.env`, las claves de cifrado
+ni los volúmenes de fuentes externas.
+
+### Política inicial
+
+- **Frecuencia:** una ejecución diaria como mínimo; puede incrementarse según el
+  SLA del cliente.
+- **Retención:** 14 días por defecto (`BACKUP_RETENTION_DAYS=14`). La retención
+  se aplica solo a los tres artefactos `m24-postgres-*` del directorio elegido.
+- **Ubicación:** un volumen/almacenamiento externo al repositorio y al host Docker.
+  El script rechaza directorios dentro del repo, salvo que se use
+  `ALLOW_LOCAL_BACKUP=1` únicamente para un drill.
+- **Protección:** permisos `600`, cifrado del almacenamiento subyacente y control
+  de acceso al secreto/almacenamiento. El dump contiene datos de negocio cifrados
+  en la capa de fuentes, por lo que debe tratarse como información sensible.
+- **Verificación:** el script ejecuta `pg_restore --list` y genera checksums; el
+  restore vuelve a verificar ambos checksums antes de tocar una base destino.
+
+Estos valores son **objetivos iniciales**, no garantías de SLA:
+
+- **RPO objetivo:** 24 horas para la última ejecución lógica completa.
+- **RTO objetivo:** 4 horas para detectar, preparar un destino limpio, restaurar,
+  ejecutar migraciones y validar API/datos.
+
+Compose no configura PITR, WAL archiving ni réplicas. Por tanto, M24 no promete
+recuperación a un punto en el tiempo ni protege contra pérdida del host/disco.
+Una evolución comercial posterior debe añadir backups off-host/PITR y una prueba de
+restore automatizada en CI.
+
+### Crear y verificar un backup
+
+```bash
+# BACKUP_DIR debe estar fuera del repositorio.
+BACKUP_DIR=/secure/backups/privacy/postgres \\
+BACKUP_RETENTION_DAYS=14 \\
+  pnpm run ops:backup
+```
+
+Salida típica:
+
+```text
+backup=/secure/backups/privacy/postgres/m24-postgres-<timestamp>.dump
+roles=...roles.sql
+manifest=...manifest
+```
+
+El export `.roles.sql` es inventario de cluster y **no se ejecuta durante el
+restore** (contiene el rol administrativo original). El restore crea los roles
+runtime mediante `scripts/ops/restore-roles.sql` y provisiona sus contraseñas con
+`db:provision-roles`. Si el proyecto destino ya existe, el script se niega a
+continuar; `RESTORE_REPLACE=1` requiere una decisión explícita de corte.
+
+### Restore reproducible
+
+El destino debe ser un proyecto Compose nuevo. No se debe apuntar el comando al
+proyecto/volumen de producción ni usar `RESTORE_REPLACE=1` sin una decisión
+explícita de corte:
+
+```bash
+export RESTORE_CONFIRM=RESTORE
+export RESTORE_PROJECT_NAME=privacy-restore-$(date +%Y%m%d%H%M%S)
+export RESTORE_POSTGRES_PASSWORD='...'
+export RESTORE_APP_ROLE_PASSWORD='...'
+export RESTORE_BG_ROLE_PASSWORD='...'
+export RESTORE_JWT_SECRET='...al menos 32 caracteres...'
+export RESTORE_SOURCE_ENCRYPTION_KEY='...al menos 32 caracteres...'
+
+pnpm run ops:restore -- \\
+  --backup /secure/backups/privacy/postgres/m24-postgres-<timestamp>.dump \\
+  --roles /secure/backups/privacy/postgres/m24-postgres-<timestamp>.roles.sql \\
+  --manifest /secure/backups/privacy/postgres/m24-postgres-<timestamp>.manifest
+```
+
+El script:
+
+1. valida checksums y la lista TOC del archivo;
+2. arranca un PostgreSQL 16 aislado;
+3. espera una conexión real a la base destino;
+4. crea roles runtime con privilegios mínimos;
+5. ejecuta `pg_restore --exit-on-error --single-transaction`;
+6. ejecuta las migraciones y provisioning de roles;
+7. arranca la API y comprueba `/api/livez` y `/api/readyz`;
+8. compara conteos y verifica `RLS` y `FORCE RLS` activos en **las 7 tablas**
+   protegidas por la migración `0018` (`sources`, `findings`, `reports`,
+   `activity`, `scans`, `scan_schedules`, `masking_jobs`), y falla si alguna no
+   está en `public`, no existe, o perdió cualquiera de los dos atributos;
+9. verifica los atributos de los roles runtime: `app_role` con `NOBYPASSRLS` y
+   `bg_role` con `BYPASSRLS`;
+10. elimina red/volumen/contenedores al salir, salvo `RESTORE_KEEP=1`.
+
+Para un drill local en un host donde BuildKit no puede terminar `chown` sobre
+`node_modules`, se pueden suministrar imágenes ya construidas:
+
+```bash
+export RESTORE_API_IMAGE=gestor-de-cumplimiento-de-privacidad-api:latest
+export RESTORE_MIGRATE_IMAGE=gestor-de-cumplimiento-de-privacidad-migrate:latest
+```
+
+Los overrides son opcionales; el flujo normal y CI no los usan.
+
+### Criterio de restore válido
+
+Un restore solo se considera válido cuando termina con `restore=ok`, ambos probes
+devuelven JSON healthy, los conteos del manifiesto coinciden, la comprobación RLS no
+falla y los atributos de los roles son los esperados. El dump por sí solo no es
+evidencia de recuperación.
+
+Dos condiciones de seguridad son parte de ese criterio y no son negociables:
+
+- **RLS completo:** las 7 tablas de la migración `0018` conservan `ENABLE` y
+  `FORCE ROW LEVEL SECURITY`. Verificar una sola tabla dejaría pasar un restore con
+  el resto del aislamiento multi-tenant anulado.
+- **Roles correctos:** `app_role` existe con `NOBYPASSRLS` y `bg_role` con
+  `BYPASSRLS`. Si el dump resucitara `app_role` como un rol con `BYPASSRLS`, el
+  aislamiento por tenant se anularía en silencio y ningún test de conteos lo
+  detectaría.
+
+### Runbook
+
+La respuesta a incidentes y los pasos de operación están en
+[`docs/operations-runbook.md`](docs/operations-runbook.md).
+
 Objetivo: levantar localmente PostgreSQL + API + frontend con un solo comando,
 sin cambiar lógica de negocio. El scheduler corre dentro del proceso del API
 exactamente como en desarrollo (`startScanScheduler()` en `src/index.ts`).
@@ -46,9 +174,10 @@ docker compose down            # detener
 docker compose down -v         # detener + borrar datos (¡destructivo!)
 ```
 
-> Nota: en el entorno de desarrollo actual `docker` no está instalado, por lo
-> que `build`/`up`/`config` están **pendientes de validación real** (ver
-> "Riesgos conocidos").
+> M24 validó localmente `docker compose config`, la suite real de conectores
+> (19/19), un backup real y un restore end-to-end en un proyecto PostgreSQL 16
+> aislado. En otro host, ejecuta los mismos comandos antes de declarar disponible
+> el servicio.
 
 ## Variables (ver `.env.example`)
 
@@ -83,5 +212,7 @@ Luego el admin inicia sesión con email + password. Idempotente.
 
 - Primera build pesada (pnpm instala todo el monorepo en la etapa `deps`);
   las siguientes usan layer caching de `package.json`+lockfile.
-- `pnpm audit` no es ejecutable en todos los entornos (requiere red al índice
-  de advisories); no bloquea el despliegue.
+- `pnpm audit --audit-level high` es ahora un gate obligatorio de CI; la
+  ejecución local validada dejó 1 advisory low y 4 moderate, todos en tooling
+  de desarrollo/test. El gate high/critical está en verde y los advisories
+  residuales están documentados en `docs/ci.md`.

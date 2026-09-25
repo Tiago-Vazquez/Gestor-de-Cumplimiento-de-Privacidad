@@ -83,6 +83,14 @@ overrides:
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
   esbuild: "0.27.3"
+  # Security-only transitive pins required by the high/critical audit gate.
+  # Keep these aligned with the patched versions reported by pnpm audit.
+  "fast-uri": "3.1.6"
+  "brace-expansion": "5.0.9"
+  "js-yaml": "4.3.2"
+  "nanoid": "3.3.18"
+  "@scalar/json-magic>undici": "7.29.0"
+
 
 # pnpm >= 11 build-script approval (replaces onlyBuiltDependencies there).
 # esbuild is trusted in this workspace: it is pinned to 0.27.3 via `overrides`
