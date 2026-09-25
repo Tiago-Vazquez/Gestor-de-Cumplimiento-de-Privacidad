@@ -166,6 +166,53 @@ Dos condiciones de seguridad son parte de ese criterio y no son negociables:
   `BYPASSRLS`. Si el dump resucitara `app_role` como un rol con `BYPASSRLS`, el
   aislamiento por tenant se anularía en silencio y ningún test de conteos lo
   detectaría.
+- **Clave de cifrado usable (M25.3):** el restore **descifra de verdad** una
+  `sources.connection_config` contra la base restaurada. Hasta M25.3 esto no se
+  comprobaba, por lo que un restore hecho con la clave equivocada pasaba todos los
+  demás criterios y aun así dejaba todas las fuentes sin conectar.
+
+#### Verificación de `SOURCE_ENCRYPTION_KEY` (M25.3)
+
+El manifest incluye `source_key_fingerprint`, que es `sha256(sha256(clave))`: una
+huella de la clave **derivada**, que permite comparar sin exponer el secreto. Se
+calcula **dentro del contenedor `api`**, que es el único que tiene la clave en su
+entorno, de modo que la clave cruda nunca llega al host ni al manifest.
+
+| Estado | Comportamiento del restore |
+| --- | --- |
+| Fingerprint presente y coincide | Continúa al descifrado |
+| Fingerprint presente y **difiere** | **Falla de inmediato**, sin intentar descifrar |
+| Fingerprint **ausente** (backup anterior a M25.3) | **Aviso** y continúa; el descifrado sigue verificando la clave |
+
+El descifrado se ejecuta en el contenedor `migrate` —el único del stack con Node y
+`pg` resoluble— usando la conexión administrativa. **Nunca** con `app_role`: con
+RLS y sin `app.tenant_id` devolvería cero filas y produciría un falso verde.
+
+La salida del check es explícita sobre el estado real:
+
+```text
+key_check_total_sources=3
+key_check_encrypted_sources=1
+key_check_null_sources=2
+key_check_fingerprint=match
+key_check_verified=true
+```
+
+- `key_check_null_sources` cuenta las fuentes legacy sin configuración de conexión.
+  **No se contabilizan como verificadas.**
+- Si no hay ninguna fuente cifrada, el check **no** afirma verificación: informa
+  `key_check_verified=false` y `key_check_reason=no_encrypted_sources`, y el
+  restore continúa con un aviso. Es un estado honesto, no un verde.
+- `key_check_verified=true` solo aparece tras descifrar un valor de verdad. Como
+  AES-256-GCM es autenticado, descifrar correctamente **es** la prueba de que la
+  clave es la correcta.
+
+El algoritmo está replicado en `scripts/ops/verify-source-key.cjs` porque ninguna
+imagen incluye `artifacts/api-server/src/lib/secret-manager.ts`. Esa duplicación
+está anclada por
+`artifacts/api-server/src/__tests__/restore-key-check-anchor.test.ts`, que falla si
+deja de coincidir con `decrypt()` real. El **formato del ciphertext no se modifica**
+en ningún momento.
 
 ### Runbook
 

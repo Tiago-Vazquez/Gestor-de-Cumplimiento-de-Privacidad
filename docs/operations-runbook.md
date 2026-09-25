@@ -190,11 +190,44 @@ alterar datos, restaura según DR y valida conteos/RLS antes del cierre.
 1. Identifica dump, roles inventory y manifest fuera del repositorio.
 2. Verifica ambos SHA-256 y el entorno de destino.
 3. Ejecuta `pnpm run ops:restore -- ...` siguiendo [`DEPLOY.md`](DEPLOY.md#restore-reproducible).
-4. Exige `restore=ok`, ambos probes 200, conteos coincidentes y RLS/FORCE RLS.
+4. Exige `restore=ok`, ambos probes 200, conteos coincidentes, RLS/FORCE RLS y
+   `key_check_verified=true` (M25.3).
 5. Usa `RESTORE_KEEP=1` solo para inspección/cutover; después limpia el proyecto
    con `docker compose -p <project> -f scripts/ops/docker-compose.restore.yml down --volumes --remove-orphans`.
 
-## 7. El backup no arranca porque hay otro en ejecución
+## 7. El restore falla por clave de cifrado
+
+### Identificar
+
+Desde M25.3 el restore **descifra de verdad** una credencial de fuente. Dos fallos
+son posibles y significan cosas distintas:
+
+```text
+restore: SOURCE_ENCRYPTION_KEY does not match this backup (fingerprint mismatch); refusing to declare the restore usable
+```
+
+El manifest lleva `source_key_fingerprint` y la clave que usaste no corresponde a
+ese backup. **Falla antes de descifrar.**
+
+```text
+key-check: decryption failed: Unsupported state or unable to authenticate data
+```
+
+El manifest no traía fingerprint (backup anterior a M25.3) y la clave resulta ser
+incorrecta: AES-256-GCM rechazó el tag de autenticación.
+
+### Resolver
+
+1. **No es un fallo de la base restaurada.** Los conteos, RLS y roles ya pasaron:
+   el problema es exclusivamente la clave.
+2. Recupera la clave correcta según el procedimiento de custodia de
+   `DEPLOY.md`. No pruebes claves a fuerza bruta: el fingerprint del manifest ya
+   te dice si la que tienes es la correcta.
+3. Un `key_check_verified=false` con `key_check_reason=no_encrypted_sources` **no es
+   un fallo**: el backup no contenía ninguna fuente con configuración cifrada, así
+   que no había nada que verificar. Es un estado honesto, no un verde.
+
+## 8. El backup no arranca porque hay otro en ejecución
 
 ### Identificar
 
@@ -227,7 +260,7 @@ backup: another backup already holds /secure/backups/privacy/postgres/.m24-backu
    El código 75 debe tratarse como "reintentar más tarde" en cualquier
    planificador, nunca como fallo definitivo.
 
-## 8. Observabilidad mínima actual
+## 9. Observabilidad mínima actual
 
 ```bash
 docker compose ps

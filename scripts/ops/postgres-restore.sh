@@ -206,6 +206,43 @@ assert_role_bypassrls bg_role t
 expected_migrations="$(manifest_value migration_count)"
 actual_migrations="$(docker_exec "$db_id" psql -U "$TARGET_USER" -d "$TARGET_DB" -Atc 'SELECT count(*) FROM drizzle.__drizzle_migrations;')"
 [[ "$actual_migrations" == "$expected_migrations" ]] || fail "migration-count mismatch: expected $expected_migrations, got $actual_migrations"
+
+# --- M25.3: verificacion de SOURCE_ENCRYPTION_KEY ----------------------------
+#
+# M24 validaba checksums, conteos, RLS y roles, pero NUNCA descifraba. Un restore
+# hecho con la clave equivocada pasaba todos esos criterios y aun asi dejaba
+# todas las fuentes sin conectar. Aqui se comprueba la clave de verdad.
+#
+# El check corre en el contenedor `migrate` porque es el unico del stack con node
+# y `pg` resoluble (`pg` solo resuelve desde /repo/lib/db). La clave se inyecta
+# solo en ese `run` one-shot con `-e`, sin tocar docker-compose.restore.yml, y el
+# script se pasa por stdin para no dejar ficheros en la imagen.
+key_check() {
+  local check_file="$ROOT_DIR/scripts/ops/verify-source-key.cjs"
+  local expected_fp status=0 output=""
+  expected_fp="$(manifest_value source_key_fingerprint)"
+  [[ -f "$check_file" ]] || fail "missing $check_file"
+  echo "restore: verifying SOURCE_ENCRYPTION_KEY against the restored database"
+  output="$(restore_compose run --rm -T \
+      -e SOURCE_ENCRYPTION_KEY="$RESTORE_SOURCE_ENCRYPTION_KEY" \
+      -e EXPECTED_KEY_FINGERPRINT="$expected_fp" \
+      --entrypoint sh migrate \
+      -c "cat > /repo/lib/db/m25-key-check.cjs && cd /repo/lib/db && node m25-key-check.cjs" \
+      < "$check_file" 2>&1)" || status=$?
+  printf '%s\n' "$output" | grep -E '^key_check_' || true
+  case "$status" in
+    0) return 0 ;;
+    3) fail "SOURCE_ENCRYPTION_KEY does not match this backup (fingerprint mismatch); refusing to declare the restore usable" ;;
+    4) fail "SOURCE_ENCRYPTION_KEY cannot decrypt the restored source credentials; refusing to declare the restore usable" ;;
+    5)
+      echo "restore: WARNING no encrypted source configs in this backup, so the key could not be verified"
+      return 0
+      ;;
+    *) fail "source-key verification could not run (exit $status); refusing to declare the restore usable" ;;
+  esac
+}
+key_check
+
 echo "restore=ok project=$PROJECT_NAME database=$TARGET_DB keep=$KEEP_TARGET"
 if [[ "$KEEP_TARGET" == 1 ]]; then echo "restore: target left running for operator cutover"; fi
 

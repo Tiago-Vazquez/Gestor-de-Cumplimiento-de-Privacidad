@@ -165,6 +165,31 @@ done
 migration_count="$(compose exec -T db sh -ceu 'psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT count(*) FROM drizzle.__drizzle_migrations;"' | tr -d '\r\n')"
 [[ "$migration_count" =~ ^[0-9]+$ ]] || fail "could not read migration count"
 
+# M25.3 — fingerprint de SOURCE_ENCRYPTION_KEY (sha256 de la clave derivada).
+# El proceso de backup NO tiene la clave: se calcula dentro del contenedor `api`,
+# que sí la tiene en su entorno, y solo sale la huella. La clave cruda nunca
+# llega al host ni al manifest. Si `api` no está en marcha, el campo se omite y
+# el restore lo tratará como desconocido (compatibilidad con backups M24).
+source_key_fingerprint=""
+api_id="$(compose ps -q api 2>/dev/null || true)"
+if [[ -n "$api_id" ]]; then
+  source_key_fingerprint="$(docker_exec "$api_id" node -e '
+    const c = require("node:crypto");
+    const k = process.env.SOURCE_ENCRYPTION_KEY;
+    if (!k) process.exit(1);
+    process.stdout.write(
+      c.createHash("sha256").update(c.createHash("sha256").update(k).digest()).digest("hex"),
+    );
+  ' 2>/dev/null | tr -d '\r\n' || true)"
+  if [[ ! "$source_key_fingerprint" =~ ^[0-9a-f]{64}$ ]]; then
+    source_key_fingerprint=""
+  fi
+fi
+fingerprint_line=""
+if [[ -n "$source_key_fingerprint" ]]; then
+  fingerprint_line="source_key_fingerprint=${source_key_fingerprint}"$'\n'
+fi
+
 mv "$dump_tmp" "$BACKUP_DIR_ABS/$base.dump"
 mv "$roles_tmp" "$BACKUP_DIR_ABS/$base.roles.sql"
 cat > "$BACKUP_DIR_ABS/$base.manifest" <<EOF
@@ -180,7 +205,7 @@ roles_file=$base.roles.sql
 dump_sha256=$dump_sha
 roles_sha256=$roles_sha
 migration_count=$migration_count
-$count_lines
+$fingerprint_line$count_lines
 EOF
 chmod 600 "$BACKUP_DIR_ABS/$base.dump" "$BACKUP_DIR_ABS/$base.roles.sql" "$BACKUP_DIR_ABS/$base.manifest"
 
