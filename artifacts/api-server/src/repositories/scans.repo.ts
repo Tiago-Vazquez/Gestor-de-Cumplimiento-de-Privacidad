@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, exists, inArray, sql, type SQL } from "drizzle-orm";
 import {
   activityTable,
   db,
@@ -10,6 +10,27 @@ import {
 } from "@workspace/db";
 import { newId } from "./ids";
 import { activeFindingsWhere } from "./findings.repo";
+import { tenantScopeStrict, withTenant, setTenantLocal, type DbTx } from "./tenant";
+import { bgDb } from "@workspace/db/background";
+
+/**
+ * M21.3 — EXISTS: el scan pertenece al tenant activo vía su source (FK). Sin
+ * JOIN para que `SELECT *` siga devolviendo la fila `scans` (y no una tupla
+ * de join) y el `FOR UPDATE` bloquee solo la fila del scan.
+ */
+function scanTenantExists(tenantId: string) {
+  return exists(
+    db
+      .select({ id: sourcesTable.id })
+      .from(sourcesTable)
+      .where(
+        and(
+          eq(sourcesTable.id, scansTable.sourceId),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      ),
+  );
+}
 import type { Pagination } from "../lib/pagination";
 import {
   computeFingerprint,
@@ -41,50 +62,87 @@ export type CancelScanResult =
  * `FOR UPDATE` sobre la fuente para devolver 409 limpio sin depender de
  * capturar el 23505.
  */
-export async function startScan({ sourceId, startedAt }: { sourceId: string; startedAt: Date }): Promise<StartScanResult> {
+async function startScanBody(
+  tx: DbTx,
+  { sourceId, startedAt, sourceWhere }: { sourceId: string; startedAt: Date; sourceWhere: SQL | undefined },
+): Promise<StartScanResult> {
+  const [source] = await tx
+    .select()
+    .from(sourcesTable)
+    // M21.8 — el predicado de scoping lo aporta el llamador: `startScan` pasa
+    // `tenantScopeStrict(...)`; `startScanInternal` (scheduler) pasa undefined.
+    .where(
+      and(
+        eq(sourcesTable.id, sourceId),
+        sourceWhere,
+      ),
+    )
+    .for("update");
+  if (!source) return { ok: false, reason: "source_not_found" as const };
+
+  const [existingRunning] = await tx
+    .select({ id: scansTable.id })
+    .from(scansTable)
+    .where(and(eq(scansTable.sourceId, sourceId), eq(scansTable.status, "running")));
+  if (existingRunning) {
+    return { ok: false, reason: "scan_already_running" as const };
+  }
+
+  const [scan] = await tx
+    .insert(scansTable)
+    .values({
+      id: newId("scan"),
+      sourceId: source.id,
+      status: "running",
+      startedAt,
+      completedAt: null,
+      findingsCreated: 0,
+    })
+    .returning();
+
+  await tx
+    .update(sourcesTable)
+    .set({ lastScanAt: startedAt, updatedAt: new Date() })
+    .where(eq(sourcesTable.id, source.id));
+
+  await tx.insert(activityTable).values({
+    id: newId("a"),
+    type: "scan",
+    title: "Escaneo iniciado",
+    description: `${source.name} · analizando ${source.tables} tablas`,
+    createdAt: startedAt,
+    severity: null,
+    // M21.4 — la actividad hereda el tenant de la source.
+    tenantId: source.tenantId,
+  });
+
+  return { ok: true, scan, sourceName: source.name, sourceTables: source.tables };
+}
+
+/**
+ * M21.7 — inicia un escaneo exigiéndole el tenant (camino HTTP, app_role +
+ * tenant context). La fuente se valida scoped a la organización activa
+ * (BOLA: fuente ajena → source_not_found).
+ */
+export async function startScan(
+  { sourceId, startedAt, tenantId }: { sourceId: string; startedAt: Date; tenantId: string },
+): Promise<StartScanResult> {
   return db.transaction(async (tx) => {
-    const [source] = await tx
-      .select()
-      .from(sourcesTable)
-      .where(eq(sourcesTable.id, sourceId))
-      .for("update");
-    if (!source) return { ok: false, reason: "source_not_found" as const };
+    await setTenantLocal(tx, tenantId);
+    return startScanBody(tx, { sourceId, startedAt, sourceWhere: tenantScopeStrict(sourcesTable.tenantId, tenantId) });
+  });
+}
 
-    const [existingRunning] = await tx
-      .select({ id: scansTable.id })
-      .from(scansTable)
-      .where(and(eq(scansTable.sourceId, sourceId), eq(scansTable.status, "running")));
-    if (existingRunning) {
-      return { ok: false, reason: "scan_already_running" as const };
-    }
-
-    const [scan] = await tx
-      .insert(scansTable)
-      .values({
-        id: newId("scan"),
-        sourceId: source.id,
-        status: "running",
-        startedAt,
-        completedAt: null,
-        findingsCreated: 0,
-      })
-      .returning();
-
-    await tx
-      .update(sourcesTable)
-      .set({ lastScanAt: startedAt, updatedAt: new Date() })
-      .where(eq(sourcesTable.id, source.id));
-
-    await tx.insert(activityTable).values({
-      id: newId("a"),
-      type: "scan",
-      title: "Escaneo iniciado",
-      description: `${source.name} · analizando ${source.tables} tablas`,
-      createdAt: startedAt,
-      severity: null,
-    });
-
-    return { ok: true, scan, sourceName: source.name, sourceTables: source.tables };
+/**
+ * M21.8 — flujo interno (scheduler, bg_role/BYPASSRLS): inicia el scan SIN
+ * scoping de tenant. El scheduler reclama vencimientos de TODAS las
+ * organizaciones, por lo que corre en el pool background (no en app_role).
+ */
+export async function startScanInternal(
+  { sourceId, startedAt }: { sourceId: string; startedAt: Date },
+): Promise<StartScanResult> {
+  return bgDb().transaction(async (tx) => {
+    return startScanBody(tx, { sourceId, startedAt, sourceWhere: undefined });
   });
 }
 
@@ -128,7 +186,17 @@ export interface FinalizeScanInput {
 }
 
 export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
-  await db.transaction(async (tx) => {
+  await bgDb().transaction(async (tx) => {
+    // M21.4 — el finding hereda el tenant de su source (tenant_id NOT NULL).
+    const [sourceRow] = await tx
+      .select({ tenantId: sourcesTable.tenantId })
+      .from(sourcesTable)
+      .where(eq(sourcesTable.id, input.sourceId))
+      .limit(1);
+    if (!sourceRow) {
+      throw new Error(`Source ${input.sourceId} not found while finalizing scan`);
+    }
+
     const fingerprints = [
       ...new Set(
         input.findings.map((finding) =>
@@ -169,7 +237,7 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
           .where(
             and(
               eq(findingsTable.sourceId, input.sourceId),
-              activeFindingsWhere(),
+              activeFindingsWhere(sourceRow.tenantId),
             ),
           )
       : [];
@@ -193,6 +261,8 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
         dataType: finding.dataType,
         sourceId: input.sourceId,
         sourceName: input.sourceName,
+        // M21.4 — tenant heredado de la source (raíz de propiedad).
+        tenantId: sourceRow.tenantId,
         location: finding.location,
         severity: finding.severity,
         status: "open",
@@ -284,7 +354,7 @@ export async function failScan({
   completedAt: Date;
   reason: "source_not_found" | "source_not_scannable" | "connection_failed" | "persist_failed" | "cancelled";
 }): Promise<Scan | null> {
-  return db.transaction(async (tx) => {
+  return bgDb().transaction(async (tx) => {
     const [scan] = await tx.select().from(scansTable).where(eq(scansTable.id, scanId));
     if (!scan) return null;
     const [updated] = await tx
@@ -302,6 +372,8 @@ export async function failScan({
         description: `${source.name} · ${reason}`,
         createdAt: completedAt,
         severity: null,
+        // M21.4 — la actividad hereda el tenant de la source.
+        tenantId: source.tenantId,
       });
     }
     return updated;
@@ -324,7 +396,7 @@ export async function failStaleRunningScans({
   completedAt: Date;
   reason: "timeout";
 }): Promise<Scan[]> {
-  return db.transaction(async (tx) => {
+  return bgDb().transaction(async (tx) => {
     // FASE 7.1.0 M0: COALESCE(heartbeat_at, started_at) — un scan con latido
     // reciente no se recupera aunque startedAt sea viejo; los scans legacy
     // (sin latido) conservan el criterio original de 7.0.4. Frontera estricta.
@@ -349,6 +421,8 @@ export async function failStaleRunningScans({
           description: `${source.name} · ${reason}`,
           createdAt: completedAt,
           severity: null,
+          // M21.4 — la actividad hereda el tenant de la source.
+          tenantId: source.tenantId,
         });
       }
       recovered.push(updated);
@@ -378,7 +452,7 @@ export async function heartbeatScan({
   tablesScanned: number;
   recordsRead: number;
 }): Promise<Scan | null> {
-  const [updated] = await db
+  const [updated] = await bgDb()
     .update(scansTable)
     .set({ heartbeatAt: at, tablesScanned, recordsRead })
     .where(and(eq(scansTable.id, scanId), eq(scansTable.status, "running")))
@@ -395,34 +469,47 @@ export async function heartbeatScan({
  * esto es una bitácora). Paginación aplicada en SQL.
  */
 export async function list(
-  filters: { sourceId?: string; status?: string } = {},
-  pagination?: Pagination,
+  filters: { sourceId?: string; status?: string },
+  pagination: Pagination | undefined,
+  tenantId: string,
 ): Promise<Scan[]> {
-  let query = db
-    .select()
-    .from(scansTable)
-    .where(
-      and(
-        filters.sourceId ? eq(scansTable.sourceId, filters.sourceId) : undefined,
-        filters.status ? eq(scansTable.status, filters.status) : undefined,
-      ),
-    )
-    .orderBy(desc(scansTable.startedAt), desc(scansTable.id))
-    .$dynamic();
-  if (pagination) {
-    query = query.limit(pagination.limit).offset(pagination.offset);
-  }
-  return query;
+  return withTenant(tenantId, async (tx) => {
+    let query = tx
+      .select()
+      .from(scansTable)
+      .where(
+        and(
+          filters.sourceId ? eq(scansTable.sourceId, filters.sourceId) : undefined,
+          filters.status ? eq(scansTable.status, filters.status) : undefined,
+          // M21.8 — scans sin columna tenant propia: scoped vía EXISTS(source).
+          scanTenantExists(tenantId),
+        ),
+      )
+      .orderBy(desc(scansTable.startedAt), desc(scansTable.id))
+      .$dynamic();
+    if (pagination) {
+      query = query.limit(pagination.limit).offset(pagination.offset);
+    }
+    return query;
+  });
 }
 
-/** FASE 7.1.1 (M1): detalle de un scan por id (null si no existe). */
-export async function getById(id: string): Promise<Scan | null> {
-  const [scan] = await db
-    .select()
-    .from(scansTable)
-    .where(eq(scansTable.id, id))
-    .limit(1);
-  return scan ?? null;
+/** FASE 7.1.1 (M1): detalle de un scan por id (null si no existe o es ajeno). */
+export async function getById(id: string, tenantId: string): Promise<Scan | null> {
+  return withTenant(tenantId, async (tx) => {
+    const [scan] = await tx
+      .select()
+      .from(scansTable)
+      .where(
+        and(
+          eq(scansTable.id, id),
+          // M21.8 — scoping vía source (un scan ajeno produce 0 filas → 404).
+          scanTenantExists(tenantId),
+        ),
+      )
+      .limit(1);
+    return scan ?? null;
+  });
 }
 
 /**
@@ -433,16 +520,23 @@ export async function getById(id: string): Promise<Scan | null> {
  * murió). Idempotente: pedir cancel dos veces mientras siga `running` es un
  * éxito (segunda llamada retorna el scan ya marcado).
  */
-export async function requestCancel({
-  scanId,
-}: {
-  scanId: string;
-}): Promise<CancelScanResult> {
+export async function requestCancel(
+  { scanId, tenantId }: { scanId: string; tenantId: string },
+): Promise<CancelScanResult> {
   return db.transaction(async (tx) => {
+    // M21.8 — tenant context transaccional (RLS).
+    await setTenantLocal(tx, tenantId);
+
     const [scan] = await tx
       .select()
       .from(scansTable)
-      .where(eq(scansTable.id, scanId))
+      .where(
+        and(
+          eq(scansTable.id, scanId),
+          // M21.8 — scoping vía source (cancelar un scan ajeno → scan_not_found).
+          scanTenantExists(tenantId),
+        ),
+      )
       .for("update");
     if (!scan) return { ok: false, reason: "scan_not_found" as const };
     if (scan.status !== "running") {

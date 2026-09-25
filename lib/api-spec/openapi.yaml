@@ -14,6 +14,8 @@ tags:
     description: Authentication and session
   - name: users
     description: User administration (admin role required)
+  - name: audit
+    description: Administrative audit trail (admin role required)
   - name: dashboard
     description: Overview and activity
   - name: findings
@@ -47,7 +49,7 @@ paths:
     post:
       operationId: authLogin
       tags: [auth]
-      summary: Login with local credentials (email + password) or legacy bootstrap token
+      summary: Login with local credentials (email + password)
       security: []
       requestBody:
         required: true
@@ -100,6 +102,109 @@ paths:
       responses:
         "204":
           description: Session cleared
+  /auth/password/change:
+    post:
+      operationId: authPasswordChange
+      tags: [auth]
+      summary: Change own password (revokes all other active sessions; current session stays valid)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChangeInput"
+      responses:
+        "200":
+          description: Password changed; other sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  # `type: number` (no `integer`): el generador de Zod del
+                  # workspace emite API de Zod 4 (`zod.int()`) para `integer`
+                  # en bodies, y el runtime instalado es Zod 3. El servidor
+                  # sigue devolviendo un entero (conteo de sesiones revocadas).
+                  revokedSessions: { type: number, minimum: 0 }
+        "400":
+          description: Invalid request (missing fields, password policy or account without local password)
+        "401":
+          description: Not authenticated or current password incorrect
+        "403":
+          description: Missing/invalid CSRF token (cookie-based sessions)
+        "429":
+          description: Too many password change attempts (rate limited)
+  /auth/sessions:
+    get:
+      operationId: authListSessions
+      tags: [auth]
+      summary: List own active sessions
+      description: Returns metadata (jti, createdAt, expiresAt, current) of all active sessions for the authenticated user. Never exposes CSRF tokens or secrets.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionListResponse"
+        "401":
+          description: Not authenticated
+  /auth/sessions/{jti}:
+    delete:
+      operationId: authRevokeSession
+      tags: [auth]
+      summary: Revoke one own session
+      description: Revokes a single session by jti. Returns 404 (not 403) for non-existent, already-revoked, or other users' sessions to prevent enumeration. Revoking the current session is allowed.
+      security:
+        - cookieAuth: []
+      parameters:
+        - name: jti
+          in: path
+          required: true
+          # Sin `format: uuid`: el generador emitiría `zod.uuid()` (Zod 4) y el
+          # runtime instalado es Zod 3. El jti sigue siendo un UUID validado en
+          # la capa de dominio.
+          schema: { type: string }
+          description: Session allowlist identifier (jti, UUID).
+      responses:
+        "200":
+          description: Session revoked (idempotent)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: boolean, example: true }
+        "401":
+          description: Not authenticated
+        "403":
+          description: Missing/invalid CSRF token (cookie-based sessions)
+        "404":
+          description: Session not found or does not belong to current user
+  /auth/logout-all:
+    post:
+      operationId: authLogoutAll
+      tags: [auth]
+      summary: Revoke all own sessions (including current)
+      description: Revokes every active session of the authenticated user. The current session becomes invalid for subsequent requests (401 via allowlist). Other users' sessions are unaffected.
+      security:
+        - cookieAuth: []
+      responses:
+        "200":
+          description: All sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: number, minimum: 0 }
+        "401":
+          description: Not authenticated
+        "403":
+          description: Missing/invalid CSRF token (cookie-based sessions)
   /auth/me:
     get:
       operationId: authMe
@@ -218,6 +323,150 @@ paths:
         "401": { description: Not authenticated }
         "403": { description: Admin role required / would remove last admin }
         "404": { description: User not found }
+  /audit-events:
+    get:
+      operationId: listAuditEvents
+      tags: [audit]
+      summary: List administrative audit events (admin only)
+      description: >-
+        Trazabilidad administrativa (M17), eventos más recientes primero. Solo
+        rol `admin` (403 para cualquier otro rol). Filtros opcionales
+        combinables; la consulta SIEMPRE está paginada (limit/offset aplicados
+        en SQL) y nunca devuelve la tabla completa. `metadata` contiene
+        exclusivamente información operacional segura: nunca contraseñas, JWT,
+        cookies, tokens CSRF, claves de cifrado ni credenciales de conexión.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: actor
+          in: query
+          required: false
+          schema: { type: string }
+          description: actor_user_id exacto (sub del actor autenticado).
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+          description: Acción exacta (p. ej. login_success, source_created).
+        - name: resourceType
+          in: query
+          required: false
+          schema: { type: string }
+          description: Tipo de recurso exacto (session, source, scan, user, rule, report, masking_job, schedule).
+        - name: resourceId
+          in: query
+          required: false
+          schema: { type: string }
+          description: Identificador exacto del recurso afectado.
+        - name: result
+          in: query
+          required: false
+          schema: { type: string, enum: [success, failure] }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string }
+          description: Límite inferior inclusivo, ISO-8601 (comparado contra created_at). Valor inválido → 400.
+        - name: to
+          in: query
+          required: false
+          schema: { type: string }
+          description: Límite superior inclusivo, ISO-8601. Valor inválido → 400.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Audit events (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEvent"
+        "400":
+          description: Invalid filter (malformed date, unknown result, out-of-range limit/offset)
+        "401":
+          description: Not authenticated
+        "403":
+          description: Admin role required
+  /audit-events/platform:
+    get:
+      operationId: listAuditEventsPlatform
+      tags: [audit]
+      summary: List platform administrative audit events (admin only)
+      description: >-
+        Trazabilidad administrativa de PLATAFORMA (M21.7.3). Devuelve
+        exclusivamente eventos con `tenant_id` NULL (acciones de plataforma y
+        eventos de sistema sin organización). Solo rol global `admin`; NO
+        requiere organización activa. Filtros opcionales combinables; consulta
+        SIEMPRE paginada (limit/offset en SQL). Conjunto disjunto de
+        `GET /api/audit-events` (org-scoped).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: actor
+          in: query
+          required: false
+          schema: { type: string }
+          description: actor_user_id exacto (sub del actor autenticado).
+        - name: action
+          in: query
+          required: false
+          schema: { type: string }
+          description: Acción exacta (p. ej. user_roles_updated, rule_enabled).
+        - name: resourceType
+          in: query
+          required: false
+          schema: { type: string }
+          description: Tipo de recurso exacto (session, user, rule, ...).
+        - name: resourceId
+          in: query
+          required: false
+          schema: { type: string }
+          description: Identificador exacto del recurso afectado.
+        - name: result
+          in: query
+          required: false
+          schema: { type: string, enum: [success, failure] }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string }
+          description: Límite inferior inclusivo, ISO-8601. Valor inválido → 400.
+        - name: to
+          in: query
+          required: false
+          schema: { type: string }
+          description: Límite superior inclusivo, ISO-8601. Valor inválido → 400.
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Platform audit events (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEvent"
+        "400":
+          description: Invalid filter (malformed date, unknown result, out-of-range limit/offset)
+        "401":
+          description: Not authenticated
+        "403":
+          description: Admin role required
   /dashboard:
     get:
       operationId: getDashboard
@@ -471,6 +720,59 @@ paths:
       responses:
         "204":
           description: Source deleted
+        "404":
+          description: Source not found
+  /sources/{id}/schedule:
+    get:
+      operationId: getSourceSchedule
+      tags: [sources]
+      summary: Get the scan schedule of a data source
+      description: >-
+        Returns the scan schedule for a source. When no schedule exists yet, a
+        default disabled schedule (intervalMinutes 1440) is returned.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Scan schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSchedule"
+        "404":
+          description: Source not found
+    put:
+      operationId: updateSourceSchedule
+      tags: [sources]
+      summary: Create or update the scan schedule of a data source
+      description: >-
+        Admin only. Upsert the scan schedule of a source. When enabled is true,
+        intervalMinutes is required (400 when missing or out of range
+        15-10080). Enabling sets nextRunAt to now + intervalMinutes. Backend
+        enforces this rule (M10.5).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceScheduleUpdate"
+      responses:
+        "200":
+          description: Updated scan schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSchedule"
+        "400":
+          description: Invalid schedule input
         "404":
           description: Source not found
   /rules:
@@ -838,15 +1140,6 @@ components:
       bearerFormat: JWT
   schemas:
     AuthLoginInput:
-      oneOf:
-        - $ref: "#/components/schemas/BootstrapLoginInput"
-        - $ref: "#/components/schemas/LocalLoginInput"
-    BootstrapLoginInput:
-      type: object
-      required: [token]
-      properties:
-        token: { type: string, minLength: 1 }
-    LocalLoginInput:
       type: object
       required: [email, password]
       properties:
@@ -854,6 +1147,12 @@ components:
           type: string
           description: User email (normalized to lowercase server-side)
         password: { type: string, minLength: 1 }
+    PasswordChangeInput:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, format: password }
+        newPassword: { type: string, format: password, minLength: 12 }
     RegisterInput:
       type: object
       required: [email, password]
@@ -863,6 +1162,33 @@ components:
           description: User email (normalized to lowercase server-side)
         password: { type: string, minLength: 12 }
         name: { type: string }
+    SessionSummary:
+      type: object
+      required: [jti, createdAt, expiresAt, current]
+      description: Metadata of a single active session (never exposes secrets).
+      properties:
+        jti:
+          type: string
+          description: Session allowlist identifier (UUID).
+        createdAt:
+          type: string
+          format: date-time
+          description: When the session was issued (issued_at).
+        expiresAt:
+          type: string
+          format: date-time
+          description: Session expiration (mirrors JWT exp).
+        current:
+          type: boolean
+          description: "True when this session is the one making the request."
+    SessionListResponse:
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionSummary"
     AuthUser:
       type: object
       required: [sub, roles]
@@ -971,13 +1297,13 @@ components:
         tables: { type: number }
         records: { type: number }
         findings: { type: number }
-    SourceConnectionInput:
+    PostgresConnectionInput:
       type: object
       description: >-
-        Database connection credentials for an external source. The password is
-        write-only: it is encrypted at rest and never returned in any response.
-      required: [host, port, database, user, password]
+        PostgreSQL connection credentials. Discriminated by kind=postgresql.
+      required: [kind, host, port, database, user, password]
       properties:
+        kind: { type: string, enum: [postgresql] }
         host:
           type: string
           description: Database host (hostname or IP)
@@ -985,7 +1311,7 @@ components:
           maxLength: 253
         port:
           type: integer
-          description: Database port (1-65535)
+          description: PostgreSQL port (1-65535), typically 5432
           minimum: 1
           maximum: 65535
         database:
@@ -1006,8 +1332,56 @@ components:
           maxLength: 256
         schema:
           type: string
-          description: Database schema (optional)
+          description: Database schema (optional, defaults to public)
           maxLength: 128
+    MySqlConnectionInput:
+      type: object
+      description: >-
+        MySQL connection credentials. Discriminated by kind=mysql.
+      required: [kind, host, port, database, user, password]
+      properties:
+        kind: { type: string, enum: [mysql] }
+        host:
+          type: string
+          description: Database host (hostname or IP)
+          minLength: 1
+          maxLength: 253
+        port:
+          type: integer
+          description: MySQL port (1-65535), typically 3306
+          minimum: 1
+          maximum: 65535
+        database:
+          type: string
+          description: Database name
+          minLength: 1
+          maxLength: 128
+        user:
+          type: string
+          description: Username for authentication
+          minLength: 1
+          maxLength: 128
+        password:
+          type: string
+          format: password
+          description: Password (write-only, never returned in responses)
+          minLength: 1
+          maxLength: 256
+        schema:
+          type: string
+          description: MySQL schema (optional, defaults to the database)
+          maxLength: 128
+    SourceConnectionInput:
+      oneOf:
+        - $ref: "#/components/schemas/PostgresConnectionInput"
+        - $ref: "#/components/schemas/MySqlConnectionInput"
+      discriminator:
+        propertyName: kind
+      description: >-
+        Database connection credentials for an external source, discriminated
+        by `kind` (postgresql | mysql; more engines arrive in M23.2). The
+        password is write-only: it is encrypted at rest and never returned in
+        any response. The `kind` must match the source's `kind`.
     SourceCreate:
       type: object
       required: [name, kind, environment]
@@ -1177,6 +1551,22 @@ components:
       required: [sourceId]
       properties:
         sourceId: { type: string }
+    SourceSchedule:
+      type: object
+      required: [sourceId, enabled, intervalMinutes]
+      properties:
+        sourceId: { type: string }
+        enabled: { type: boolean }
+        intervalMinutes: { type: number, minimum: 15, maximum: 10080 }
+        nextRunAt: { type: ["string", "null"] }
+        lastRunAt: { type: ["string", "null"] }
+        lastStatus: { type: ["string", "null"], enum: [ok, skipped, error] }
+    SourceScheduleUpdate:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        intervalMinutes: { type: number, minimum: 15, maximum: 10080 }
     Scan:
       type: object
       required: [id, sourceId, status, startedAt, tablesScanned, recordsRead]
@@ -1267,4 +1657,58 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MaskingRow"
+    AuditEvent:
+      type: object
+      description: >-
+        Evento de auditoría administrativa (M17): quién hizo qué, cuándo y
+        sobre qué recurso. Historia deliberadamente desacoplada de `users`
+        (sin foreign key): sobrevive al borrado de la cuenta referenciada en
+        `actorUserId`. La acción y el tipo de recurso son texto libre con
+        vocabulario cerrado en la capa de dominio.
+      required: [id, action, resourceType, result, createdAt]
+      properties:
+        id: { type: string }
+        actorUserId:
+          type: [string, "null"]
+          description: >-
+            `sub` del actor autenticado que ejecutó la acción; `null` en
+            acciones internas (scheduler de escaneos, recovery de scans
+            huérfanos) donde no hay usuario humano.
+        action:
+          type: string
+          description: >-
+            Acción registrada. Vocabulario: login_success, login_failure,
+            logout, logout_all, session_revoked, password_changed,
+            user_updated, user_roles_updated, source_created, source_updated,
+            source_deleted, schedule_created, schedule_updated,
+            schedule_enabled, schedule_disabled, scan_started, scan_cancelled,
+            scan_failed, report_created, report_downloaded,
+            masking_job_created, dataset_downloaded, rule_enabled,
+            rule_disabled.
+        resourceType:
+          type: string
+          description: >-
+            Tipo de recurso afectado: session, user, source, schedule, scan,
+            report, masking_job o rule.
+        resourceId:
+          type: [string, "null"]
+          description: Identificador del recurso afectado (`null` si no aplica).
+        result:
+          type: string
+          enum: [success, failure]
+          description: Resultado de la acción intentada.
+        requestId:
+          type: [string, "null"]
+          description: >-
+            Correlation id del request (M16, header `X-Request-Id`); `null` en
+            acciones internas sin request HTTP.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: >-
+            Información operacional segura (ids, contadores, tipos, estados,
+            nombres de campos). NUNCA contraseñas, JWT, cookies, tokens CSRF,
+            claves de cifrado, credenciales de conexión ni datos descubiertos
+            por los scans.
+        createdAt: { type: string, format: date-time }
 

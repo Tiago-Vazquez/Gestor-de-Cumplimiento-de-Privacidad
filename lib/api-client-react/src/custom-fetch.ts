@@ -8,8 +8,14 @@ export type BodyType<T> = T;
 
 export type AuthTokenGetter = () => Promise<string | null> | string | null;
 
+export type CsrfTokenGetter = () => string | null;
+
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
+
+// M11.1 — header y métodos que reciben el token CSRF de synchronizer.
+const CSRF_HEADER_NAME = "X-CSRF-Token";
+const CSRF_MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 // ---------------------------------------------------------------------------
 // Module-level configuration
@@ -17,6 +23,7 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _csrfTokenGetter: CsrfTokenGetter | null = null;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -42,6 +49,20 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/**
+ * Register a getter that supplies the CSRF synchronizer token for the current
+ * session. On every state-changing request (POST/PUT/PATCH/DELETE) the getter
+ * is invoked and, when it returns a non-null string, an
+ * `X-CSRF-Token: <token>` header is attached to the request.
+ *
+ * Safe reads (GET/HEAD/OPTIONS) never receive the header. Pass `null` to
+ * clear the getter (e.g. right after logout so a stale token from a previous
+ * session is never reused).
+ */
+export function setCsrfTokenGetter(getter: CsrfTokenGetter | null): void {
+  _csrfTokenGetter = getter;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -355,6 +376,21 @@ export async function customFetch<T = unknown>(
     const token = await _authTokenGetter();
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
+    }
+  }
+
+  // M11.1 — CSRF synchronizer token: adjuntar `X-CSRF-Token` automáticamente
+  // en toda mutación (POST/PUT/PATCH/DELETE). Las lecturas (GET/HEAD/OPTIONS)
+  // no llevan el header. Se respeta un header provisto explícitamente por el
+  // caller (no se sobreescribe).
+  if (
+    _csrfTokenGetter &&
+    CSRF_MUTATING_METHODS.has(method) &&
+    !headers.has("x-csrf-token")
+  ) {
+    const csrfToken = _csrfTokenGetter();
+    if (csrfToken) {
+      headers.set(CSRF_HEADER_NAME, csrfToken);
     }
   }
 

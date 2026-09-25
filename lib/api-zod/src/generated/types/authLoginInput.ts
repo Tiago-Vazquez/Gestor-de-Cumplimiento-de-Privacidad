@@ -5,7 +5,10 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { BootstrapLoginInput } from './bootstrapLoginInput';
-import type { LocalLoginInput } from './localLoginInput';
 
-export type AuthLoginInput = BootstrapLoginInput | LocalLoginInput;
+export interface AuthLoginInput {
+  /** User email (normalized to lowercase server-side) */
+  email: string;
+  /** @minLength 1 */
+  password: string;
+}

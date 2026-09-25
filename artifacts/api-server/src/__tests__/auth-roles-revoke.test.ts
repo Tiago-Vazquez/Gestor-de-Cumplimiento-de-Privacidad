@@ -6,11 +6,10 @@ import { randomUUID } from "node:crypto";
 import { TextEncoder } from "node:util";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
 process.env.AUTH_REGISTRATION_ENABLED = "true"; // 6.3B.20: registro opt-in (ausente = off)
 
 const mocks = vi.hoisted(() => ({
@@ -71,6 +70,7 @@ async function workerSession(
     issuedAt: new Date(),
     expiresAt: new Date(Date.now() + expiresIn * 1000),
     revokedAt: null,
+    lastUsedAt: new Date(),
   });
   return { jwt, jti };
 }
@@ -78,9 +78,10 @@ async function workerSession(
 async function bootstrapLogin(
   server: ReturnType<Express["listen"]>,
 ): Promise<{ jwt: string; jti: string; sub: string }> {
+  await seedProvisionedAdmin(state());
   const res = await request(server)
     .post("/api/auth/login")
-    .send({ token: "bootstrap-token-for-tests-only" });
+    .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
   expect(res.status).toBe(200);
   const jwt = extractJwt(res.headers["set-cookie"]);
   return { jwt, jti: decodeJwt(jwt).jti as string, sub: res.body.sub };

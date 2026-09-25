@@ -3,11 +3,10 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // bootstrap opt-in (6.3B.15)
 process.env.AUTH_REGISTRATION_ENABLED = "true"; // registro opt-in para sembrar auditor (6.3B.20)
 
 const mocks = vi.hoisted(() => ({
@@ -54,9 +53,19 @@ describe("F4 - Paginacion server-side en listados", () => {
     server = app.listen(0);
 
     // auditor: registro + login (registro opt-in habilitado arriba)
-    await request(server)
+    await seedProvisionedAdmin(mocks.state!);
+    const reg = await request(server)
       .post("/api/auth/register")
       .send({ email: "pager-auditor@example.com", password: "secure-password-123" });
+    expect(reg.status).toBe(201);
+    // M21.5 — el auditor pertenece a org-bootstrap (fail-closed en lecturas).
+    (mocks.state!.memberships ??= []).push({
+      organizationId: "org-bootstrap",
+      userSub: reg.body.sub,
+      role: "auditor",
+      invitedBy: null,
+      joinedAt: new Date(),
+    });
     const login = await request(server)
       .post("/api/auth/login")
       .send({ email: "pager-auditor@example.com", password: "secure-password-123" });
@@ -67,7 +76,7 @@ describe("F4 - Paginacion server-side en listados", () => {
     const boot = await request(server)
       .post("/api/auth/login")
       .set("X-Forwarded-For", "10.7.0.1")
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(boot.status).toBe(200);
     adminCookie = extractCookie(boot.headers["set-cookie"]);
   });

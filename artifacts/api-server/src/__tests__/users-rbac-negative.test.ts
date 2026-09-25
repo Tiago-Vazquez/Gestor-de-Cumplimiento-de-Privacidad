@@ -11,10 +11,10 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { fetchCsrfToken } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
 process.env.AUTH_REGISTRATION_ENABLED = "true";
 
 const mocks = vi.hoisted(() => ({ state: undefined as MockState | undefined }));
@@ -45,6 +45,7 @@ function cookieOf(res: { headers: { [k: string]: unknown } }): string {
 describe("RBAC negativo: auditor recibe 403 en mutaciones admin", () => {
   let server: ReturnType<Express["listen"]>;
   let cookie: string;
+  let csrfToken: string;
   let sub: string;
 
   beforeAll(async () => {
@@ -61,6 +62,7 @@ describe("RBAC negativo: auditor recibe 403 en mutaciones admin", () => {
       .send({ email: "rbac-auditor@example.com", password: "secure-password-123" });
     expect(login.status).toBe(200);
     cookie = cookieOf(login);
+    csrfToken = await fetchCsrfToken(server, cookie);
   });
 
   afterAll(() => {
@@ -74,6 +76,7 @@ describe("RBAC negativo: auditor recibe 403 en mutaciones admin", () => {
     const res = await request(server)
       .patch(`/api/users/${sub}`)
       .set("Cookie", cookie)
+      .set("X-CSRF-Token", csrfToken)
       .send({ name: "Hacked" });
     expect(res.status).toBe(403);
     const after = state().users.find((u) => u.sub === sub);
@@ -90,6 +93,7 @@ describe("RBAC negativo: auditor recibe 403 en mutaciones admin", () => {
     const res = await request(server)
       .patch(`/api/users/${sub}/roles`)
       .set("Cookie", cookie)
+      .set("X-CSRF-Token", csrfToken)
       .send({ roles: ["admin"] });
     expect(res.status).toBe(403);
     const after = state().userRoles.map((r) => ({
@@ -109,6 +113,7 @@ describe("RBAC negativo: auditor recibe 403 en mutaciones admin", () => {
     const res = await request(server)
       .patch("/api/findings/f-001")
       .set("Cookie", cookie)
+      .set("X-CSRF-Token", csrfToken)
       .send({ status: "resolved" });
     expect(res.status).toBe(403);
     const after = state().findings.find((x) => x.id === "f-001");
@@ -121,6 +126,7 @@ describe("RBAC negativo: auditor recibe 403 en mutaciones admin", () => {
     const res = await request(server)
       .post("/api/scans")
       .set("Cookie", cookie)
+      .set("X-CSRF-Token", csrfToken)
       .send({ sourceId: "src-001" });
     expect(res.status).toBe(403);
     expect(state().scans).toHaveLength(before);
@@ -131,6 +137,7 @@ describe("RBAC negativo: auditor recibe 403 en mutaciones admin", () => {
     const res = await request(server)
       .post("/api/reports")
       .set("Cookie", cookie)
+      .set("X-CSRF-Token", csrfToken)
       .send({ name: "Evil", period: "last_24h" });
     expect(res.status).toBe(403);
     expect(state().reports).toHaveLength(before);
@@ -142,6 +149,7 @@ describe("RBAC negativo: auditor recibe 403 en mutaciones admin", () => {
     const res = await request(server)
       .post("/api/masking/preview")
       .set("Cookie", cookie)
+      .set("X-CSRF-Token", csrfToken)
       .send({ sourceId: "src-001", fields: ["email"] });
     expect(res.status).toBe(403);
     expect(state().scans).toHaveLength(beforeScans);

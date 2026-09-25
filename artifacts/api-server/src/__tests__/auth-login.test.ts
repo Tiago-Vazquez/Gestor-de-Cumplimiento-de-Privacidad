@@ -6,12 +6,16 @@ import app from "../app";
 import { signToken } from "../auth/tokens";
 import { logger } from "../lib/logger";
 import type { MockState } from "./mock-repos";
+import {
+  seedProvisionedAdmin,
+  TEST_ADMIN_EMAIL,
+  TEST_ADMIN_PASSWORD,
+  TEST_ADMIN_SUB,
+} from "./test-utils";
 
 // Suite con autenticación REAL: activamos JWT para validar el flujo de login.
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
 
 vi.mock("@workspace/db", () => ({ pool: { query: vi.fn(), end: vi.fn() } }));
 const mocks = vi.hoisted(() => ({ state: undefined as MockState | undefined }));
@@ -39,6 +43,7 @@ function seedSessionFor(token: string) {
     issuedAt: new Date(),
     expiresAt: new Date((exp ?? 0) * 1000),
     revokedAt: null,
+    lastUsedAt: new Date(),
   });
 }
 
@@ -48,6 +53,7 @@ describe("Auth flow (login / logout / me)", () => {
 
   beforeAll(async () => {
     server = app.listen(0);
+    await seedProvisionedAdmin(state());
     adminToken = await signToken({
       sub: "admin-1",
       email: "admin@test.local",
@@ -64,9 +70,9 @@ describe("Auth flow (login / logout / me)", () => {
   it("login válido → 200 + Set-Cookie httpOnly", async () => {
     const res = await request(server)
       .post("/api/auth/login")
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ sub: "bootstrap-admin", roles: ["admin"] });
+    expect(res.body).toMatchObject({ sub: TEST_ADMIN_SUB, roles: ["admin"] });
     const setCookie = res.headers["set-cookie"];
     expect(setCookie).toBeDefined();
     const cookies = (Array.isArray(setCookie) ? setCookie : [setCookie]).join(",");
@@ -74,15 +80,15 @@ describe("Auth flow (login / logout / me)", () => {
     expect(cookies).toContain("HttpOnly");
   });
 
-  it("login inválido → 401", async () => {
+  it("login inválido (password incorrecta) → 401", async () => {
     const res = await request(server)
       .post("/api/auth/login")
-      .send({ token: "wrong-token" });
+      .send({ email: TEST_ADMIN_EMAIL, password: "wrong-password-456" });
     expect(res.status).toBe(401);
     expect(res.body.status).toBe(401);
   });
 
-  it("login sin token en body → 400", async () => {
+  it("login sin credenciales → 400", async () => {
     const res = await request(server).post("/api/auth/login").send({});
     expect(res.status).toBe(400);
     expect(res.body.status).toBe(400);
@@ -114,17 +120,17 @@ describe("Auth flow (login / logout / me)", () => {
     expect(cookies).toContain("session=;");
   });
 
-  it("no loguea tokens ni JWT en los logs", async () => {
+  it("no loguea contraseñas ni JWT en los logs", async () => {
     const infoSpy = vi.spyOn(logger, "info");
     const errorSpy = vi.spyOn(logger, "error");
     await request(server)
       .post("/api/auth/login")
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     const allLogs = [
       ...infoSpy.mock.calls.map((c) => JSON.stringify(c)),
       ...errorSpy.mock.calls.map((c) => JSON.stringify(c)),
     ].join(" ");
-    expect(allLogs).not.toContain("bootstrap-token-for-tests-only");
+    expect(allLogs).not.toContain(TEST_ADMIN_PASSWORD);
     expect(allLogs).not.toContain("session");
     infoSpy.mockRestore();
     errorSpy.mockRestore();

@@ -6,8 +6,6 @@ import type { MockState } from "./mock-repos";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
 process.env.AUTH_REGISTRATION_ENABLED = "true"; // 6.3B.20: registro opt-in (ausente = off)
 
 // El factory de vi.mock corre durante la evaluación de imports (antes del body
@@ -150,15 +148,7 @@ describe("Local auth (login / register)", () => {
     });
   });
 
-  describe("Bootstrap compatibility", () => {
-    it("bootstrap login still works", async () => {
-      const res = await request(server).post("/api/auth/login")
-        .send({ token: "bootstrap-token-for-tests-only" });
-      expect(res.status).toBe(200);
-      expect(res.body.sub).toBe("bootstrap-admin");
-      expect(res.body.roles).toEqual(["admin"]);
-    });
-
+  describe("Authorization", () => {
     it("auditor cannot access admin endpoints", async () => {
       await request(server).post("/api/auth/register")
         .send({ email: "auditor-only@example.com", password: "secure-password-123" });

@@ -1,5 +1,7 @@
 import { repos } from "../repositories";
 import { logger } from "../lib/logger";
+import { scansFailedTotal } from "../lib/metrics";
+import { recordAuditEvent } from "../lib/audit";
 import type { Scan } from "@workspace/db";
 
 /**
@@ -55,6 +57,36 @@ async function failRunningScans(before: Date, sweep: string): Promise<Scan[]> {
   }
 }
 
+/**
+ * M16.3 — cada scan recuperado por el reaper es un terminal `failed(timeout)`:
+ * evento con scanId/sourceId/resultado + contador. `active_scans` NO baja:
+ * el gauge es por proceso y estos scans no los inició este proceso (o su
+ * decremento ya ocurrió en failScanSafe).
+ *
+ * M17 — además se persiste un evento de auditoría por scan recuperado. El
+ * reaper actúa sin actor humano: `actor_user_id` = null y `metadata.origin` =
+ * "recovery" (FASE 4 del módulo de auditoría). `recordAuditEvent` nunca lanza,
+ * por lo que el sweep sigue siendo best-effort.
+ */
+async function emitScanFailedEvents(recovered: Scan[], sweep: string): Promise<void> {
+  for (const scan of recovered) {
+    scansFailedTotal.inc();
+    logger.warn(
+      { event: "scan_failed", scanId: scan.id, sourceId: scan.sourceId, reason: "timeout", sweep, result: "failed" },
+      "Scan failed: recovered by reaper",
+    );
+    await recordAuditEvent({
+      actorUserId: null,
+      action: "scan_failed",
+      resourceType: "scan",
+      resourceId: scan.id,
+      result: "failure",
+      origin: "recovery",
+      metadata: { sourceId: scan.sourceId, reason: "timeout", sweep },
+    });
+  }
+}
+
 /** Sweep de arranque: recupera los `running` previos a `bootStartedAt`. */
 export async function recoverOrphanedScansAtBoot(bootStartedAt: Date): Promise<Scan[]> {
   const recovered = await failRunningScans(bootStartedAt, "boot");
@@ -63,6 +95,7 @@ export async function recoverOrphanedScansAtBoot(bootStartedAt: Date): Promise<S
       { recovered: recovered.length },
       "Recovered orphaned scans (running when this process started)",
     );
+    await emitScanFailedEvents(recovered, "boot");
   }
   return recovered;
 }
@@ -73,6 +106,7 @@ export async function recoverStaleRunningScans(now: Date = new Date()): Promise<
   const recovered = await failRunningScans(before, "periodic");
   if (recovered.length > 0) {
     logger.warn({ recovered: recovered.length }, "Recovered stale running scans");
+    await emitScanFailedEvents(recovered, "periodic");
   }
   return recovered;
 }

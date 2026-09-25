@@ -6,7 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface BootstrapLoginInput {
-  /** @minLength 1 */
-  token: string;
+export interface PasswordChangeInput {
+  currentPassword: string;
+  /** @minLength 12 */
+  newPassword: string;
 }

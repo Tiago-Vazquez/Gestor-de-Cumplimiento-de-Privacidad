@@ -29,6 +29,7 @@ vi.mock("@workspace/db", () => ({
 const VALID_KEY = "test-source-encryption-key-of-32-chars!!";
 
 const sampleConfig: SourceConnectionConfig = {
+  kind: "postgresql",
   host: "db.example.com",
   port: 5432,
   database: "production",
@@ -73,7 +74,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: encryptConnectionConfig(sampleConfig),
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: "org-bootstrap",
+    }
     const decrypted = decryptConnectionConfig(source);
     expect(decrypted).toEqual(sampleConfig);
   });
@@ -91,7 +93,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: null,
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: "org-bootstrap",
+    }
     expect(decryptConnectionConfig(legacySource)).toBeNull();
   });
 
@@ -108,7 +111,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: "not-valid-encrypted-data",
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: "org-bootstrap",
+    }
     expect(decryptConnectionConfig(corruptSource)).toBeNull();
   });
 
@@ -125,7 +129,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: "iv:tag:ciphertext",
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: "org-bootstrap",
+    }
     expect(isScannable(source)).toBe(true);
   });
 
@@ -142,7 +147,8 @@ describe("sources.repo: connection_config encryption", () => {
       connectionConfig: null,
       createdAt: new Date(),
       updatedAt: new Date(),
-    };
+      tenantId: "org-bootstrap",
+    }
     expect(isScannable(legacySource)).toBe(false);
   });
 
@@ -169,5 +175,64 @@ describe("sources.repo: security", () => {
     expect(encrypted).not.toContain(sampleConfig.password);
     expect(encrypted).not.toContain(sampleConfig.user);
     expect(encrypted).not.toContain(sampleConfig.host);
+  });
+});
+
+describe("sources.repo: validación de config al descifrar (M23.1)", () => {
+  const originalKey = process.env.SOURCE_ENCRYPTION_KEY;
+
+  beforeEach(() => {
+    process.env.SOURCE_ENCRYPTION_KEY = VALID_KEY;
+  });
+
+  afterEach(() => {
+    if (originalKey === undefined) {
+      delete process.env.SOURCE_ENCRYPTION_KEY;
+    } else {
+      process.env.SOURCE_ENCRYPTION_KEY = originalKey;
+    }
+  });
+
+  const sourceWith = (kind: string, config: unknown): Source => ({
+    id: "src-m231",
+    name: "M23.1 Source",
+    kind,
+    environment: "production",
+    status: "healthy",
+    lastScanAt: null,
+    tables: 0,
+    records: 0,
+    connectionConfig: encryptConnectionConfig(config as never),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    tenantId: "org-bootstrap",
+  });
+
+  it("config legacy sin `kind` se descifra y adopta el kind de la fuente", () => {
+    const legacy = { ...sampleConfig } as Record<string, unknown>;
+    delete legacy.kind;
+    const decrypted = decryptConnectionConfig(sourceWith("postgresql", legacy));
+    expect(decrypted).toEqual(sampleConfig);
+  });
+
+  it("config MySQL bajo una fuente PostgreSQL → null (fail-closed)", () => {
+    const decrypted = decryptConnectionConfig(sourceWith("postgresql", { ...sampleConfig, kind: "mysql" }));
+    expect(decrypted).toBeNull();
+  });
+
+  it("kind sin conector (mongodb) → null aunque la config sea válida", () => {
+    const decrypted = decryptConnectionConfig(sourceWith("mongodb", sampleConfig));
+    expect(decrypted).toBeNull();
+  });
+
+  it("config con forma inválida → null (nunca llega al conector)", () => {
+    expect(decryptConnectionConfig(sourceWith("postgresql", { ...sampleConfig, port: "5432" }))).toBeNull();
+    expect(decryptConnectionConfig(sourceWith("postgresql", { ...sampleConfig, password: "" }))).toBeNull();
+    expect(decryptConnectionConfig(sourceWith("postgresql", { ...sampleConfig, host: "" }))).toBeNull();
+  });
+
+  it("config MySQL válida bajo una fuente MySQL → se descifra con su kind", () => {
+    const decrypted = decryptConnectionConfig(sourceWith("mysql", { ...sampleConfig, kind: "mysql", port: 3306 }));
+    expect(decrypted).toMatchObject({ kind: "mysql", port: 3306, host: sampleConfig.host });
   });
 });

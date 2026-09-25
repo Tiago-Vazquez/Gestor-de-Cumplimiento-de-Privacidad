@@ -1,15 +1,17 @@
 import { pool } from "@workspace/db";
+import { closeBgPool } from "@workspace/db/background";
 import type { Server } from "node:http";
 import app from "./app";
 import { assertAuthConfigForEnv } from "./auth/tokens";
 import { assertSourceEncryptionKeyForEnv } from "./lib/secret-manager";
-import { bootstrapProductionWarning } from "./routes/auth";
 import { logger } from "./lib/logger";
 import {
   recoverOrphanedScansAtBoot,
   recoverStaleRunningScans,
   SCAN_REAPER_INTERVAL_MS,
 } from "./services/scan-recovery";
+import { startScanScheduler, stopScanScheduler } from "./services/scan-scheduler";
+import { startSessionCleanup } from "./services/session-cleanup";
 
 // Fail-fast (hardening 6.3B.7): AUTH_DISABLED=true está prohibido en
 // producción — aborta el startup antes de abrir el puerto en lugar de
@@ -19,15 +21,6 @@ assertAuthConfigForEnv();
 // FASE 7.0.5 (M9): fail-fast para SOURCE_ENCRYPTION_KEY en producción.
 // En development/test, si falta la clave se emite un warning y se continúa.
 assertSourceEncryptionKeyForEnv();
-
-// Hardening 6.3B.15: el bootstrap de admin es opt-in (AUTH_BOOTSTRAP_ENABLED
-// ausente = deshabilitado). Si un despliegue lo habilita explícitamente en
-// producción, dejar huella en el log de arranque (no está prohibido, pero sí
-// desaconsejado: identidad fija con rol admin y token estático).
-const bootstrapWarning = bootstrapProductionWarning();
-if (bootstrapWarning) {
-  logger.warn(bootstrapWarning);
-}
 
 // FASE 7.0.4: timestamp de inicio del proceso, capturado ANTES de abrir el
 // puerto. El sweep de arranque lo usa como límite (`before = bootStartedAt`):
@@ -89,6 +82,15 @@ const scanReaperTimer = setInterval(() => {
 }, SCAN_REAPER_INTERVAL_MS);
 scanReaperTimer.unref();
 
+// M10.4: scheduler de escaneos automáticos — reclama horarios vencidos vía
+// claimDue (transaccional) y despacha por el pipeline estándar. Una sola
+// instancia por proceso; unref() igual que el reaper.
+startScanScheduler();
+
+// M18 Fase 3 — barrido periódico de sesiones expiradas/revocadas y contadores
+// de rate limiting vencidos (mismo patrón `unref()` del reaper).
+const sessionCleanupTimer = startSessionCleanup();
+
 // Graceful shutdown: stop accepting new connections, drain the HTTP server,
 // close the PostgreSQL pool and then exit. A watchdog force-exits if draining
 // takes too long (e.g. an open keep-alive connection with 10s idle timeout).
@@ -103,6 +105,11 @@ function shutdown(signal: NodeJS.Signals): void {
   // FASE 7.0.4: detener el reaper antes de drenar el servidor.
   clearInterval(scanReaperTimer);
 
+  // M10.4: detener el scheduler antes de drenar — no deja timers activos.
+  stopScanScheduler();
+  // M18 Fase 3: detener también el barrido de sesiones.
+  clearInterval(sessionCleanupTimer);
+
   const watchdog = setTimeout(() => {
     logger.error("Graceful shutdown timed out; forcing exit");
     process.exit(1);
@@ -110,16 +117,18 @@ function shutdown(signal: NodeJS.Signals): void {
   watchdog.unref();
 
   server.close((closeErr) => {
-    void pool
-      .end()
-      .then(() => {
+    // M21.8 — cerrar también el pool background (bg_role) si llegó a inicializarse.
+    void Promise.allSettled([pool.end(), closeBgPool()])
+      .then((results) => {
+        const poolFailed = results.some((r) => r.status === "rejected");
+        for (const result of results) {
+          if (result.status === "rejected") {
+            logger.error({ err: result.reason }, "Error closing database pool");
+          }
+        }
         clearTimeout(watchdog);
         logger.info("Shutdown complete");
-        process.exit(closeErr ? 1 : 0);
-      })
-      .catch((poolErr) => {
-        logger.error({ err: poolErr }, "Error closing database pool");
-        process.exit(1);
+        process.exit(closeErr || poolFailed ? 1 : 0);
       });
   });
 }

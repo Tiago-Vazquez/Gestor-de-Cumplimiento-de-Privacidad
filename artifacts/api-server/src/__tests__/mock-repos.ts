@@ -1,10 +1,15 @@
 import type {
   Activity,
+  AuditEvent,
   Finding,
+  Invitation,
   MaskingJob,
+  Membership,
+  Organization,
   Report,
   Rule,
   Scan,
+  ScanSchedule,
   Source,
   User,
   UserRole,
@@ -38,19 +43,45 @@ import { buildTrendDayKeys, buildTrendPoints } from "../lib/trend-buckets";
  * lo que `@workspace/db` ni siquiera llega a importarse.
  */
 
+/**
+ * M21.1/M21.2 — columnas de tenancy (`tenant_id` en las tablas de negocio) y
+ * contexto de sesión (`active_org_id`) añadidas con backfill TRANSITORIO
+ * (asignación real en M21.4). En el mock quedan OPCIONALES: las filas demo y
+ * las creadas por los tests no necesitan declararlas (equivale a NULL).
+ */
+type MockRow<T> = Omit<T, "tenantId"> & { tenantId?: string | null };
+type MockSession = Omit<Session, "activeOrgId"> & { activeOrgId?: string | null };
+
 export type MockState = {
   users: User[];
   userRoles: UserRole[];
-  sessions: Session[];
-  findings: Finding[];
-  sources: (Source & { findingsCount: number })[];
+  scanSchedules: ScanSchedule[];
+  sessions: MockSession[];
+  findings: MockRow<Finding>[];
+  sources: (MockRow<Source> & { findingsCount: number })[];
   rules: Rule[];
-  scans: Scan[];
-  activity: Activity[];
-  reports: Report[];
+  scans: MockRow<Scan>[];
+  activity: MockRow<Activity>[];
+  reports: MockRow<Report>[];
+  /** M17: se inicializa vacío en createMockRepos. */
+  auditEvents: MockRow<AuditEvent>[];
   /** M5.c: se inicializa perezosamente en createMockRepos. */
-  maskingJobs?: MaskingJob[];
+  maskingJobs?: MockRow<MaskingJob>[];
+  /** M18: filas de rate_limit_hits para el store persistente mock. */
+  rateLimitHits?: MockRateLimitHit[];
+  /** M21.2: organizaciones, memberships e invitaciones (inicialización perezosa). */
+  organizations?: Organization[];
+  memberships?: Membership[];
+  invitations?: Invitation[];
 };
+
+/** Fila mock de `rate_limit_hits` (M18 Fase 2). */
+export interface MockRateLimitHit {
+  key: string;
+  hits: number;
+  windowStartAt: Date;
+  expiresAt: Date;
+}
 
 const SOURCE_NAMES: Record<string, string> = {
   "src-001": "Customer PostgreSQL",
@@ -65,8 +96,22 @@ const SOURCE_NAMES: Record<string, string> = {
  * `superseded = false`. Único lugar en el mock para que los tres
  * consumidores (findings.countOpen, reports.create, dashboard) no diverjan.
  */
-function isActiveFinding(finding: Finding): boolean {
+function isActiveFinding(finding: MockRow<Finding>): boolean {
   return finding.status !== "resolved" && finding.superseded === false;
+}
+
+/**
+ * M21.5 — visibilidad ESTRICTA de una fila para la organización activa: visible
+ * SOLO si `tenant_id` coincide exactamente con el contexto. Sin contexto
+ * (`orgId` undefined) no hay scoping (espejo del repo real, que solo aplica el
+ * predicado cuando `tenantId` viene definido). El fail-closed vive en la ruta.
+ */
+function tenantVisible(
+  rowTenantId: string | null | undefined,
+  orgId: string | undefined,
+): boolean {
+  if (orgId === undefined) return true;
+  return rowTenantId === orgId;
 }
 
 // ---- FASE 7.3 (M5.c): espejo in-memory de masking.repo ----
@@ -91,30 +136,46 @@ function createMockMaskingRepos(state: MockState) {
   };
 
   return {
-    async list(pagination?: { limit: number; offset: number }) {
-      const sorted = [...jobs()].sort(
-        (a, b) =>
-          b.createdAt.getTime() - a.createdAt.getTime() ||
-          b.id.localeCompare(a.id),
-      );
+    async list(pagination?: { limit: number; offset: number }, tenantId?: string) {
+      const sorted = [...jobs()]
+        .filter((job) => {
+          if (tenantId === undefined) return true;
+          const source = state.sources.find((s) => s.id === job.sourceId);
+          return tenantVisible(source?.tenantId, tenantId);
+        })
+        .sort(
+          (a, b) =>
+            b.createdAt.getTime() - a.createdAt.getTime() ||
+            b.id.localeCompare(a.id),
+        );
       const page = pagination
         ? sorted.slice(pagination.offset, pagination.offset + pagination.limit)
         : sorted;
       return page.map(stripDataset);
     },
 
-    async getById(id: string) {
+    async getById(id: string, tenantId?: string) {
       const job = jobs().find((j) => j.id === id);
-      return job ? stripDataset(job) : null;
+      if (!job) return null;
+      if (tenantId !== undefined) {
+        const source = state.sources.find((s) => s.id === job.sourceId);
+        if (!tenantVisible(source?.tenantId, tenantId)) return null;
+      }
+      return stripDataset(job);
     },
 
     /** Única vía de salida del dataset (usada por /download). */
-    async getByIdWithDataset(id: string) {
+    async getByIdWithDataset(id: string, tenantId?: string) {
       const job = jobs().find((j) => j.id === id);
-      return job ? { ...job } : null;
+      if (!job) return null;
+      if (tenantId !== undefined) {
+        const source = state.sources.find((s) => s.id === job.sourceId);
+        if (!tenantVisible(source?.tenantId, tenantId)) return null;
+      }
+      return { ...job };
     },
 
-    async create(input: { sourceId: string; fields: string[]; at: Date }) {
+    async create(input: { sourceId: string; fields: string[]; at: Date; tenantId?: string }) {
       const unique = [...new Set(input.fields)];
       if (unique.length === 0) throw badRequest("At least one field is required");
       const unsupported = unique.filter(
@@ -123,7 +184,9 @@ function createMockMaskingRepos(state: MockState) {
       if (unsupported.length > 0) {
         throw badRequest(`Unsupported masking fields: ${unsupported.join(", ")}`);
       }
-      const source = state.sources.find((s) => s.id === input.sourceId);
+      const source = state.sources.find(
+        (s) => s.id === input.sourceId && tenantVisible(s.tenantId, input.tenantId),
+      );
       if (!source) throw notFound("Source not found");
 
       const completedAt = new Date(input.at.getTime() + 1);
@@ -193,10 +256,32 @@ export function createMockRepos() {
   let counter = 0;
   const nextId = (prefix: string) => `${prefix}-mock-${++counter}`;
 
+  /**
+   * M21.2 — revoca TODAS las sesiones activas del usuario y limpia su contexto
+   * activo para la organización dada (equivale in-tx a
+   * revokeAllSessionsForUserTx + clearActiveOrgForOrgTx del repo real).
+   */
+  function revokeUserSessions(userSub: string, organizationId: string): number {
+    let revoked = 0;
+    for (const session of state.sessions) {
+      if (session.userSub === userSub && session.revokedAt === null) {
+        session.revokedAt = new Date();
+        revoked += 1;
+      }
+    }
+    for (const session of state.sessions) {
+      if (session.userSub === userSub && session.activeOrgId === organizationId) {
+        session.activeOrgId = null;
+      }
+    }
+    return revoked;
+  }
+
   const state: MockState = {
     users: [],
     userRoles: [],
   sessions: [],
+  scanSchedules: [],
     findings: [
       { id: "f-001", title: "Emails de clientes sin cifrado", dataType: "email", sourceId: "src-001", sourceName: SOURCE_NAMES["src-001"], location: "public.customers.email", severity: "critical", status: "open", records: 12843, detectedAt: minutesAgo(12), regulation: "GDPR Art. 32", recommendation: "Cifrar la columna y restringir el acceso.", sample: "m••••••@empresa.com", createdAt: minutesAgo(12), updatedAt: minutesAgo(12), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
       { id: "f-002", title: "Documento nacional en staging", dataType: "national_id", sourceId: "src-002", sourceName: SOURCE_NAMES["src-002"], location: "staging.user_profiles.national_id", severity: "high", status: "in_review", records: 4521, detectedAt: minutesAgo(38), regulation: "LGPD Art. 46", recommendation: "Tokenizar en cada refresh.", sample: "27.•••.•••-•", createdAt: minutesAgo(38), updatedAt: minutesAgo(38), scanId: null, fingerprint: null, firstSeenAt: null, lastSeenAt: null, lastSeenScanId: null, superseded: false },
@@ -229,30 +314,56 @@ export function createMockRepos() {
       { id: "r-001", name: "Auditoría mensual", period: "last_30d", status: "ready", createdAt: minutesAgo(86), findings: 12, complianceScore: 90, format: "pdf" },
       { id: "r-002", name: "Revisión trimestral", period: "quarter", status: "ready", createdAt: minutesAgo(1820), findings: 40, complianceScore: 88, format: "pdf" },
     ],
+    auditEvents: [],
   };
+
+  // M21.5 — los datos demo (legacy, sin tenant) se sellean con la organización
+  // canónica del backfill (org-bootstrap) para que el scoping estricto los haga
+  // visibles a los tests (cuyo contexto sintético/de bootstrap es org-bootstrap).
+  for (const row of state.findings) row.tenantId ??= "org-bootstrap";
+  for (const row of state.sources) row.tenantId ??= "org-bootstrap";
+  for (const row of state.activity) row.tenantId ??= "org-bootstrap";
+  for (const row of state.reports) row.tenantId ??= "org-bootstrap";
 
   const repos = {
     sources: {
-      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+      async list(
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
+      ) {
         return state.sources
+          .filter((source) => tenantVisible(source.tenantId, tenantId))
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((source) => ({ ...source }));
       },
-      async getById(id: string) {
+      async getById(id: string, tenantId?: string) {
+        return (
+          state.sources.find(
+            (source) => source.id === id && tenantVisible(source.tenantId, tenantId),
+          ) ?? null
+        );
+      },
+      // M21.7 — flujo interno (scanner): lectura SIN scoping de tenant.
+      async getByIdForScan(id: string) {
         return state.sources.find((source) => source.id === id) ?? null;
       },
       // FASE 7.0.5 (M1): réplica del repo real — devuelve la fuente con su
       // conteo real de hallazgos. Cada source del estado ya incluye el campo
       // findingsCount (se mantiene coherente con createSource que lo inicia en 0).
-      async getByIdWithFindingsCount(id: string) {
-        const source = state.sources.find((source) => source.id === id);
+      async getByIdWithFindingsCount(id: string, tenantId?: string) {
+        const source = state.sources.find(
+          (source) => source.id === id && tenantVisible(source.tenantId, tenantId),
+        );
         return source ? { ...source, findingsCount: source.findingsCount } : null;
       },
       // FASE 7.0.1: réplica del repo real — connectionConfig cifrado (mock) se
       // traduce a una configuración; null (legacy) se queda como null.
-      decryptConnectionConfig(source: { connectionConfig: unknown }) {
+      // M23.1: la config devuelve el discriminador `kind` (source.kind es la
+      // fuente de verdad; el scanner gates por kind antes de llegar aquí).
+      decryptConnectionConfig(source: { connectionConfig: unknown; kind?: string }) {
         if (source.connectionConfig == null) return null;
         return {
+          kind: source.kind === "mysql" ? ("mysql" as const) : ("postgresql" as const),
           host: "mock-host",
           port: 5432,
           database: "mock-db",
@@ -275,6 +386,7 @@ export function createMockRepos() {
           password: string;
           schema?: string;
         };
+        tenantId?: string | null;
       }) {
         const now = new Date();
         const created = {
@@ -286,6 +398,8 @@ export function createMockRepos() {
           lastScanAt: null,
           tables: 0,
           records: 0,
+          // M21.3 — raíz de propiedad (D2: null si no hay contexto).
+          tenantId: input.tenantId ?? null,
           connectionConfig: input.connection
             ? "mock-encrypted-connection-string"
             : null,
@@ -311,8 +425,11 @@ export function createMockRepos() {
             schema?: string;
           } | null;
         },
+        tenantId?: string,
       ) {
-        const source = state.sources.find((item) => item.id === id);
+        const source = state.sources.find(
+          (item) => item.id === id && tenantVisible(item.tenantId, tenantId),
+        );
         if (!source) return null;
         if (input.name !== undefined) source.name = input.name;
         if (input.kind !== undefined) source.kind = input.kind;
@@ -325,39 +442,38 @@ export function createMockRepos() {
         source.updatedAt = new Date();
         return { ...source };
       },
-      async deleteSource(id: string) {
-        const index = state.sources.findIndex((item) => item.id === id);
+      async deleteSource(id: string, tenantId?: string) {
+        const index = state.sources.findIndex(
+          (item) => item.id === id && tenantVisible(item.tenantId, tenantId),
+        );
         if (index === -1) return false;
         state.sources.splice(index, 1);
         return true;
-      },
-      async touchLastScan({ id, at }: { id: string; at: Date }) {
-        const source = state.sources.find((item) => item.id === id);
-        if (!source) return null;
-        source.lastScanAt = at;
-        source.updatedAt = at;
-        return { ...source };
       },
     },
     findings: {
       async list(
         filter: { status?: string; severity?: string } = {},
         pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
       ) {
         return state.findings
           .filter(
             (finding) =>
               (!filter.status || finding.status === filter.status) &&
-              (!filter.severity || finding.severity === filter.severity),
+              (!filter.severity || finding.severity === filter.severity) &&
+              tenantVisible(finding.tenantId, tenantId),
           )
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((finding) => ({ ...finding }));
       },
-      async getById(id: string) {
-        return state.findings.find((finding) => finding.id === id) ?? null;
-      },
-      async updateStatus({ id, status, at }: { id: string; status: string; at: Date }) {
-        const finding = state.findings.find((item) => item.id === id);
+      async updateStatus(
+        { id, status, at }: { id: string; status: string; at: Date },
+        tenantId?: string,
+      ) {
+        const finding = state.findings.find(
+          (item) => item.id === id && tenantVisible(item.tenantId, tenantId),
+        );
         if (!finding) return null;
         finding.status = status;
         finding.updatedAt = at;
@@ -368,11 +484,9 @@ export function createMockRepos() {
           description: finding.title,
           createdAt: at,
           severity: finding.severity,
+          tenantId: finding.tenantId,
         });
         return { ...finding };
-      },
-      async countOpen() {
-        return state.findings.filter(isActiveFinding).length;
       },
     },
     rules: {
@@ -385,13 +499,25 @@ export function createMockRepos() {
       async listActive() {
         return state.rules.filter((rule) => rule.enabled).map((rule) => ({ ...rule }));
       },
+      /** FASE 7.0.5 (espejo del repo real): solo `enabled` es gobernable. */
+      async setEnabled({ id, enabled, at }: { id: string; enabled: boolean; at: Date }) {
+        const rule = state.rules.find((item) => item.id === id);
+        if (!rule) return null;
+        rule.enabled = enabled;
+        rule.updatedAt = at;
+        return { ...rule };
+      },
     },
     scans: {
-      async startScan({ sourceId, startedAt }: { sourceId: string; startedAt: Date }) {
-        const source = state.sources.find((item) => item.id === sourceId);
+      async startScan(
+        { sourceId, startedAt, tenantId }: { sourceId: string; startedAt: Date; tenantId?: string },
+      ) {
+        const source = state.sources.find(
+          (item) => item.id === sourceId && tenantVisible(item.tenantId, tenantId),
+        );
         if (!source) return { ok: false, reason: "source_not_found" as const };
 
-        const scan: Scan = {
+        const scan: MockRow<Scan> = {
           id: nextId("scan"),
           sourceId: source.id,
           status: "running",
@@ -399,6 +525,35 @@ export function createMockRepos() {
           completedAt: null,
           findingsCreated: 0,
           // FASE 7.1.0 M0: espejo de los defaults de la migración 0006.
+          heartbeatAt: null,
+          tablesScanned: 0,
+          recordsRead: 0,
+          cancelRequested: false,
+        };
+        state.scans.push(scan);
+        source.lastScanAt = startedAt;
+        source.updatedAt = startedAt;
+        state.activity.unshift({
+          id: nextId("a"),
+          type: "scan",
+          title: "Escaneo iniciado",
+          description: `${source.name} · analizando ${source.tables} tablas`,
+          createdAt: startedAt,
+          severity: null,
+        });
+        return { ok: true, scan: { ...scan }, sourceName: source.name, sourceTables: source.tables };
+      },
+      // M21.7 — flujo interno (scheduler): inicia el scan SIN scoping de tenant.
+      async startScanInternal({ sourceId, startedAt }: { sourceId: string; startedAt: Date }) {
+        const source = state.sources.find((item) => item.id === sourceId);
+        if (!source) return { ok: false, reason: "source_not_found" as const };
+        const scan: MockRow<Scan> = {
+          id: nextId("scan"),
+          sourceId: source.id,
+          status: "running",
+          startedAt,
+          completedAt: null,
+          findingsCreated: 0,
           heartbeatAt: null,
           tablesScanned: 0,
           recordsRead: 0,
@@ -570,13 +725,18 @@ export function createMockRepos() {
       async list(
         filters: { sourceId?: string; status?: string } = {},
         pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
       ) {
         return state.scans
-          .filter(
-            (scan) =>
-              (!filters.sourceId || scan.sourceId === filters.sourceId) &&
-              (!filters.status || scan.status === filters.status),
-          )
+          .filter((scan) => {
+            if (filters.sourceId && scan.sourceId !== filters.sourceId) return false;
+            if (filters.status && scan.status !== filters.status) return false;
+            if (tenantId !== undefined) {
+              const source = state.sources.find((s) => s.id === scan.sourceId);
+              if (!tenantVisible(source?.tenantId, tenantId)) return false;
+            }
+            return true;
+          })
           .sort(
             (a, b) =>
               b.startedAt.getTime() - a.startedAt.getTime() ||
@@ -585,17 +745,29 @@ export function createMockRepos() {
           .slice(pagination.offset, pagination.offset + pagination.limit);
       },
 
-      // FASE 7.1.1 (M1): detalle por id (null si no existe).
-      async getById(id: string) {
-        return state.scans.find((scan) => scan.id === id) ?? null;
+      // FASE 7.1.1 (M1): detalle por id (null si no existe o es ajeno).
+      async getById(id: string, tenantId?: string) {
+        const scan = state.scans.find((scan) => scan.id === id);
+        if (!scan) return null;
+        if (tenantId !== undefined) {
+          const source = state.sources.find((s) => s.id === scan.sourceId);
+          if (!tenantVisible(source?.tenantId, tenantId)) return null;
+        }
+        return scan;
       },
 
       // FASE 7.1.2 (M2): cancelación cooperativa — réplica del repo real:
       // transacción/FOR UPDATE simulada por orden de chequeo; NO cambia
       // status (lo hace el scanner); idempotente mientras siga `running`.
-      async requestCancel({ scanId }: { scanId: string }) {
+      async requestCancel({ scanId, tenantId }: { scanId: string; tenantId?: string }) {
         const scan = state.scans.find((item) => item.id === scanId);
         if (!scan) return { ok: false as const, reason: "scan_not_found" as const };
+        if (tenantId !== undefined) {
+          const source = state.sources.find((s) => s.id === scan.sourceId);
+          if (!tenantVisible(source?.tenantId, tenantId)) {
+            return { ok: false as const, reason: "scan_not_found" as const };
+          }
+        }
         if (scan.status !== "running") {
           return { ok: false as const, reason: "scan_not_running" as const };
         }
@@ -618,7 +790,7 @@ export function createMockRepos() {
         completedAt: Date;
         reason: "timeout";
       }) {
-        const recovered: Scan[] = [];
+        const recovered: MockRow<Scan>[] = [];
         for (const scan of [...state.scans]) {
           const lastAlive = scan.heartbeatAt ?? scan.startedAt;
           if (scan.status !== "running" || lastAlive.getTime() >= before.getTime()) continue;
@@ -641,28 +813,138 @@ export function createMockRepos() {
       },
     },
     activity: {
-      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+      async list(
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
+      ) {
         return state.activity
+          .filter((event) => tenantVisible(event.tenantId, tenantId))
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((event) => ({ ...event }));
       },
-      async create(values: { id: string; type: string; title: string; description: string; createdAt: Date; severity: string | null }) {
-        state.activity.unshift({ ...values });
-        return { ...values };
+      async create(values: {
+        id: string;
+        type: string;
+        title: string;
+        description: string;
+        createdAt: Date;
+        severity: string | null;
+        tenantId?: string | null;
+      }) {
+        state.activity.unshift({ ...values, tenantId: values.tenantId ?? null });
+        return { ...values, tenantId: values.tenantId ?? null };
+      },
+    },
+    auditEvents: {
+      /** M17 — inserta el evento con `createdAt` = ahora (como el default SQL). */
+      async create(values: {
+        id: string;
+        actorUserId: string | null;
+        action: string;
+        resourceType: string;
+        resourceId: string | null;
+        result: string;
+        requestId: string | null;
+        metadata: Record<string, unknown>;
+        tenantId?: string | null;
+      }) {
+        const row: MockRow<AuditEvent> = { ...values, createdAt: new Date(), tenantId: values.tenantId ?? null };
+        state.auditEvents.unshift(row);
+        return { ...row };
+      },
+      /** M17 — filtros + paginación, orden created_at DESC / id DESC (como la BD). */
+      async list(
+        filters: {
+          actorUserId?: string;
+          action?: string;
+          resourceType?: string;
+          resourceId?: string;
+          result?: string;
+          from?: Date;
+          to?: Date;
+          tenantId?: string;
+        } = {},
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+      ) {
+        return state.auditEvents
+          .filter((event) => {
+            if (filters.actorUserId !== undefined && event.actorUserId !== filters.actorUserId) return false;
+            if (filters.action !== undefined && event.action !== filters.action) return false;
+            if (filters.resourceType !== undefined && event.resourceType !== filters.resourceType) return false;
+            if (filters.resourceId !== undefined && event.resourceId !== filters.resourceId) return false;
+            if (filters.result !== undefined && event.result !== filters.result) return false;
+            if (filters.from !== undefined && event.createdAt.getTime() < filters.from.getTime()) return false;
+            if (filters.to !== undefined && event.createdAt.getTime() > filters.to.getTime()) return false;
+            if (filters.tenantId !== undefined && !tenantVisible(event.tenantId, filters.tenantId)) return false;
+            return true;
+          })
+          .sort(
+            (a, b) =>
+              b.createdAt.getTime() - a.createdAt.getTime() ||
+              (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+          )
+          .slice(pagination.offset, pagination.offset + pagination.limit)
+          .map((event) => ({ ...event }));
+      },
+      /**
+       * M21.7.3 — SOLO eventos de plataforma (tenant_id IS NULL). Disjunto de
+       * `list` (que scoped por organización).
+       */
+      async listPlatform(
+        filters: {
+          actorUserId?: string;
+          action?: string;
+          resourceType?: string;
+          resourceId?: string;
+          result?: string;
+          from?: Date;
+          to?: Date;
+        } = {},
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+      ) {
+        return state.auditEvents
+          .filter((event) => {
+            if (event.tenantId !== null && event.tenantId !== undefined) return false;
+            if (filters.actorUserId !== undefined && event.actorUserId !== filters.actorUserId) return false;
+            if (filters.action !== undefined && event.action !== filters.action) return false;
+            if (filters.resourceType !== undefined && event.resourceType !== filters.resourceType) return false;
+            if (filters.resourceId !== undefined && event.resourceId !== filters.resourceId) return false;
+            if (filters.result !== undefined && event.result !== filters.result) return false;
+            if (filters.from !== undefined && event.createdAt.getTime() < filters.from.getTime()) return false;
+            if (filters.to !== undefined && event.createdAt.getTime() > filters.to.getTime()) return false;
+            return true;
+          })
+          .sort(
+            (a, b) =>
+              b.createdAt.getTime() - a.createdAt.getTime() ||
+              (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+          )
+          .slice(pagination.offset, pagination.offset + pagination.limit)
+          .map((event) => ({ ...event }));
       },
     },
     reports: {
-      async list(pagination: { limit: number; offset: number } = { limit: 50, offset: 0 }) {
+      async list(
+        pagination: { limit: number; offset: number } = { limit: 50, offset: 0 },
+        tenantId?: string,
+      ) {
         return state.reports
+          .filter((report) => tenantVisible(report.tenantId, tenantId))
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((report) => ({ ...report }));
       },
-      async getById(id: string) {
-        return state.reports.find((report) => report.id === id) ?? null;
+      async getById(id: string, tenantId?: string) {
+        return (
+          state.reports.find(
+            (report) => report.id === id && tenantVisible(report.tenantId, tenantId),
+          ) ?? null
+        );
       },
-      async create({ name, period, at }: { name: string; period: string; at: Date }) {
-        const openFindings = state.findings.filter(isActiveFinding).length;
-        const report: Report = {
+      async create({ name, period, at, tenantId }: { name: string; period: string; at: Date; tenantId?: string }) {
+        const openFindings = state.findings.filter(
+          (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
+        ).length;
+        const report: MockRow<Report> = {
           id: nextId("r"),
           name,
           period,
@@ -671,6 +953,7 @@ export function createMockRepos() {
           findings: openFindings,
           complianceScore: openFindings === 0 ? 100 : 0,
           format: "pdf",
+          tenantId: tenantId ?? null,
         };
         state.reports.unshift(report);
         state.activity.unshift({
@@ -680,30 +963,39 @@ export function createMockRepos() {
           description: name,
           createdAt: at,
           severity: null,
+          tenantId: report.tenantId,
         });
         return { ...report };
       },
     },
     dashboard: {
-      async getDashboardData() {
-        const open = state.findings.filter(isActiveFinding);
+      async getDashboardData(tenantId?: string) {
+        const sources = state.sources.filter((source) => tenantVisible(source.tenantId, tenantId));
+        const open = state.findings.filter(
+          (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
+        );
         const countsBySeverity: { critical: number; high: number; medium: number; low: number } = { critical: 0, high: 0, medium: 0, low: 0 };
         for (const finding of open) {
           if (finding.severity in countsBySeverity) {
             countsBySeverity[finding.severity as keyof typeof countsBySeverity] += 1;
           }
         }
-        const lastScanAt = state.sources.reduce<Date | null>(
+        const lastScanAt = sources.reduce<Date | null>(
           (acc, source) => (source.lastScanAt && (!acc || source.lastScanAt > acc) ? source.lastScanAt : acc),
           null,
         );
+        const visibleScans = state.scans.filter((scan) => {
+          if (tenantId === undefined) return true;
+          const source = state.sources.find((s) => s.id === scan.sourceId);
+          return tenantVisible(source?.tenantId, tenantId);
+        });
         return {
           countsBySeverity,
           openFindings: open.length,
-          protectedRecords: state.sources.reduce((sum, source) => sum + source.records, 0),
-          monitoredSources: state.sources.length,
+          protectedRecords: sources.reduce((sum, source) => sum + source.records, 0),
+          monitoredSources: sources.length,
           lastScanAt,
-          scanStatus: state.scans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
+          scanStatus: visibleScans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
           complianceScore: open.length === 0 ? 100 : 0,
         };
       },
@@ -714,8 +1006,10 @@ export function createMockRepos() {
     // D8), usa computeComplianceScore como única fuente del score y reutiliza
     // el helper PURO real de buckets UTC (sin dependencias de BD).
     compliance: {
-      async getComplianceSummary() {
-        const active = state.findings.filter(isActiveFinding);
+      async getComplianceSummary(tenantId?: string) {
+        const active = state.findings.filter(
+          (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
+        );
         const findingsBySeverity: { critical: number; high: number; medium: number; low: number } = {
           critical: 0,
           high: 0,
@@ -751,7 +1045,7 @@ export function createMockRepos() {
           ),
         };
       },
-      async getComplianceTrend(days: number) {
+      async getComplianceTrend(days: number, _now?: Date, tenantId?: string) {
         const dayKeys = buildTrendDayKeys(days, new Date());
         return {
           days,
@@ -761,13 +1055,28 @@ export function createMockRepos() {
             // Resoluciones: filas actualmente 'resolved' por updatedAt
             // (misma semántica que las consultas del repositorio real).
             newFindings: state.findings
-              .filter((finding) => finding.superseded === false)
+              .filter(
+                (finding) =>
+                  finding.superseded === false &&
+                  tenantVisible(finding.tenantId, tenantId),
+              )
               .map((finding) => ({ at: finding.firstSeenAt })),
             resolvedFindings: state.findings
-              .filter((finding) => finding.status === "resolved")
+              .filter(
+                (finding) =>
+                  finding.status === "resolved" &&
+                  tenantVisible(finding.tenantId, tenantId),
+              )
               .map((finding) => ({ at: finding.updatedAt })),
             completedScans: state.scans
-              .filter((scan) => scan.status === "completed")
+              .filter((scan) => {
+                if (scan.status !== "completed") return false;
+                if (tenantId !== undefined) {
+                  const source = state.sources.find((s) => s.id === scan.sourceId);
+                  return tenantVisible(source?.tenantId, tenantId);
+                }
+                return true;
+              })
               .map((scan) => ({ at: scan.completedAt, recordsRead: scan.recordsRead })),
           }),
         };
@@ -783,6 +1092,33 @@ export function createMockRepos() {
       async updatePasswordHash(sub: string, passwordHash: string) {
         const user = state.users.find((u) => u.sub === sub);
         if (user) { user.passwordHash = passwordHash; user.updatedAt = new Date(); }
+      },
+      /**
+       * M11.2.1: contrato del repo real, versión in-memory. Actualiza el hash
+       * y revoca en un único paso todas las sesiones activas del usuario
+       * EXCEPTO `exceptJti` (sesión actual, que debe sobrevivir al cambio).
+       */
+      async changePasswordAndRevokeOtherSessions(
+        sub: string,
+        passwordHash: string,
+        exceptJti: string | null,
+      ) {
+        const user = state.users.find((u) => u.sub === sub);
+        if (!user) return 0;
+        user.passwordHash = passwordHash;
+        user.updatedAt = new Date();
+        let revoked = 0;
+        for (const session of state.sessions) {
+          if (
+            session.userSub === sub &&
+            session.revokedAt === null &&
+            session.jti !== exceptJti
+          ) {
+            session.revokedAt = new Date();
+            revoked += 1;
+          }
+        }
+        return revoked;
       },
       async updateLastLogin(sub: string) {
         const user = state.users.find((u) => u.sub === sub);
@@ -900,6 +1236,113 @@ export function createMockRepos() {
       },
     },
 
+    scanSchedules: {
+      async upsert(
+        input: { sourceId: string; enabled: boolean; intervalMinutes?: number; at: Date },
+        tenantId?: string,
+      ) {
+        // Semántica del repo real: la fuente debe existir (lock FOR UPDATE
+        // dentro de la transacción); si no, { ok: false, source_not_found }.
+        const source = state.sources.find(
+          (item) => item.id === input.sourceId && tenantVisible(item.tenantId, tenantId),
+        );
+        if (!source) return { ok: false, reason: "source_not_found" as const };
+        const nextRunAt = input.enabled
+          ? new Date(input.at.getTime() + (input.intervalMinutes ?? 1440) * 60_000)
+          : null;
+        const existing = state.scanSchedules.find((item) => item.sourceId === input.sourceId);
+        const row = {
+          id: existing?.id ?? `sched-${state.scanSchedules.length + 1}`,
+          sourceId: input.sourceId,
+          enabled: input.enabled,
+          intervalMinutes: input.intervalMinutes ?? 1440,
+          nextRunAt,
+          lastRunAt: existing?.lastRunAt ?? null,
+          lastStatus: existing?.lastStatus ?? null,
+          lastError: existing?.lastError ?? null,
+          createdAt: existing?.createdAt ?? input.at,
+          updatedAt: input.at,
+        };
+        if (existing) Object.assign(existing, row);
+        else state.scanSchedules.push(row);
+        return { ok: true, schedule: row };
+      },
+      async getBySourceId(sourceId: string, tenantId?: string) {
+        const schedule = state.scanSchedules.find((item) => item.sourceId === sourceId);
+        if (!schedule) return null;
+        if (tenantId !== undefined) {
+          const source = state.sources.find((s) => s.id === sourceId);
+          if (!tenantVisible(source?.tenantId, tenantId)) return null;
+        }
+        return schedule;
+      },
+      async claimDue({ now, limit }: { now: Date; limit: number }) {
+        const due = state.scanSchedules
+          .filter((row) => row.enabled && row.nextRunAt !== null && row.nextRunAt <= now)
+          .slice(0, limit);
+        const claimed = due.map((row) => {
+          row.nextRunAt = new Date(now.getTime() + row.intervalMinutes * 60_000);
+          row.lastRunAt = now;
+          return { schedule: row };
+        });
+        return claimed;
+      },
+      async markResult(input: { id: string; status: "ok" | "skipped" | "error"; error?: string | null; at: Date }) {
+        const row = state.scanSchedules.find((item) => item.id === input.id);
+        if (row) {
+          row.lastStatus = input.status;
+          row.lastError = input.error ?? null;
+        }
+      },
+    },
+    rateLimits: {
+      /** M18 — upsert fixed-window equivalente al SQL `ON CONFLICT ... RETURNING`. */
+      async hit(key: string, windowMs: number) {
+        const rows = (state.rateLimitHits ??= []);
+        const now = Date.now();
+        const existing = rows.find((r) => r.key === key);
+        if (!existing) {
+          const row: MockRateLimitHit = {
+            key,
+            hits: 1,
+            windowStartAt: new Date(now),
+            expiresAt: new Date(now + windowMs),
+          };
+          rows.push(row);
+          return { totalHits: row.hits, resetTime: new Date(row.expiresAt) };
+        }
+        if (existing.expiresAt.getTime() <= now) {
+          existing.hits = 1;
+          existing.windowStartAt = new Date(now);
+          existing.expiresAt = new Date(now + windowMs);
+        } else {
+          existing.hits += 1;
+        }
+        return { totalHits: existing.hits, resetTime: new Date(existing.expiresAt) };
+      },
+      async resetKey(key: string) {
+        const rows = (state.rateLimitHits ??= []);
+        const idx = rows.findIndex((r) => r.key === key);
+        if (idx >= 0) rows.splice(idx, 1);
+      },
+      async resetAll(prefix?: string) {
+        const rows = (state.rateLimitHits ??= []);
+        state.rateLimitHits = prefix
+          ? rows.filter((r) => !r.key.startsWith(`${prefix}:`))
+          : [];
+      },
+      async decrementKey(key: string) {
+        const row = (state.rateLimitHits ??= []).find((r) => r.key === key);
+        if (row && row.hits > 0) row.hits -= 1;
+      },
+      async cleanupExpired() {
+        const rows = (state.rateLimitHits ??= []);
+        const now = Date.now();
+        const before = rows.length;
+        state.rateLimitHits = rows.filter((r) => r.expiresAt.getTime() > now);
+        return before - state.rateLimitHits.length;
+      },
+    },
     sessions: {
       /**
        * [6.3B.12] Contrato transaccional del login (equivalente al repo real:
@@ -911,6 +1354,7 @@ export function createMockRepos() {
       async createSessionForUser(
         sub: string,
         buildToken: (roles: string[]) => Promise<string>,
+        activeOrgId?: string | null,
       ) {
         const roles = state.userRoles
           .filter((r) => r.userSub === sub)
@@ -927,16 +1371,46 @@ export function createMockRepos() {
           issuedAt: new Date(),
           expiresAt: new Date(exp * 1000),
           revokedAt: null,
+          lastUsedAt: new Date(),
+          // M21.2 — contexto de organización inicial (primera membership).
+          activeOrgId: activeOrgId ?? null,
         };
         state.sessions.push(created);
         return { jwt, roles };
       },
-      async findActiveByJti(jti: string) {
-        const now = new Date();
-        const session = state.sessions.find(
-          (s) => s.jti === jti && s.revokedAt === null && s.expiresAt > now,
+      async findRawByJti(jti: string) {
+        return state.sessions.find((s) => s.jti === jti) ?? null;
+      },
+      async cleanupStale(cutoff: Date) {
+        const cutoffMs = cutoff.getTime();
+        const before = state.sessions.length;
+        state.sessions = state.sessions.filter(
+          (s) =>
+            s.expiresAt.getTime() > cutoffMs &&
+            (s.revokedAt === null || s.revokedAt.getTime() > cutoffMs),
         );
+        return before - state.sessions.length;
+      },
+      async findActiveByJti(jti: string, idleSeconds: number) {
+        const now = new Date();
+        const idleThreshold = new Date(now.getTime() - idleSeconds * 1000);
+        const session = state.sessions.find((s) => {
+          // `lastUsedAt` ausente (sesiones creadas manualmente en tests de
+          // M11.2.2 y anteriores) equivale a la migración con DEFAULT NOW():
+          // se trata como actividad reciente, igual que en producción.
+          const lastUsed = s.lastUsedAt ?? now;
+          return (
+            s.jti === jti &&
+            s.revokedAt === null &&
+            s.expiresAt > now &&
+            lastUsed > idleThreshold
+          );
+        });
         return session ? { ...session } : null;
+      },
+      async touchLastUsed(jti: string) {
+        const session = state.sessions.find((s) => s.jti === jti);
+        if (session) session.lastUsedAt = new Date();
       },
       async revokeByJti(jti: string) {
         const session = state.sessions.find(
@@ -945,6 +1419,409 @@ export function createMockRepos() {
         if (!session) return false;
         session.revokedAt = new Date();
         return true;
+      },
+      /** M11.2.1 — variante transaccional: mismo comportamiento, firma de tx. */
+      async revokeAllSessionsForUserTx(_tx: unknown, userSub: string) {
+        let revoked = 0;
+        for (const session of state.sessions) {
+          if (session.userSub === userSub && session.revokedAt === null) {
+            session.revokedAt = new Date();
+            revoked += 1;
+          }
+        }
+        return revoked;
+      },
+      /** M11.2.2 — lista sesiones activas del usuario, emisión descendente. */
+      async listActiveByUser(userSub: string) {
+        const now = new Date();
+        return state.sessions
+          .filter(
+            (s) =>
+              s.userSub === userSub &&
+              s.revokedAt === null &&
+              s.expiresAt > now,
+          )
+          .sort((a, b) => b.issuedAt.getTime() - a.issuedAt.getTime())
+          .map((s) => ({ ...s }));
+      },
+      /** M11.2.2 — revoca TODAS las sesiones activas del usuario (incluida actual). */
+      async revokeAllForUser(userSub: string) {
+        let revoked = 0;
+        for (const session of state.sessions) {
+          if (session.userSub === userSub && session.revokedAt === null) {
+            session.revokedAt = new Date();
+            revoked += 1;
+          }
+        }
+        return revoked;
+      },
+
+      /**
+       * M21.2 — fija la organización activa de una sesión. Replica el repo
+       * real: valida membership ANTES de mutar (misma tx lógica) y devuelve
+       * `false` si la sesión no existe o no pertenece al usuario.
+       */
+      async setActiveOrganization(
+        jti: string,
+        userSub: string,
+        organizationId: string,
+      ) {
+        const memberships = (state.memberships ??= []);
+        const membership = memberships.find(
+          (m) => m.userSub === userSub && m.organizationId === organizationId,
+        );
+        if (!membership) return false;
+        const session = state.sessions.find(
+          (s) => s.jti === jti && s.userSub === userSub,
+        );
+        if (!session) return false;
+        session.activeOrgId = organizationId;
+        return true;
+      },
+
+      /** M21.2 — limpia el contexto activo de las sesiones de un usuario para una org. */
+      async clearActiveOrgForOrg(userSub: string, organizationId: string) {
+        let cleared = 0;
+        for (const session of state.sessions) {
+          if (session.userSub === userSub && session.activeOrgId === organizationId) {
+            session.activeOrgId = null;
+            cleared += 1;
+          }
+        }
+        return cleared;
+      },
+
+      /**
+       * M21.2 — organización activa resuelta EN CADA REQUEST: la sesión debe
+       * existir, tener contexto, y la membership debe seguir viva (fail-closed).
+       */
+      async resolveActiveOrganization(jti: string, userSub: string) {
+        const session = state.sessions.find(
+          (s) => s.jti === jti && s.userSub === userSub,
+        );
+        if (!session || session.activeOrgId === null) return null;
+        const membership = (state.memberships ??= []).find(
+          (m) =>
+            m.userSub === userSub && m.organizationId === session.activeOrgId,
+        );
+        if (!membership) return null;
+        return { organizationId: membership.organizationId, role: membership.role };
+      },
+    },
+
+    // ---- M21.2: organizaciones ----
+    organizations: {
+      async getByIds(ids: string[]) {
+        const orgs = (state.organizations ??= []);
+        const map = new Map<
+          string,
+          { id: string; name: string; slug: string; createdAt: Date }
+        >();
+        for (const org of orgs) {
+          if (ids.includes(org.id)) {
+            map.set(org.id, {
+              id: org.id,
+              name: org.name,
+              slug: org.slug,
+              createdAt: org.createdAt,
+            });
+          }
+        }
+        return map;
+      },
+      async getById(id: string) {
+        const orgs = (state.organizations ??= []);
+        const org = orgs.find((row) => row.id === id);
+        if (!org) return null;
+        return {
+          id: org.id,
+          name: org.name,
+          slug: org.slug,
+          createdAt: org.createdAt,
+        };
+      },
+      async exists(id: string) {
+        return (state.organizations ??= []).some((org) => org.id === id);
+      },
+    },
+
+    // ---- M21.2: memberships (autoridad empresarial) ----
+    memberships: {
+      async getByUserAndOrg(userSub: string, organizationId: string) {
+        return (
+          (state.memberships ??= []).find(
+            (m) => m.userSub === userSub && m.organizationId === organizationId,
+          ) ?? null
+        );
+      },
+      /** Primera organización del usuario (orden de ingreso): default del login. */
+      async getFirstOrgForUser(userSub: string) {
+        const rows = (state.memberships ??= [])
+          .filter((m) => m.userSub === userSub)
+          .sort(
+            (a, b) =>
+              a.joinedAt.getTime() - b.joinedAt.getTime() ||
+              a.organizationId.localeCompare(b.organizationId),
+          );
+        return rows[0]?.organizationId ?? null;
+      },
+      /** Organizaciones del usuario + rol (orden de ingreso). */
+      async listByUser(userSub: string) {
+        const orgs = (state.organizations ??= []);
+        return (state.memberships ??= [])
+          .filter((m) => m.userSub === userSub)
+          .sort(
+            (a, b) =>
+              a.joinedAt.getTime() - b.joinedAt.getTime() ||
+              a.organizationId.localeCompare(b.organizationId),
+          )
+          .map((m) => {
+            const org = orgs.find((row) => row.id === m.organizationId);
+            if (!org) return null;
+            return {
+              organization: {
+                id: org.id,
+                name: org.name,
+                slug: org.slug,
+                createdAt: org.createdAt,
+              },
+              role: m.role,
+              joinedAt: m.joinedAt,
+            };
+          })
+          .filter((row): row is NonNullable<typeof row> => row !== null);
+      },
+      /** Miembros de una organización con identidad pública (sin credenciales). */
+      async listByOrg(organizationId: string) {
+        return (state.memberships ??= [])
+          .filter((m) => m.organizationId === organizationId)
+          .sort(
+            (a, b) =>
+              a.joinedAt.getTime() - b.joinedAt.getTime() ||
+              a.userSub.localeCompare(b.userSub),
+          )
+          .map((m) => {
+            const user = state.users.find((u) => u.sub === m.userSub);
+            if (!user) return null;
+            return {
+              sub: user.sub,
+              email: user.email,
+              name: user.name,
+              role: m.role,
+              joinedAt: m.joinedAt,
+            };
+          })
+          .filter((row): row is NonNullable<typeof row> => row !== null);
+      },
+      /** Alta idempotente por PK compuesta (`null` = ya existía). */
+      async create(values: {
+        organizationId: string;
+        userSub: string;
+        role: string;
+        invitedBy?: string | null;
+      }) {
+        const memberships = (state.memberships ??= []);
+        if (
+          memberships.some(
+            (m) =>
+              m.organizationId === values.organizationId &&
+              m.userSub === values.userSub,
+          )
+        ) {
+          return null;
+        }
+        const created: Membership = {
+          organizationId: values.organizationId,
+          userSub: values.userSub,
+          role: values.role,
+          invitedBy: values.invitedBy ?? null,
+          joinedAt: new Date(),
+        };
+        memberships.push(created);
+        return { ...created };
+      },
+      /**
+       * Cambio de rol: replica al repo real — invariante de último
+       * owner/admin evaluada AL MOMENTO DE MUTAR, `owner` inmutable, y
+       * revocación de sesiones + limpieza de contexto en la misma operación.
+       */
+      async updateRole(
+        organizationId: string,
+        userSub: string,
+        nextRole: string,
+      ) {
+        const memberships = (state.memberships ??= []);
+        const target = memberships.find(
+          (m) => m.organizationId === organizationId && m.userSub === userSub,
+        );
+        if (!target) throw notFound("Member not found");
+        if (target.role === "owner") {
+          throw forbidden(
+            "Ownership transfer is required to change the owner membership",
+          );
+        }
+        if (target.role === nextRole) {
+          return { revokedSessions: 0 };
+        }
+        const remainingGovernors = memberships.filter(
+          (m) =>
+            m.organizationId === organizationId &&
+            m.userSub !== userSub &&
+            (m.role === "owner" || m.role === "admin"),
+        );
+        if (
+          (target.role === "owner" || target.role === "admin") &&
+          remainingGovernors.length === 0
+        ) {
+          throw forbidden("Cannot remove the last organization admin");
+        }
+        target.role = nextRole;
+        return {
+          revokedSessions: revokeUserSessions(userSub, organizationId),
+        };
+      },
+      /** Baja de miembro: mismas invariantes que updateRole. */
+      async remove(organizationId: string, userSub: string) {
+        const memberships = (state.memberships ??= []);
+        const targetIndex = memberships.findIndex(
+          (m) => m.organizationId === organizationId && m.userSub === userSub,
+        );
+        if (targetIndex === -1) throw notFound("Member not found");
+        const target = memberships[targetIndex];
+        if (target.role === "owner") {
+          throw forbidden(
+            "Ownership transfer is required to remove the owner membership",
+          );
+        }
+        const remainingGovernors = memberships.filter(
+          (m) =>
+            m.organizationId === organizationId &&
+            m.userSub !== userSub &&
+            (m.role === "owner" || m.role === "admin"),
+        );
+        if (
+          (target.role === "owner" || target.role === "admin") &&
+          remainingGovernors.length === 0
+        ) {
+          throw forbidden("Cannot remove the last organization admin");
+        }
+        memberships.splice(targetIndex, 1);
+        return {
+          revokedSessions: revokeUserSessions(userSub, organizationId),
+        };
+      },
+    },
+
+    // ---- M21.2: invitaciones (el token NUNCA se persiste, solo su hash) ----
+    invitations: {
+      async create(values: {
+        organizationId: string;
+        email: string;
+        role: string;
+        tokenHash: string;
+        expiresAt: Date;
+        invitedBy: string;
+      }) {
+        const invitations = (state.invitations ??= []);
+        const created: Invitation = {
+          id: nextId("inv"),
+          organizationId: values.organizationId,
+          email: values.email,
+          role: values.role,
+          tokenHash: values.tokenHash,
+          expiresAt: values.expiresAt,
+          acceptedAt: null,
+          invitedBy: values.invitedBy,
+          createdAt: new Date(),
+        };
+        invitations.push(created);
+        return { ...created };
+      },
+      /** Proyección SIN token_hash (nunca sale de la BD). */
+      async listByOrg(organizationId: string) {
+        return (state.invitations ??= [])
+          .filter((invitation) => invitation.organizationId === organizationId)
+          .sort(
+            (a, b) =>
+              b.createdAt.getTime() - a.createdAt.getTime() ||
+              a.id.localeCompare(b.id),
+          )
+          .map((invitation) => ({
+            id: invitation.id,
+            email: invitation.email,
+            role: invitation.role,
+            expiresAt: invitation.expiresAt,
+            acceptedAt: invitation.acceptedAt,
+            createdAt: invitation.createdAt,
+          }));
+      },
+      /** Revoca (borra) una invitación pendiente de ESA organización. */
+      async revoke(organizationId: string, invitationId: string) {
+        const invitations = (state.invitations ??= []);
+        const index = invitations.findIndex(
+          (invitation) =>
+            invitation.id === invitationId &&
+            invitation.organizationId === organizationId,
+        );
+        if (index === -1) return false;
+        invitations.splice(index, 1);
+        return true;
+      },
+      /**
+       * Aceptación atómica (espejo del repo real): valida estado + consumo +
+       * alta del membership. `expectedEmail` hace la invitación PERSONAL;
+       * mismatch → `not_found` (mismo contrato que token inexistente, sin
+       * filtrar cuál de los dos falló).
+       */
+      async consumeByTokenHash(input: {
+        tokenHash: string;
+        userSub: string;
+        now: Date;
+        expectedEmail?: string;
+      }) {
+        const invitations = (state.invitations ??= []);
+        const invitation = invitations.find(
+          (row) => row.tokenHash === input.tokenHash,
+        );
+        if (!invitation) {
+          return { ok: false as const, reason: "not_found" as const };
+        }
+        if (
+          input.expectedEmail !== undefined &&
+          invitation.email !== input.expectedEmail
+        ) {
+          return { ok: false as const, reason: "not_found" as const };
+        }
+        if (invitation.acceptedAt) {
+          return { ok: false as const, reason: "already_accepted" as const };
+        }
+        if (invitation.expiresAt.getTime() <= input.now.getTime()) {
+          return { ok: false as const, reason: "expired" as const };
+        }
+        const memberships = (state.memberships ??= []);
+        if (
+          memberships.some(
+            (m) =>
+              m.organizationId === invitation.organizationId &&
+              m.userSub === input.userSub,
+          )
+        ) {
+          return { ok: false as const, reason: "already_member" as const };
+        }
+        memberships.push({
+          organizationId: invitation.organizationId,
+          userSub: input.userSub,
+          role: invitation.role,
+          invitedBy: invitation.invitedBy,
+          joinedAt: input.now,
+        });
+        invitation.acceptedAt = input.now;
+        return {
+          ok: true as const,
+          organizationId: invitation.organizationId,
+          role: invitation.role,
+          invitationId: invitation.id,
+        };
       },
     },
   };

@@ -8,19 +8,14 @@ import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { numberFromEnv } from "./lib/env";
 import { sendProblemJson } from "./lib/problem-json";
+import { REQUEST_ID_HEADER, resolveRequestId } from "./lib/request-id";
+import { httpRequestDurationMs, httpRequestsTotal } from "./lib/metrics";
 import { notFoundHandler } from "./middlewares/not-found";
 import { errorHandler } from "./middlewares/error-handler";
 
 const isProduction = process.env.NODE_ENV === "production";
-
-/** Positive number from an env var, falling back to `fallback` when unset/invalid. */
-function numberFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-  const value = Number(raw);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
-}
 
 /**
  * Trusted proxy hops in front of this server. Hardening 6.3B.23 (F23-01,
@@ -71,6 +66,17 @@ const jsonBodyLimit = process.env.JSON_BODY_LIMIT ?? "16kb";
 
 const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
+// Probes de infraestructura (Fase C): nunca se limitan por rate limit porque un
+// orquestador los consulta con frecuencia y un 429 haría reiniciar un proceso
+// sano. `express-rate-limit` corre montado en `/api`, así que se compara el path
+// con ese prefijo ya removido sobre `originalUrl` (estable ante el montaje).
+const UNTHROTTLED_PATHS = new Set(["/healthz", "/livez", "/readyz"]);
+
+function isProbeRequest(req: express.Request): boolean {
+  const path = req.originalUrl.split("?")[0].replace(/^\/api(?=\/)/, "");
+  return UNTHROTTLED_PATHS.has(path);
+}
+
 // Respond with problem+json so every error body in the API shares one format.
 function rateLimitHandler(
   _req: express.Request,
@@ -92,8 +98,8 @@ const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: rateLimitHandler,
-  // Keep the health endpoint unthrottled for monitoring probes.
-  skip: (req) => req.path === "/healthz",
+  // Health/liveness/readiness quedan fuera del bucket general.
+  skip: isProbeRequest,
 });
 
 const mutationsLimiter = rateLimit({
@@ -112,6 +118,12 @@ app.set("trust proxy", resolveTrustProxy());
 app.use(
   pinoHttp({
     logger,
+    // M16.1 — correlation id: reutiliza `X-Request-Id` del cliente (validado)
+    // o genera un UUID v4. El id queda en `req.id`, se serializa en los logs
+    // (serializador req() de abajo) y se devuelve en el header de respuesta.
+    genReqId(req) {
+      return resolveRequestId(req.headers[REQUEST_ID_HEADER]);
+    },
     serializers: {
       req(req) {
         return {
@@ -128,6 +140,30 @@ app.use(
     },
   }),
 );
+
+// M16.1 — todo response lleva el correlation id del request.
+app.use((req, res, next) => {
+  res.setHeader(REQUEST_ID_HEADER, String(req.id));
+  next();
+});
+
+// M16.4 — métricas HTTP (contador + duración). Label `route` = plantilla de
+// ruta de Express (baja cardinalidad): paths sin match → "unmatched" (404,
+// static), assets del SPA → "static".
+app.use((req, res, next) => {
+  const startedAt = process.hrtime.bigint();
+  res.on("finish", () => {
+    const route = req.route
+      ? `${req.baseUrl}${req.route.path}`
+      : req.path.startsWith("/api/")
+        ? "unmatched"
+        : "static";
+    const labels = { method: req.method, route, status: String(res.statusCode) };
+    httpRequestsTotal.inc(labels);
+    httpRequestDurationMs.observe(labels, Number(process.hrtime.bigint() - startedAt) / 1e6);
+  });
+  next();
+});
 
 app.use(helmet());
 
@@ -174,7 +210,11 @@ const frontendDir = process.env.STATIC_ROOT
       "public",
     );
 const frontendIndex = path.join(frontendDir, "index.html");
-const serveFrontend = existsSync(frontendIndex);
+// M20.2-A — SERVE_STATIC=false desactiva el serving del SPA compilado aunque
+// exista en disco (en compose lo sirve nginx (servicio `web`); la API queda
+// API-only a propósito). Default (unset/"true"): comportamiento histórico.
+const serveStatic = process.env.SERVE_STATIC !== "false";
+const serveFrontend = serveStatic && existsSync(frontendIndex);
 
 if (serveFrontend) {
   logger.info({ frontendDir }, "Serving compiled React frontend");
@@ -196,6 +236,12 @@ if (serveFrontend) {
       }
     });
   });
+} else if (!serveStatic) {
+  // M20.2-A — desactivado a propósito por config: informativo, no un warning.
+  logger.info(
+    { frontendIndex },
+    "Static frontend serving disabled (SERVE_STATIC=false); running in API-only mode",
+  );
 } else {
   logger.warn(
     { frontendIndex },

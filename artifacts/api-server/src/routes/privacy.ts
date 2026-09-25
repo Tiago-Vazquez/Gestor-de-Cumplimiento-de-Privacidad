@@ -56,13 +56,16 @@ import {
   mapSource,
 } from "../mappers";
 import { repos } from "../repositories";
-import { requireRole } from "../auth/middleware";
+import { requireRole, requirePlatformAdmin } from "../auth/middleware";
+import { resolvedOrgContext } from "../auth/org-context";
 import { runScan } from "../services/scanner";
+import { recordAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
 
-router.get("/dashboard", async (_req, res) => {
-  const data = await repos.dashboard.getDashboardData();
+router.get("/dashboard", async (req, res) => {
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const data = await repos.dashboard.getDashboardData(tenantId);
 
   // D9: el contrato exige `lastScanAt` como string incluso con la base de
   // datos vacía; sin ningún escaneo registrado se expone el instante de la
@@ -82,8 +85,9 @@ router.get("/dashboard", async (_req, res) => {
 // FASE 7.2 (M2.c): métricas de compliance. Mismo modelo que /dashboard:
 // sesión requerida por el middleware global de /api; el repositorio
 // recalcula en cada lectura con el criterio canónico D8.
-router.get("/compliance", async (_req, res) => {
-  const data = await repos.compliance.getComplianceSummary();
+router.get("/compliance", async (req, res) => {
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const data = await repos.compliance.getComplianceSummary(tenantId);
   res.json(GetComplianceResponse.parse(mapComplianceSummary(data)));
 });
 
@@ -92,21 +96,25 @@ router.get("/compliance", async (_req, res) => {
 // La ventana SQL se acota dentro del repositorio.
 router.get("/compliance/trend", async (req, res) => {
   const params = GetComplianceTrendQueryParams.parse(req.query);
-  const data = await repos.compliance.getComplianceTrend(params.days);
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const data = await repos.compliance.getComplianceTrend(params.days, new Date(), tenantId);
   res.json(GetComplianceTrendResponse.parse(mapComplianceTrend(data)));
 });
 
 router.get("/activity", async (req, res) => {
-  const rows = await repos.activity.list(parsePagination(req.query));
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const rows = await repos.activity.list(parsePagination(req.query), tenantId);
   res.json(GetActivityResponse.parse(rows.map(mapActivity)));
 });
 
 router.get("/findings", async (req, res) => {
   const params = ListFindingsQueryParams.parse(req.query);
   const pagination = parsePagination(req.query);
+  const tenantId = resolvedOrgContext(req).organizationId;
   const rows = await repos.findings.list(
     { status: params.status, severity: params.severity },
     pagination,
+    tenantId,
   );
   res.json(ListFindingsResponse.parse(rows.map(mapFinding)));
 });
@@ -114,8 +122,12 @@ router.get("/findings", async (req, res) => {
 router.patch("/findings/:id", requireRole("admin"), async (req, res) => {
   const { id } = UpdateFindingParams.parse(req.params);
   const { status } = UpdateFindingBody.parse(req.body);
+  const tenantId = resolvedOrgContext(req).organizationId;
 
-  const updated = await repos.findings.updateStatus({ id, status, at: new Date() });
+  const updated = await repos.findings.updateStatus(
+    { id, status, at: new Date() },
+    tenantId,
+  );
   if (!updated) {
     throw notFound("Finding not found");
   }
@@ -124,7 +136,8 @@ router.patch("/findings/:id", requireRole("admin"), async (req, res) => {
 });
 
 router.get("/sources", async (req, res) => {
-  const rows = await repos.sources.list(parsePagination(req.query));
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const rows = await repos.sources.list(parsePagination(req.query), tenantId);
   res.json(ListSourcesResponse.parse(rows.map(mapSource)));
 });
 
@@ -136,7 +149,7 @@ router.get("/rules", async (req, res) => {
 // FASE 7.0.5 (M7): PATCH /api/rules/:id — actualizar únicamente `enabled`.
 // Solo admin. El resto de campos (patrón, severidad, regulación) es built-in.
 // El cambio es efectivo en el siguiente scan (resolveActiveRules lee BD).
-router.patch("/rules/:id", requireRole("admin"), async (req, res) => {
+router.patch("/rules/:id", requirePlatformAdmin(), async (req, res) => {
   const { id } = UpdateRuleParams.parse(req.params);
   const { enabled } = UpdateRuleBody.parse(req.body);
 
@@ -145,13 +158,25 @@ router.patch("/rules/:id", requireRole("admin"), async (req, res) => {
     throw notFound("Rule not found");
   }
 
+  // M17 — activación/desactivación de una regla de detección (cambia el
+  // comportamiento del escaneo): una acción por request, sin duplicados.
+  await recordAuditEvent({
+    req,
+    action: enabled ? "rule_enabled" : "rule_disabled",
+    resourceType: "rule",
+    resourceId: id,
+    result: "success",
+    metadata: { enabled },
+  });
+
   res.json(UpdateRuleResponse.parse(mapRule(updated)));
 });
 
 router.post("/scans", requireRole("admin"), async (req, res) => {
   const { sourceId } = StartScanBody.parse(req.body);
+  const tenantId = resolvedOrgContext(req).organizationId;
 
-  const result = await repos.scans.startScan({ sourceId, startedAt: new Date() });
+  const result = await repos.scans.startScan({ sourceId, startedAt: new Date(), tenantId });
   if (!result.ok) {
     // FASE 7.0.5 (M2): 409 si ya hay un scan running para esta fuente
     if (result.reason === "scan_already_running") {
@@ -166,9 +191,27 @@ router.post("/scans", requireRole("admin"), async (req, res) => {
   // findings; si la fuente no es escaneable o falla la conexión, marca
   // `failed` con su causa. Nunca lanza tras la respuesta: los errores quedan
   // registrados en el scan y en el log.
+  // M17 — inicio manual de escaneo (el usuario lo pidió). El correlation id del
+  // request también viaja al scanner (M16.2), así que el evento y los logs del
+  // scan son cruzables.
+  await recordAuditEvent({
+    req,
+    action: "scan_started",
+    resourceType: "scan",
+    resourceId: result.scan.id,
+    result: "success",
+    metadata: { sourceId, trigger: "manual" },
+  });
+
   res.status(202).json(StartScanResponse.parse(mapScan(result.scan)));
 
-  void runScan({ scanId: result.scan.id, sourceId }).catch((error) => {
+  // M16.2 — el correlation id del request acompaña al scan en sus logs
+  // (scan_started/completed/failed): rastrea la petición que lo originó.
+  void runScan({
+    scanId: result.scan.id,
+    sourceId,
+    requestId: typeof req.id === "string" ? req.id : undefined,
+  }).catch((error) => {
     logger.error({ err: error, scanId: result.scan.id }, "Scanner crashed");
   });
 });
@@ -178,16 +221,19 @@ router.post("/scans", requireRole("admin"), async (req, res) => {
 // exactos sourceId/status ya validados por el contrato; paginación en SQL.
 router.get("/scans", async (req, res) => {
   const params = ListScansQueryParams.parse(req.query);
+  const tenantId = resolvedOrgContext(req).organizationId;
   const rows = await repos.scans.list(
     { sourceId: params.sourceId, status: params.status },
     parsePagination(req.query),
+    tenantId,
   );
   res.json(ListScansResponse.parse(rows.map(mapScan)));
 });
 
 router.get("/scans/:id", async (req, res) => {
   const { id } = GetScanParams.parse(req.params);
-  const scan = await repos.scans.getById(id);
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const scan = await repos.scans.getById(id, tenantId);
   if (!scan) {
     throw notFound("Scan not found");
   }
@@ -201,18 +247,30 @@ router.get("/scans/:id", async (req, res) => {
 // mientras siga `running`; 409 si ya alcanzó estado terminal por sí mismo.
 router.post("/scans/:id/cancel", requireRole("admin"), async (req, res) => {
   const { id } = CancelScanParams.parse(req.params);
-  const result = await repos.scans.requestCancel({ scanId: id });
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const result = await repos.scans.requestCancel({ scanId: id, tenantId });
   if (!result.ok) {
     if (result.reason === "scan_not_found") {
       throw notFound("Scan not found");
     }
     throw conflict("Scan already reached a terminal state");
   }
+  // M17 — cancelación cooperativa solicitada por un admin.
+  await recordAuditEvent({
+    req,
+    action: "scan_cancelled",
+    resourceType: "scan",
+    resourceId: id,
+    result: "success",
+    metadata: { sourceId: result.scan.sourceId },
+  });
+
   res.status(202).json(CancelScanResponse.parse(mapScan(result.scan)));
 });
 
 router.get("/reports", async (req, res) => {
-  const rows = await repos.reports.list(parsePagination(req.query));
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const rows = await repos.reports.list(parsePagination(req.query), tenantId);
   // F9 (6.3B.20): la salida se valida contra el esquema del contrato antes
   // de enviarla (fallback no validado eliminado).
   res.json(ListReportsResponse.parse(rows.map(mapReport)));
@@ -220,13 +278,28 @@ router.get("/reports", async (req, res) => {
 
 router.post("/reports", requireRole("admin"), async (req, res) => {
   const { name, period } = CreateReportBody.parse(req.body);
-  const report = await repos.reports.create({ name, period, at: new Date() });
+  // M21.4 — generar un informe exige organización activa (tenant_id NOT NULL).
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const report = await repos.reports.create({ name, period, at: new Date(), tenantId });
+
+  // M17 — generación de informe (recurso report). El nombre del informe es
+  // texto provisto por el usuario: se audita el periodo, no el nombre.
+  await recordAuditEvent({
+    req,
+    action: "report_created",
+    resourceType: "report",
+    resourceId: report.id,
+    result: "success",
+    metadata: { period },
+  });
+
   res.status(201).json(ListReportsResponseItem.parse(mapReport(report)));
 });
 
 router.get("/reports/:id", async (req, res) => {
   const { id } = GetReportParams.parse(req.params);
-  const report = await repos.reports.getById(id);
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const report = await repos.reports.getById(id, tenantId);
   if (!report) {
     throw notFound("Report not found");
   }
@@ -235,21 +308,33 @@ router.get("/reports/:id", async (req, res) => {
 
 router.get("/reports/:id/download", async (req, res) => {
   const { id } = DownloadReportParams.parse(req.params);
-  const report = await repos.reports.getById(id);
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const report = await repos.reports.getById(id, tenantId);
   if (!report) {
     throw notFound("Report not found");
   }
+  // M17 — descarga de informe: la lectura de un artefacto de cumplimiento es
+  // una acción trazable (quién se llevó qué informe y cuándo).
+  await recordAuditEvent({
+    req,
+    action: "report_downloaded",
+    resourceType: "report",
+    resourceId: report.id,
+    result: "success",
+  });
+
   res.attachment(`report-${report.id}.json`);
   res.json(DownloadReportResponse.parse(mapReport(report)));
 });
 
 router.post("/masking/preview", requireRole("admin"), async (req, res) => {
   const { sourceId, fields } = PreviewMaskingBody.parse(req.body);
+  const tenantId = resolvedOrgContext(req).organizationId;
 
   // La fuente se valida contra PostgreSQL; el resto del preview no persiste
   // nada (operación sin estado) y sus filas son sintéticas, nunca datos de
   // dominio reales.
-  const source = await repos.sources.getById(sourceId);
+  const source = await repos.sources.getById(sourceId, tenantId);
   if (!source) {
     throw notFound("Source not found");
   }
@@ -278,23 +363,38 @@ router.post("/masking/preview", requireRole("admin"), async (req, res) => {
 // lo omiten porque mapMaskingJob ni siquiera acepta la columna.
 router.get("/masking/jobs", async (req, res) => {
   const params = ListMaskingJobsQueryParams.parse(req.query);
-  const rows = await repos.masking.list(params);
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const rows = await repos.masking.list(params, tenantId);
   res.json(ListMaskingJobsResponse.parse(rows.map(mapMaskingJob)));
 });
 
 router.post("/masking/jobs", requireRole("admin"), async (req, res) => {
   const body = CreateMaskingJobBody.parse(req.body);
+  const tenantId = resolvedOrgContext(req).organizationId;
   const job = await repos.masking.create({
     sourceId: body.sourceId,
     fields: body.fields,
     at: new Date(),
+    tenantId,
   });
+  // M17 — job de anonimización creado: se auditan los campos solicitados y el
+  // estado alcanzado (síncrono), sin filas del dataset ni datos de la fuente.
+  await recordAuditEvent({
+    req,
+    action: "masking_job_created",
+    resourceType: "masking_job",
+    resourceId: job.id,
+    result: "success",
+    metadata: { sourceId: body.sourceId, fields: body.fields, status: job.status },
+  });
+
   res.status(201).json(CreateMaskingJobResponse.parse(mapMaskingJob(job)));
 });
 
 router.get("/masking/jobs/:id", async (req, res) => {
   const { id } = GetMaskingJobParams.parse(req.params);
-  const job = await repos.masking.getById(id);
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const job = await repos.masking.getById(id, tenantId);
   if (!job) {
     throw notFound("Masking job not found");
   }
@@ -305,10 +405,21 @@ router.get("/masking/jobs/:id", async (req, res) => {
 // relee la fuente ni re-anonimiza (patrón downloadReport de M4).
 router.get("/masking/jobs/:id/download", async (req, res) => {
   const { id } = DownloadMaskingJobParams.parse(req.params);
-  const job = await repos.masking.getByIdWithDataset(id);
+  const tenantId = resolvedOrgContext(req).organizationId;
+  const job = await repos.masking.getByIdWithDataset(id, tenantId);
   if (!job || job.status !== "ready" || !job.dataset) {
     throw notFound("Masking dataset not available");
   }
+  // M17 — descarga de dataset anonimizado (recurso masking_job).
+  await recordAuditEvent({
+    req,
+    action: "dataset_downloaded",
+    resourceType: "masking_job",
+    resourceId: job.id,
+    result: "success",
+    metadata: { records: job.records, fields: job.dataset.fields },
+  });
+
   res.attachment(`masking-job-${job.id}.json`);
   res.json(DownloadMaskingJobResponse.parse({
     jobId: job.id,

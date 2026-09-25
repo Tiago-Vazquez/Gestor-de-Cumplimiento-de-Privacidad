@@ -10,9 +10,41 @@ import {
   useAuthLogin,
   useAuthLogout,
   useAuthMe,
+  setCsrfTokenGetter,
 } from '@workspace/api-client-react';
 import type { AuthLoginMutationError, AuthUser } from '@workspace/api-client-react';
 import { onSessionExpired } from './session-events';
+
+// M11.1 — token CSRF de synchronizer de la sesión actual. Se obtiene desde
+// GET /api/csrf-token (endpoint autenticado que devuelve solo el token de la
+// sesión) y se registra en el cliente HTTP central, que lo adjunta
+// automáticamente en POST/PUT/PATCH/DELETE. Se limpia en logout para no
+// reutilizar un token de una sesión anterior.
+let csrfToken: string | null = null;
+
+async function refreshCsrfToken(): Promise<void> {
+  try {
+    const res = await fetch('/api/csrf-token', {
+      headers: { accept: 'application/json' },
+    });
+    if (!res.ok) {
+      csrfToken = null;
+      setCsrfTokenGetter(() => null);
+      return;
+    }
+    const data = await res.json();
+    csrfToken = typeof data.csrfToken === 'string' ? data.csrfToken : null;
+    setCsrfTokenGetter(() => csrfToken);
+  } catch {
+    csrfToken = null;
+    setCsrfTokenGetter(() => null);
+  }
+}
+
+function clearCsrfToken(): void {
+  csrfToken = null;
+  setCsrfTokenGetter(() => null);
+}
 
 /** Callbacks opcionales para la mutación de login. */
 export interface LoginCallbacks {
@@ -34,8 +66,6 @@ interface AuthContextValue {
   /**
    * Dispara POST /api/auth/login con email + password (login local). La
    * mutación generada por Orval espera la variable `{ data: AuthLoginInput }`.
-   * El bootstrap token sigue soportado por el backend como mecanismo legacy
-   * temporal, pero la UI ya no lo utiliza ni lo solicita.
    */
   login: (email: string, password: string, callbacks?: LoginCallbacks) => void;
   /** Roles del usuario autenticado (p.ej. ['admin']) o lista vacía. */
@@ -78,6 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       onSuccess: () => {
         // El JWT llegó (cookie httpOnly seteada); refrescar identidad.
         queryClient.invalidateQueries({ queryKey: getAuthMeQueryKey() });
+        // M11.1: obtener el token CSRF de la sesión recién creada.
+        void refreshCsrfToken();
       },
     },
   });
@@ -88,9 +120,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Limpiar todo el caché: los datos de la sesión anterior no deben
         // sobrevivir al cierre de sesión.
         queryClient.clear();
+        // M11.1: invalidar el token CSRF de la sesión anterior; el nuevo
+        // login emitirá un token distinto.
+        clearCsrfToken();
       },
     },
   });
+
+  // M11.1: ante una sesión ya activa al cargar la app (recarga de página), el
+  // token CSRF se recupera desde GET /api/csrf-token. Si la sesión expira en
+  // medio, se limpia para nunca enviar un token huérfano.
+  useEffect(() => {
+    if (meQuery.isSuccess) {
+      void refreshCsrfToken();
+    }
+    if (isUnauthorized) {
+      clearCsrfToken();
+    }
+  }, [meQuery.isSuccess, isUnauthorized]);
 
   const value: AuthContextValue = {
     user: meQuery.data ?? null,

@@ -3,6 +3,52 @@ import { forbidden, unauthorized } from "./errors";
 import { extractSessionToken } from "./cookies";
 import { authDisabled, JWT_ISSUER, verifyToken, type AuthTokenPayload } from "./tokens";
 import { repos } from "../repositories";
+import { sessionIdleSeconds } from "../lib/env";
+import { recordAuditEvent, type AuditAction } from "../lib/audit";
+
+/**
+ * M18 Fase 5 — auditoría del rechazo de una sesión por expiración o
+ * inactividad. Solo distingue la razón cuando la fila existe y NO está
+ * revocada (una revocación ya se audita en su propia acción; un `jti`
+ * desconocido no aporta trazabilidad). Fire-and-forget: el 401 nunca depende
+ * de que la auditoría persista; los errores técnicos van al log de M16.
+ */
+async function auditSessionRejection(
+  req: Request,
+  sub: string | undefined,
+  jti: string,
+  idleSeconds: number,
+): Promise<void> {
+  try {
+    const raw = await repos.sessions.findRawByJti(jti);
+    if (!raw || raw.revokedAt) {
+      return;
+    }
+    const now = Date.now();
+    const action: AuditAction | null =
+      raw.expiresAt.getTime() <= now
+        ? "session_expired"
+        : now - raw.lastUsedAt.getTime() > idleSeconds * 1000
+          ? "inactivity_timeout"
+          : null;
+    if (!action) {
+      return;
+    }
+    await recordAuditEvent({
+      req,
+      actorUserId: sub ?? null,
+      action,
+      resourceType: "session",
+      resourceId: jti,
+      result: "failure",
+      metadata: { reason: action },
+    });
+  } catch {
+    // Best-effort: el rechazo de autenticación debe completarse igual.
+  }
+}
+
+import { logger } from "../lib/logger";
 
 /** Request autenticado: lleva el payload del JWT verificado en `req.user`. */
 export interface AuthedRequest extends Request {
@@ -64,9 +110,11 @@ export function requireAuth() {
       res.set("WWW-Authenticate", WWW_AUTHENTICATE);
       throw unauthorized("Missing or invalid session");
     }
-    const activeSession = await repos.sessions.findActiveByJti(payload.jti);
+    const idleSeconds = sessionIdleSeconds();
+    const activeSession = await repos.sessions.findActiveByJti(payload.jti, idleSeconds);
     if (!activeSession) {
       res.set("WWW-Authenticate", WWW_AUTHENTICATE);
+      void auditSessionRejection(req, payload.sub, payload.jti, idleSeconds);
       throw unauthorized("Missing or invalid session");
     }
 
@@ -82,6 +130,20 @@ export function requireAuth() {
     }
 
     (req as AuthedRequest).user = payload;
+
+    // M11.2.3 — refrescar timestamp de última actividad. Fallo no rompe el
+    // request: si no podemos actualizar, es mejor dejar al usuario continuar
+    // que bloquearlo. La expiración eventual manejará el cierre si la sesión
+    // realmente está inactiva.
+    try {
+      await repos.sessions.touchLastUsed(payload.jti);
+    } catch (err) {
+      logger.warn(
+        { jti: payload.jti, err },
+        "Failed to update last_used_at",
+      );
+    }
+
     next();
   };
 }
@@ -108,4 +170,17 @@ export function requireRole(role: string) {
     }
     throw forbidden(`${role} role required`);
   };
+}
+
+/**
+ * M21.7.2 — reino PLATAFORMA. Alias explícito de `requireRole("admin")`.
+ *
+ * Representa la superficie de administración de la plataforma (usuarios,
+ * reglas globales y —en M21.7.3— la auditoría de plataforma). Deliberadamente
+ * NO requiere `resolvedOrgContext`: un admin global sin membership puede
+ * operar esta superficie. No otorga acceso a datos de negocio — eso exige
+ * `resolvedOrgContext` (el gate del reino organización).
+ */
+export function requirePlatformAdmin() {
+  return requireRole("admin");
 }

@@ -88,7 +88,7 @@ const createSuccessBody: SourceCreate = {
   name: 'crm-usuarios',
   kind: 'postgresql',
   environment: 'production',
-  connection: { host: 'db.interno', port: 5432, database: 'crm', user: 'auditor', password: 's3cret-pass' },
+  connection: { kind: 'postgresql', host: 'db.interno', port: 5432, database: 'crm', user: 'auditor', password: 's3cret-pass' },
 };
 
 
@@ -272,6 +272,73 @@ describe('SourcesPage — creación (M6.a)', () => {
     expect(screen.getByTestId('form-error')).toBeInTheDocument();
     expect(called).toBe(false);
   });
+
+  it('M23.1 creación MySQL: el payload lleva connection.kind=mysql y el puerto por defecto del motor', async () => {
+    const user = userEvent.setup();
+    arrange({ isAdmin: true });
+    let sentCreate: SourceCreate | undefined;
+    mockedUseCreateSource.mockReturnValue(
+      buildMutation<{ data: SourceCreate }, SourceDetail>({
+        mutate: (variables, callbacks) => {
+          sentCreate = variables.data;
+          callbacks?.onSuccess({ ...sourceDetailFixture, name: variables.data.name, kind: 'mysql' });
+        },
+      }),
+    );
+    await openCreateForm(user);
+    // El placeholder del puerto sigue al motor seleccionado (5432 → 3306).
+    expect(screen.getByTestId('input-source-port')).toHaveAttribute('placeholder', '5432');
+    await user.selectOptions(screen.getByTestId('select-source-kind'), 'mysql');
+    expect(screen.getByTestId('input-source-port')).toHaveAttribute('placeholder', '3306');
+    await fillCreateForm(user, {
+      'input-source-name': 'erp-clientes',
+      'input-source-host': 'mysql.interno',
+      'input-source-port': '3306',
+      'input-source-database': 'erp',
+      'input-source-user': 'auditor',
+      'input-source-password': 'mysql-pass-2026',
+    });
+    await user.click(screen.getByTestId('button-submit-source'));
+    expect(sentCreate).toEqual({
+      name: 'erp-clientes',
+      kind: 'mysql',
+      environment: 'production',
+      connection: { kind: 'mysql', host: 'mysql.interno', port: 3306, database: 'erp', user: 'auditor', password: 'mysql-pass-2026' },
+    });
+  });
+
+  it('M23.1 kind sin conector (mongodb) con datos de conexión: error local, no llama a la API', async () => {
+    const user = userEvent.setup();
+    arrange({ isAdmin: true });
+    let called = false;
+    mockedUseCreateSource.mockReturnValue(buildMutation<SourceCreate, SourceDetail>({ mutate: () => { called = true; } }));
+    await openCreateForm(user);
+    await user.selectOptions(screen.getByTestId('select-source-kind'), 'mongodb');
+    await fillCreateForm(user);
+    await user.click(screen.getByTestId('button-submit-source'));
+    expect(screen.getByTestId('form-error')).toHaveTextContent('La conexión solo está disponible para PostgreSQL y MySQL');
+    expect(called).toBe(false);
+  });
+
+  it('M23.1 kind sin conector (mongodb) sin conexión: crea la fuente no escaneable', async () => {
+    const user = userEvent.setup();
+    arrange({ isAdmin: true });
+    let sentCreate: SourceCreate | undefined;
+    mockedUseCreateSource.mockReturnValue(
+      buildMutation<{ data: SourceCreate }, SourceDetail>({
+        mutate: (variables, callbacks) => {
+          sentCreate = variables.data;
+          callbacks?.onSuccess({ ...sourceDetailFixture, name: variables.data.name, kind: 'mongodb', scannable: false });
+        },
+      }),
+    );
+    await openCreateForm(user);
+    await user.selectOptions(screen.getByTestId('select-source-kind'), 'mongodb');
+    await user.type(screen.getByTestId('input-source-name'), 'mongo-events');
+    await user.click(screen.getByTestId('button-submit-source'));
+    expect(sentCreate).toEqual({ name: 'mongo-events', kind: 'mongodb', environment: 'production' });
+    expect('connection' in (sentCreate ?? {})).toBe(false);
+  });
 });
 
 describe('SourcesPage — edición (M6.b)', () => {
@@ -301,7 +368,7 @@ describe('SourcesPage — edición (M6.b)', () => {
       name: 'crm-usuarios-v2',
       kind: 'postgresql',
       environment: 'production',
-      connection: { host: 'db.interno', port: 5432, database: 'crm', user: 'auditor', password: 'nueva-clave-2026' },
+      connection: { kind: 'postgresql', host: 'db.interno', port: 5432, database: 'crm', user: 'auditor', password: 'nueva-clave-2026' },
     });
     expect(screen.getByText('Cambios guardados')).toBeInTheDocument();
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: getGetSourceQueryKey('src-1') }));

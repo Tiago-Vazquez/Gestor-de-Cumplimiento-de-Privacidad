@@ -1,0 +1,2 @@
+ALTER TABLE "scan_schedules" ADD CONSTRAINT "scan_schedules_interval_check" CHECK ("scan_schedules"."interval_minutes" >= 15 and "scan_schedules"."interval_minutes" <= 10080);--> statement-breakpoint
+ALTER TABLE "scan_schedules" ADD CONSTRAINT "scan_schedules_last_status_check" CHECK ("scan_schedules"."last_status" in ('ok', 'error', 'skipped'));

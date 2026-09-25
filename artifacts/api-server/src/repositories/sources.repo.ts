@@ -3,37 +3,38 @@ import { db, findingsTable, sourcesTable, type Source } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 import { decrypt, encrypt } from "../lib/secret-manager";
 import { logger } from "../lib/logger";
+import { normalizeConnectionConfig, type ConnectionConfig } from "../connectors/types";
 import { newId } from "./ids";
+import { tenantScopeStrict, withTenant } from "./tenant";
+import { bgDb } from "@workspace/db/background";
 
 export type SourceWithFindingsCount = Source & { findingsCount: number };
 
 /**
- * Configuración de conexión para fuentes externas (FASE 7.0.0).
- * Se almacena cifrada en `sources.connection_config` y solo se descifra
- * cuando el scanner necesita abrir la conexión.
+ * Configuración de conexión para fuentes externas (FASE 7.0.0; M23.1).
+ * Unión discriminada por `kind` (postgresql | mysql) definida en
+ * `connectors/types.ts`. Se almacena cifrada en `sources.connection_config`
+ * y solo se descifra cuando el scanner/masking necesita abrir la conexión.
+ * Alias mantenido por compatibilidad con rutas y tests existentes.
  */
-export interface SourceConnectionConfig {
-  host: string;
-  port: number;
-  database: string;
-  user: string;
-  password: string;
-  schema?: string;
-}
+export type SourceConnectionConfig = ConnectionConfig;
 
 /**
  * Cifra la configuración de conexión antes de persistirla.
  * Fail-closed: si SOURCE_ENCRYPTION_KEY no está configurada, lanza error.
  */
-export function encryptConnectionConfig(config: SourceConnectionConfig): string {
+export function encryptConnectionConfig(config: ConnectionConfig): string {
   return encrypt(JSON.stringify(config));
 }
 
 /**
- * Descifra la configuración de conexión desde su representación almacenada.
- * Retorna null si la fuente no tiene configuración (fuentes legacy).
+ * Descifra y VALIDA la configuración de conexión (M23.1, server-side):
+ * devuelve la unión discriminada por `kind` o `null` (fail-closed) si la
+ * fuente no tiene configuración, el descifrado falla, el kind no tiene
+ * conector, el kind guardado no coincide con el de la fuente, o la forma no
+ * cumple el contrato. Nunca lanza con contenido de config en el log.
  */
-export function decryptConnectionConfig(source: Source): SourceConnectionConfig | null {
+export function decryptConnectionConfig(source: Source): ConnectionConfig | null {
   if (!source.connectionConfig) {
     return null;
   }
@@ -41,8 +42,9 @@ export function decryptConnectionConfig(source: Source): SourceConnectionConfig 
   const encrypted = typeof source.connectionConfig === "string"
     ? source.connectionConfig
     : String(source.connectionConfig);
+  let parsed: unknown;
   try {
-    return JSON.parse(decrypt(encrypted));
+    parsed = JSON.parse(decrypt(encrypted));
   } catch (error) {
     // FASE 7.0.5 (M8): distinguir ausencia de configuración (null limpio arriba)
     // de fallo de descifrado. Se registra con sourceId para diagnóstico, sin
@@ -53,6 +55,16 @@ export function decryptConnectionConfig(source: Source): SourceConnectionConfig 
     );
     return null;
   }
+  const config = normalizeConnectionConfig(source.kind, parsed);
+  if (!config) {
+    // Forma inválida / kind sin conector / kind mismatch → fail-closed.
+    logger.warn(
+      { sourceId: source.id, kind: source.kind },
+      "Connection config failed validation; treated as not scannable",
+    );
+    return null;
+  }
+  return config;
 }
 
 /**
@@ -67,6 +79,8 @@ export interface CreateSourceInput {
   kind: string;
   environment: string;
   connection?: SourceConnectionConfig;
+  /** M21.4 — tenant propietario (contexto de organización activa, SIEMPRE). */
+  tenantId: string;
 }
 
 export interface UpdateSourceInput {
@@ -95,11 +109,15 @@ export async function createSource(input: CreateSourceInput): Promise<Source> {
     connectionConfig: input.connection
       ? encryptConnectionConfig(input.connection)
       : null,
+    // M21.4 — raíz de propiedad del recurso (tenant_id NOT NULL).
+    tenantId: input.tenantId,
     createdAt: now,
     updatedAt: now,
   };
-  const [row] = await db.insert(sourcesTable).values(values).returning();
-  return row;
+  return withTenant(input.tenantId, async (tx) => {
+    const [row] = await tx.insert(sourcesTable).values(values).returning();
+    return row;
+  });
 }
 
 /**
@@ -110,8 +128,9 @@ export async function createSource(input: CreateSourceInput): Promise<Source> {
 export async function updateSource(
   id: string,
   input: UpdateSourceInput,
+  tenantId: string,
 ): Promise<Source | null> {
-  const existing = await getById(id);
+  const existing = await getById(id, tenantId);
   if (!existing) return null;
 
   const set: Partial<Source> = { updatedAt: new Date() };
@@ -124,12 +143,20 @@ export async function updateSource(
       : null;
   }
 
-  const [row] = await db
-    .update(sourcesTable)
-    .set(set)
-    .where(eq(sourcesTable.id, id))
-    .returning();
-  return row ?? null;
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .update(sourcesTable)
+      .set(set)
+      // M21.8 — scoping ESTRICTO en el WHERE + tenant context transaccional.
+      .where(
+        and(
+          eq(sourcesTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      )
+      .returning();
+    return row ?? null;
+  });
 }
 
 /**
@@ -138,12 +165,20 @@ export async function updateSource(
  * `source_id = NULL` como evidencia histórica de cumplimiento (ON DELETE
  * SET NULL), preservando `source_name` para la atribución.
  */
-export async function deleteSource(id: string): Promise<boolean> {
-  const [row] = await db
-    .delete(sourcesTable)
-    .where(eq(sourcesTable.id, id))
-    .returning({ id: sourcesTable.id });
-  return row !== undefined;
+export async function deleteSource(id: string, tenantId: string): Promise<boolean> {
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .delete(sourcesTable)
+      // M21.8 — scoping ESTRICTO en el DELETE + tenant context transaccional.
+      .where(
+        and(
+          eq(sourcesTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      )
+      .returning({ id: sourcesTable.id });
+    return row !== undefined;
+  });
 }
 
 /**
@@ -151,14 +186,24 @@ export async function deleteSource(id: string): Promise<boolean> {
  * asociados (conteo en SQL vía LEFT JOIN, igual que `list`). Antes el detalle
  * devolvía `findings: 0` hardcodeado.
  */
-export async function getByIdWithFindingsCount(id: string): Promise<SourceWithFindingsCount | null> {
-  const [row] = await db
-    .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
-    .from(sourcesTable)
-    .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
-    .where(eq(sourcesTable.id, id))
-    .groupBy(sourcesTable.id);
-  return row ? { ...row.source, findingsCount: row.findingsCount } : null;
+export async function getByIdWithFindingsCount(
+  id: string,
+  tenantId: string,
+): Promise<SourceWithFindingsCount | null> {
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
+      .from(sourcesTable)
+      .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
+      .where(
+        and(
+          eq(sourcesTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      )
+      .groupBy(sourcesTable.id);
+    return row ? { ...row.source, findingsCount: row.findingsCount } : null;
+  });
 }
 
 /**
@@ -167,34 +212,49 @@ export async function getByIdWithFindingsCount(id: string): Promise<SourceWithFi
  * Orden estable: creación y, a igualdad, id.
  * F4 (6.3B.20): paginación aplicada en SQL (LIMIT/OFFSET sobre el GROUP BY).
  */
-export async function list(pagination?: Pagination): Promise<SourceWithFindingsCount[]> {
-  let query = db
-    .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
-    .from(sourcesTable)
-    .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
-    .groupBy(sourcesTable.id)
-    .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id))
-    .$dynamic();
-  if (pagination) {
-    query = query.limit(pagination.limit).offset(pagination.offset);
-  }
+export async function list(
+  pagination: Pagination | undefined,
+  tenantId: string,
+): Promise<SourceWithFindingsCount[]> {
+  return withTenant(tenantId, async (tx) => {
+    let query = tx
+      .select({ source: sourcesTable, findingsCount: count(findingsTable.id) })
+      .from(sourcesTable)
+      .leftJoin(findingsTable, eq(findingsTable.sourceId, sourcesTable.id))
+      .where(tenantScopeStrict(sourcesTable.tenantId, tenantId))
+      .groupBy(sourcesTable.id)
+      .orderBy(asc(sourcesTable.createdAt), asc(sourcesTable.id))
+      .$dynamic();
+    if (pagination) {
+      query = query.limit(pagination.limit).offset(pagination.offset);
+    }
 
-  const rows = await query;
-  return rows.map((row) => ({ ...row.source, findingsCount: row.findingsCount }));
+    const rows = await query;
+    return rows.map((row) => ({ ...row.source, findingsCount: row.findingsCount }));
+  });
 }
 
-export async function getById(id: string): Promise<Source | null> {
-  const [row] = await db.select().from(sourcesTable).where(eq(sourcesTable.id, id));
-  return row ?? null;
+export async function getById(id: string, tenantId: string): Promise<Source | null> {
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(sourcesTable)
+      .where(
+        and(
+          eq(sourcesTable.id, id),
+          tenantScopeStrict(sourcesTable.tenantId, tenantId),
+        ),
+      );
+    return row ?? null;
+  });
 }
 
-/** Actualiza `last_scan_at` tras iniciar un escaneo (operación atómica de una
- * sola sentencia; las transacciones multi-tabla viven en scans.repo). */
-export async function touchLastScan({ id, at }: { id: string; at: Date }): Promise<Source | null> {
-  const [row] = await db
-    .update(sourcesTable)
-    .set({ lastScanAt: at, updatedAt: new Date() })
-    .where(eq(sourcesTable.id, id))
-    .returning();
+/**
+ * M21.7 — flujo interno (scanner): lectura de la fuente SIN scoping de tenant.
+ * El scanner procesa una fuente concreta que ya fue iniciada; el tenant se
+ * deriva de la propia fila (raíz de propiedad), no del contexto de un request.
+ */
+export async function getByIdForScan(id: string): Promise<Source | null> {
+  const [row] = await bgDb().select().from(sourcesTable).where(eq(sourcesTable.id, id));
   return row ?? null;
 }

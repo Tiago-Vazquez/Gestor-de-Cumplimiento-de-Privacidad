@@ -1,0 +1,50 @@
+name: M24 connector integration
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: m23user
+      POSTGRES_PASSWORD: m23-secret-pass
+      POSTGRES_DB: m23app
+    ports:
+      - "${M24_PG_PORT:-55432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./m23-pg-seed.sql:/docker-entrypoint-initdb.d/10-m23-pg-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: m23-root-pass
+      MYSQL_DATABASE: m23crm
+      MYSQL_USER: m23user
+      MYSQL_PASSWORD: m23-secret-pass
+    ports:
+      - "${M24_MYSQL_PORT:-33306}:3306"
+    volumes:
+      - mysqldata:/var/lib/mysql
+      - ./m23-mysql-seed.sql:/docker-entrypoint-initdb.d/10-m23-mysql-seed.sql:ro
+      - ./m23-mysql-grant.sql:/docker-entrypoint-initdb.d/20-m23-mysql-grant.sql:ro
+    # MySQL 8.4 first-boot initialization (InnoDB + initdb seed scripts) takes
+    # well over two minutes on cold volumes, and slower still when PostgreSQL is
+    # initializing concurrently. A tight budget makes `up --wait` fail with a
+    # misleading "unhealthy" on a server that is merely still starting. Failures
+    # during start_period do not count towards retries, so a generous budget costs
+    # nothing in the happy path.
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+
+volumes:
+  pgdata:
+  mysqldata:
