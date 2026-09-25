@@ -17,17 +17,35 @@ dependency gate is:
 pnpm audit --audit-level high
 ```
 
-It fails the workflow for high or critical advisories. The validated baseline has
-no high/critical findings. The remaining findings are development/test-only and
-remain visible in the audit output:
+It fails the workflow for high or critical advisories. After the M24.1 correction the
+audit reports **0 critical and 0 high**; the gate is currently green. This is a
+measured result, not an assumption — re-run `pnpm audit --audit-level high` rather
+than trusting this paragraph, because the advisory database changes over time.
 
-| Package | Severity | Path | Mitigation / next action |
+The residual findings are development/test-only and do not weaken the required
+high/critical gate:
+
+| Package | Severity | Path | Why it is accepted |
 | --- | --- | --- | --- |
-| `esbuild` | low | API development tooling | Not shipped as a runtime service; upgrade to `>=0.28.1` when the direct tool upgrade is validated. |
-| `qs` (2 advisories) | moderate | `supertest`/`superagent` test dependency | Test-only; do not expose the test server. Upgrade via `supertest` when a compatible release is available. |
-| `vitest` / `@vitest/mocker` | moderate | API/frontend test runner | Test-only; upgrade to `>=4.1.11` as a separately reviewed dependency change. |
+| `esbuild` | low | API build tooling | Not shipped as a runtime service. Already pinned to `0.27.3`; upgrade to `>=0.28.1` is a separately reviewed tool change. |
+| `qs` (2 advisories) | moderate | `supertest`/`superagent` test dependency | Test-only; the test server is never exposed. Fixed upstream by `>=6.16.0`; resolves when `supertest` updates its range. |
+| `vitest` / `@vitest/mocker` | moderate | API/frontend test runner | Test-only. Fixed in `>=4.1.11`; the current pin is `3.2.7`, chosen as the minimum that clears the high/critical gate without an unnecessary major bump. |
 
-These residual advisories do not weaken the required high/critical gate.
+### Why Vitest 3 is required, not optional
+
+Vitest `<3.2.6` is subject to **GHSA-5xrq-8626-4rwp** (critical): when the Vitest UI
+server is listening, an arbitrary file can be read and executed. Pinning
+`^3.2.7` clears it.
+
+The same upgrade also removes the only vulnerable Vite in the tree. Vitest 2
+resolved `vite@5.4.21` transitively through `vitest`, `vite-node` and
+`@vitest/mocker`, which is affected by three advisories
+(GHSA-4w7w-66w2-5vf9, GHSA-v6wh-96g9-6wx3, GHSA-fx2h-pf6j-xcff) and is below the
+`>=6.4.3` fix. Vitest 3 declares a Vite `^6`/`^7` range, so it resolves to the
+workspace catalog's `vite@7.3.6` and the vulnerable `5.4.21` instance disappears
+from the lockfile entirely. **No Vite override is required**, and adding one would
+be an unnecessary change. If Vitest is ever downgraded, the Vite advisories return
+with it and the gate will fail again.
 
 ## Docker connector integration
 
