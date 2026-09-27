@@ -260,7 +260,67 @@ backup: another backup already holds /secure/backups/privacy/postgres/.m24-backu
    El código 75 debe tratarse como "reintentar más tarde" en cualquier
    planificador, nunca como fallo definitivo.
 
-## 9. Observabilidad mínima actual
+## 8. El restore falla por checksum
+
+### Identificar
+
+Desde M25.5 el mensaje distingue **hash mal formado** de **contenido distinto**:
+
+```text
+restore: manifest dump_sha256 is not a valid 64-character SHA-256
+```
+
+Un valor de 64 caracteres que no sea hex minúsculo, o de longitud distinta, se
+rechaza aquí. Antes se comparaba directamente y el resultado era un
+`checksum mismatch` que inducía a pensar en corrupción.
+
+```text
+restore: checksum mismatch for /secure/.../m24-postgres-....dump
+```
+
+Aquí el formato es correcto pero el contenido no coincide: corrupción real o
+artefacto sustituido.
+
+### Causa histórica importante
+
+Los backups creados desde **Git Bash/MSYS en Windows** pueden tener en su manifest
+un hash con un **backslash inicial** (`\d51a38b7…`, 65 caracteres). Eso no es
+corrupción: `sha256sum` escapaba la barra invertida de la ruta y el valor quedó
+grabado así. Desde M25.5:
+
+- El backup **nunca más** genera ese prefijo: el hash se calcula leyendo el
+  fichero por stdin, así que la ruta nunca llega a la herramienta.
+- El restore **normaliza** un único `\` inicial al leer el manifest, de modo que
+  **los backups históricos afectados siguen restaurables** sin reescribirlos.
+
+Si ves un `checksum mismatch` en un backup antiguo creado en Windows, comprueba
+antes que el dump no haya sido modificado: el prefijo ya no debe impedir el
+restore.
+
+## 9. El restore avisa de divergencia de migraciones
+
+### Identificar
+
+```text
+restore: WARNING the restored migration journal does not match the current .sql files.
+```
+
+**No es un fallo y el restore continúa.** Significa que alguna migración ya
+aplicada fue editada después. Drizzle decide "ya aplicada" por `created_at` y nunca
+compara el hash, así que la omite en silencio y el esquema restaurado queda
+divergente respecto al código actual.
+
+### Resolver
+
+1. Confirma que el aviso es real: el mensaje lista los hashes afectados.
+2. Si el backup es reciente, restaura de nuevo tras corregir la migración.
+3. Si el backup es antiguo, el aviso es **esperable**: restaurar un backup previo
+   es justamente el propósito del DR. Investiga solo si la API falla en runtime.
+
+La verificación dura (`migration journal mismatch`, sin WARNING) significa otra
+cosa: el dump **no** corresponde a ese manifest y el restore se detiene.
+
+## 10. Observabilidad mínima actual
 
 ```bash
 docker compose ps

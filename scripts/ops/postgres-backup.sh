@@ -79,10 +79,19 @@ acquire_lock() {
 # Git Bash/MSYS rewrites POSIX-looking arguments passed to native Windows
 # executables. Keep paths that belong inside the container untouched.
 docker_exec() { MSYS_NO_PATHCONV=1 docker exec "$@"; }
+# shellcheck source=scripts/ops/common.sh
+source "$ROOT_DIR/scripts/ops/common.sh"
 command -v docker >/dev/null 2>&1 || fail "docker is required"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 [[ -n "$BACKUP_DIR" ]] || fail "set BACKUP_DIR to an external/protected directory"
 [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]] || fail "BACKUP_RETENTION_DAYS must be a non-negative integer"
+# M25.5: the lock grace period used to be consumed unvalidated. A non-numeric
+# value made the arithmetic comparison fail, so acquire_lock reported "busy"
+# forever even with no backup running: a configuration typo disguised as
+# concurrency. Reject it explicitly instead of degrading silently. 0 stays
+# valid (immediate reclaim); negatives are rejected because they would make every
+# lock look expired the moment it appears.
+[[ "$LOCK_GRACE_SECONDS" =~ ^[0-9]+$ ]] || fail "BACKUP_LOCK_GRACE_SECONDS must be a non-negative integer (got: $LOCK_GRACE_SECONDS)"
 
 mkdir -p "$BACKUP_DIR"
 BACKUP_DIR_ABS="$(cd "$BACKUP_DIR" && pwd -P)"
@@ -98,6 +107,25 @@ if ! acquire_lock; then
   echo "backup: if no backup is actually running, remove $LOCK_DIR and retry" >&2
   exit "$EXIT_LOCKED"
 fi
+
+# M25.5: a backup killed with SIGKILL cannot run its trap, so its temporary
+# directory survives forever. Retention only deletes regular files named
+# m24-postgres-*, so those directories were never collected: a daily failing
+# backup leaked one directory per run with no alarm. Only directories that are
+# demonstrably not in use are reclaimed. The lock is already held here, so no
+# other backup can own a temporary directory in this BACKUP_DIR.
+reclaim_orphan_temp_dirs() {
+  local dir age
+  while IFS= read -r dir; do
+    [[ -d "$dir" ]] || continue
+    age=$(( $(date +%s) - $(lock_mtime "$dir") ))
+    if [[ "$age" -ge 86400 ]]; then
+      echo "backup: removing orphaned temporary directory $(basename "$dir") (age ${age}s)" >&2
+      rm -rf "$dir"
+    fi
+  done < <(find "$BACKUP_DIR_ABS" -maxdepth 1 -type d -name '.m24-tmp.*' 2>/dev/null || true)
+}
+reclaim_orphan_temp_dirs
 
 # Installed before any work so the lock is released on every exit path,
 # including a failure that happens before db_id and remote_dump exist.
@@ -144,15 +172,12 @@ compose exec -T db sh -ceu 'exec pg_dumpall --roles-only --no-role-passwords --u
 docker cp "$dump_tmp" "$db_id:$remote_dump" >/dev/null
 docker_exec "$db_id" pg_restore --list "$remote_dump" >/dev/null
 
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
+sha256() { sha256_of "$1"; }
 dump_sha="$(sha256 "$dump_tmp")"
 roles_sha="$(sha256 "$roles_tmp")"
+for pair in "dump:$dump_sha" "roles:$roles_sha"; do
+  is_sha256 "${pair#*:}" || fail "computed ${pair%%:*} checksum is not a 64-character hex digest"
+done
 db_user="$(compose exec -T db printenv POSTGRES_USER | tr -d '\r\n')"
 db_name="$(compose exec -T db printenv POSTGRES_DB | tr -d '\r\n')"
 pg_version="$(compose exec -T db postgres --version | tr -d '\r' | head -n 1)"
@@ -164,6 +189,12 @@ for table in organizations users sources findings scans audit_events; do
 done
 migration_count="$(compose exec -T db sh -ceu 'psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --tuples-only --no-align --command="SELECT count(*) FROM drizzle.__drizzle_migrations;"' | tr -d '\r\n')"
 [[ "$migration_count" =~ ^[0-9]+$ ]] || fail "could not read migration count"
+# M25.5 — fingerprint of the migration journal. Drizzle stores sha256 of each
+# migration file, but it decides "already applied" by created_at and never
+# compares the hash, so an edited migration is silently skipped and the restored
+# schema silently diverges. The aggregate makes that state verifiable.
+migration_journal_sha="$(journal_sha256_of "$db_id" "$db_user" "$db_name")"
+is_sha256 "$migration_journal_sha" || fail "could not compute a valid migration journal digest"
 
 # M25.3 — fingerprint de SOURCE_ENCRYPTION_KEY (sha256 de la clave derivada).
 # El proceso de backup NO tiene la clave: se calcula dentro del contenedor `api`,
@@ -205,6 +236,7 @@ roles_file=$base.roles.sql
 dump_sha256=$dump_sha
 roles_sha256=$roles_sha
 migration_count=$migration_count
+migration_journal_sha256=$migration_journal_sha
 $fingerprint_line$count_lines
 EOF
 chmod 600 "$BACKUP_DIR_ABS/$base.dump" "$BACKUP_DIR_ABS/$base.roles.sql" "$BACKUP_DIR_ABS/$base.manifest"

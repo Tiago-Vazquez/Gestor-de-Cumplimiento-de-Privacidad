@@ -44,7 +44,11 @@ for name in RESTORE_POSTGRES_PASSWORD RESTORE_APP_ROLE_PASSWORD RESTORE_BG_ROLE_
   [[ -n "${!name-}" ]] || fail "$name is required"
 done
 [[ ${#RESTORE_JWT_SECRET} -ge 32 ]] || fail "RESTORE_JWT_SECRET must be at least 32 characters"
-[[ ${#RESTORE_SOURCE_ENCRYPTION_KEY} -ge 32 ]] || fail "RESTORE_SOURCE_ENCRYPTION_KEY must be at least 32 characters"
+# M25.5: this is the earliest structural check. It cannot tell whether the key
+# belongs to this backup, because that comparison needs sha256(sha256(key)) and
+# so runs inside the migrate container later, where it aborts before anything is
+# declared usable. Failing here instead just avoids wasting an image build.
+[[ ${#RESTORE_SOURCE_ENCRYPTION_KEY} -ge 32 ]] || fail "RESTORE_SOURCE_ENCRYPTION_KEY must be at least 32 characters and must be the key that encrypted this backup (M25.3 verifies it before the restore is declared usable)"
 
 BACKUP_FILE="$(cd "$(dirname "$BACKUP_FILE")" && pwd -P)/$(basename "$BACKUP_FILE")"
 base="${BACKUP_FILE%.dump}"
@@ -56,16 +60,31 @@ ROLES_SQL_FILE="${RESTORE_ROLES_SQL:-$ROOT_DIR/scripts/ops/restore-roles.sql}"
 [[ -f "$ROLES_SQL_FILE" ]] || fail "safe role bootstrap not found: $ROLES_SQL_FILE"
 cd "$ROOT_DIR"
 if [[ "$COMPOSE_FILE" != /* ]]; then COMPOSE_FILE="$ROOT_DIR/$COMPOSE_FILE"; fi
+# shellcheck source=scripts/ops/common.sh
+source "$ROOT_DIR/scripts/ops/common.sh"
 
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'; else shasum -a 256 "$1" | awk '{print $1}'; fi
+sha256() { sha256_of "$1"; }
+# M25.5: trailing CR is stripped by strip_cr so a manifest edited on Windows and
+# restored on Linux behaves identically. MSYS awk already discards it, but Linux
+# awk does not, and the same manifest would otherwise be accepted on one host
+# and rejected on the other.
+manifest_value() { strip_cr "$(awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$MANIFEST_FILE")"; }
+# M25.5: read a manifest hash, drop the historical leading backslash and require a
+# well-formed digest. Comparing a malformed value would otherwise be reported as
+# a plain "checksum mismatch", hiding the real cause.
+read_manifest_sha() {
+  local raw normalized
+  raw="$(manifest_value "$1")"
+  [[ -n "$raw" ]] || fail "manifest lacks $1"
+  normalized="$(strip_sha_prefix "$raw")"
+  is_sha256 "$normalized" || fail "manifest $1 is not a valid 64-character SHA-256"
+  printf '%s' "$normalized"
 }
-manifest_value() { awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$MANIFEST_FILE"; }
 verify_sha() {
   local file="$1" key="$2" expected actual
-  expected="$(manifest_value "$key")"
-  [[ -n "$expected" ]] || fail "manifest lacks $key"
+  expected="$(read_manifest_sha "$key")"
   actual="$(sha256 "$file")"
+  is_sha256 "$actual" || fail "computed checksum for $file is not a valid SHA-256"
   [[ "$actual" == "$expected" ]] || fail "checksum mismatch for $file"
 }
 verify_sha "$BACKUP_FILE" dump_sha256
@@ -123,6 +142,53 @@ echo "restore: applying database archive"
 docker_exec "$db_id" pg_restore --exit-on-error --single-transaction --no-owner --username="$TARGET_USER" --dbname="$TARGET_DB" "$remote"
 docker_exec "$db_id" rm -f "$remote"
 
+# --- M25.5: integridad del journal, ANTES de migrar ------------------------
+#
+# Se compara aqui, y no despues, a proposito. Si el restore migra hacia adelante
+# un dump antiguo, el journal crece y la comparacion siempre fallaria, rompiendo
+# justamente la recuperacion de backups viejos, que es el proposito del DR.
+# Tras migrar se conserva la comprobacion de migration_count como garantia
+# adicional de completitud.
+verify_migration_journal() {
+  local expected actual
+  expected="$(strip_sha_prefix "$(manifest_value migration_journal_sha256 || true)")"
+  if [[ -z "$expected" ]]; then
+    echo "restore: WARNING manifest has no migration_journal_sha256 (backup predates M25.5);" >&2
+    echo "restore: WARNING only the migration count will be verified" >&2
+    return 0
+  fi
+  is_sha256 "$expected" || fail "manifest migration_journal_sha256 is not a valid 64-character SHA-256"
+  actual="$(journal_sha256_of "$db_id" "$TARGET_USER" "$TARGET_DB")"
+  [[ "$actual" == "$expected" ]] \
+    || fail "migration journal mismatch: the restored database does not match this backup (expected $expected, got $actual)"
+  echo "verified migration journal sha256=$actual"
+}
+
+# Deteccion de deriva codigo <-> datos. Solo aviso: restaurar un backup antiguo
+# es precisamente lo que debe permitir el DR, asi que una divergencia con los
+# .sql actuales informa, pero nunca bloquea la recuperacion. Drizzle decide
+# "ya aplicada" por created_at y nunca compara el hash, de modo que una
+# migracion editada se omite en silencio: este aviso es la unica señal.
+warn_on_migration_drift() {
+  local dir="$ROOT_DIR/lib/db/drizzle"
+  [[ -d "$dir" ]] || return 0
+  local journal_hashes file_hashes missing
+  journal_hashes="$(docker_exec "$db_id" psql -U "$TARGET_USER" -d "$TARGET_DB" -Atc \
+    "SELECT DISTINCT hash FROM drizzle.__drizzle_migrations ORDER BY hash;" 2>/dev/null || true)"
+  [[ -n "$journal_hashes" ]] || return 0
+  file_hashes="$(for f in "$dir"/*.sql; do [[ -f "$f" ]] && sha256_of "$f"; done | sort)"
+  missing="$(comm -23 <(printf '%s\n' "$journal_hashes" | sort) <(printf '%s\n' "$file_hashes" | sort) | head -n 5)"
+  if [[ -n "$missing" ]]; then
+    echo "restore: WARNING the restored migration journal does not match the current .sql files." >&2
+    echo "restore: WARNING drizzle skips already-applied migrations by timestamp, so an edited" >&2
+    echo "restore: WARNING migration leaves the restored schema divergent from the code. Affected:" >&2
+    printf 'restore: WARNING   %s\n' "$missing" >&2
+    echo "restore: WARNING this is informational: the restore continues." >&2
+  fi
+}
+verify_migration_journal
+warn_on_migration_drift
+
 echo "restore: running migrations and starting API"
 # Build sequentially: parallel API/migrate builds can contend on Docker BuildKit's
 # shared pnpm store on constrained runners. Operators may provide already-built
@@ -145,6 +211,10 @@ docker_exec "$api_id" node -e "fetch('http://127.0.0.1:5000/api/readyz').then(as
 
 verified=0
 while IFS='=' read -r key expected; do
+  # Same mechanism as manifest_value: this loop reads the manifest directly with
+  # grep, so without strip_cr a CRLF manifest would fail the count comparison on
+  # Linux while passing on Git Bash, where read discards the CR by itself.
+  expected="$(strip_cr "$expected")"
   case "$key" in
     count_*)
       table="${key#count_}"

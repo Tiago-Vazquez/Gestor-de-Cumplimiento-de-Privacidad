@@ -96,6 +96,35 @@ correcta. Si aparece y no hay ningún backup corriendo, se puede borrar a mano y
 reintentar; el script también lo reclamo solo por las reglas de obsolescencia
 descritas arriba.
 
+**Validación de `BACKUP_LOCK_GRACE_SECONDS`** (M25.5). Igual que
+`BACKUP_RETENTION_DAYS`, la variable **debe ser un entero no negativo**; el
+default sigue siendo **120 s**. Un valor no numérico o negativo se rechaza con un
+error explícito en lugar de degradarse en silencio: antes, un valor inválido
+hacía que la comparación de edad fallara y el backup reportara *"lock ocupado"*
+(`exit 75`) indefinidamente aunque no hubiera ninguna ejecución en curso — un typo
+de configuración disfrazado de problema de concurrencia. `0` es válido y significa
+reclamo inmediato.
+
+**Temporales huérfanos** (M25.5). Un backup terminado con `SIGKILL` no puede
+ejecutar su trap y su directorio temporal sobrevive. Cada ejecución exitosa del
+backup elimina los `.m24-tmp.*` con **más de 24 h** de antigüedad; los recientes y los de
+un backup en curso nunca se tocan, porque el lock ya está tomado en ese punto.
+
+**Imágenes preconstruidas como requisito de DR** (M25.5). El restore construye
+`migrate` y `api` desde el `Dockerfile.api` del checkout actual. Si el repositorio
+no es alcanzable o el código no compila, **el restore no puede ejecutarse aunque el
+backup esté íntegro**. En un escenario de disaster recovery hay que suministrar
+`RESTORE_API_IMAGE` y `RESTORE_MIGRATE_IMAGE` con imágenes construidas
+previamente:
+
+```bash
+export RESTORE_MIGRATE_IMAGE=mi-registro/privacy-migrate:sha-abc123
+export RESTORE_API_IMAGE=mi-registro/privacy-api:sha-abc123
+```
+
+Sin esas variables el flujo normal construye las imágenes, que es lo correcto en
+desarrollo y CI pero **no** en un DR real.
+
 El export `.roles.sql` es inventario de cluster y **no se ejecuta durante el
 restore** (contiene el rol administrativo original). El restore crea los roles
 runtime mediante `scripts/ops/restore-roles.sql` y provisiona sus contraseñas con
