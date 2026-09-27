@@ -51,9 +51,18 @@ done
 [[ ${#RESTORE_SOURCE_ENCRYPTION_KEY} -ge 32 ]] || fail "RESTORE_SOURCE_ENCRYPTION_KEY must be at least 32 characters and must be the key that encrypted this backup (M25.3 verifies it before the restore is declared usable)"
 
 BACKUP_FILE="$(cd "$(dirname "$BACKUP_FILE")" && pwd -P)/$(basename "$BACKUP_FILE")"
-base="${BACKUP_FILE%.dump}"
-ROLES_FILE="${ROLES_FILE:-${base}.roles.sql}"
-MANIFEST_FILE="${MANIFEST_FILE:-${base}.manifest}"
+# M27.0: `base` carries the directory here, unlike in offhost-upload.sh where it
+# is an object key component and an absolute path would escape the credential's
+# namePrefix. Here the expansion is only used to reach sibling files, so an
+# absolute sibling path was always correct. It is normalised anyway so the same
+# variable means the same thing in both scripts, and so a caller that later
+# reuses `base` for anything other than a local path does not inherit a
+# surprise. Deriving the siblings from the captured directory keeps them
+# absolute and identical to the previous behaviour.
+backup_dir="$(dirname "$BACKUP_FILE")"
+base="$(basename "${BACKUP_FILE%.dump}")"
+ROLES_FILE="${ROLES_FILE:-$backup_dir/${base}.roles.sql}"
+MANIFEST_FILE="${MANIFEST_FILE:-$backup_dir/${base}.manifest}"
 [[ -f "$ROLES_FILE" ]] || fail "roles export not found: $ROLES_FILE"
 [[ -f "$MANIFEST_FILE" ]] || fail "manifest not found: $MANIFEST_FILE"
 ROLES_SQL_FILE="${RESTORE_ROLES_SQL:-$ROOT_DIR/scripts/ops/restore-roles.sql}"

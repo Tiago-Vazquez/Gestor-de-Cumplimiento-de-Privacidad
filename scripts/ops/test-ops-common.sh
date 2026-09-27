@@ -169,5 +169,66 @@ for f in postgres-backup.sh postgres-restore.sh; do
   if grep -q 'sha256sum "\$1"' "$ROOT_DIR/scripts/ops/$f"; then no "$f conserva el hash via argumento (bug M25.4)"; else ok "$f ya no pasa la ruta a sha256sum"; fi
 done
 
+# --- 12. M27.0: `base` normalizado y rutas hermanas estables ---------------
+#
+# postgres-restore.sh derivaba las rutas hermanas de `${BACKUP_FILE%.dump}`, que
+# conserva el directorio. Era inocuo porque solo se usaba para leer ficheros
+# locales, pero dejaba la MISMA variable significando cosas distintas en dos
+# scripts: en offhost-upload.sh `base` es un componente de clave, y alli un
+# directorio lo convertia en una clave absoluta fuera del namePrefix.
+#
+# El caso que importa: un dump pasado con y sin directorio debe producir las
+# MISMAS rutas hermanas cuando el CWD es el directorio del backup, porque asi
+# opera un operador que hace `cd /backups && restore --backup m24-....dump`.
+derive_siblings() {
+  local BACKUP_FILE="$1"
+  BACKUP_FILE="$(cd "$(dirname "$BACKUP_FILE")" && pwd -P)/$(basename "$BACKUP_FILE")"
+  local backup_dir base
+  backup_dir="$(dirname "$BACKUP_FILE")"
+  base="$(basename "${BACKUP_FILE%.dump}")"
+  printf '%s|%s' "$backup_dir/${base}.roles.sql" "$backup_dir/${base}.manifest"
+}
+
+SBASE="m24-postgres-20260926T001718Z-abc123"
+SETDIR="$WORK/siblings"
+mkdir -p "$SETDIR"
+for ext in dump roles.sql manifest; do printf 'x' > "$SETDIR/$SBASE.$ext"; done
+
+with_dir="$(derive_siblings "$SETDIR/$SBASE.dump")"
+without_dir="$(cd "$SETDIR" && derive_siblings "$SBASE.dump")"
+
+check "sibling con directorio: roles.sql" "${with_dir%%|*}" "$SETDIR/$SBASE.roles.sql"
+check "sibling con directorio: manifest" "${with_dir##*|}" "$SETDIR/$SBASE.manifest"
+check "sibling sin directorio: roles.sql" "${without_dir%%|*}" "$SETDIR/$SBASE.roles.sql"
+check "sibling sin directorio: manifest" "${without_dir##*|}" "$SETDIR/$SBASE.manifest"
+if [[ "$with_dir" == "$without_dir" ]]; then
+  ok "el mismo dump con y sin directorio produce las mismas rutas hermanas"
+else
+  no "las rutas hermanas difieren: con=[$with_dir] sin=[$without_dir]"
+fi
+# Un separador duplicado fue el sintoma de no usar backup_dir.
+if [[ "$without_dir" == *"//"* ]]; then
+  no "la derivacion produce una ruta malformada con doble separador"
+else
+  ok "la derivacion no produce separadores duplicados"
+fi
+# La normalizacion debe estar en el codigo, no solo en este test.
+if grep -q 'base="\$(basename "\${BACKUP_FILE%.dump}")"' "$ROOT_DIR/scripts/ops/postgres-restore.sh"; then
+  ok "postgres-restore.sh normaliza base con basename (M27.0)"
+else
+  no "postgres-restore.sh NO normaliza base <-- inconsistente con offhost-upload.sh"
+fi
+if grep -q 'base="\${BACKUP_FILE%.dump}"' "$ROOT_DIR/scripts/ops/postgres-restore.sh"; then
+  no "quedo la derivacion de base sin basename en postgres-restore.sh"
+else
+  ok "no queda la derivacion de base sin basename"
+fi
+# Misma variable, mismo significado, en los dos scripts.
+if grep -q 'base="\$(basename "\${BACKUP_FILE%.dump}")"' "$ROOT_DIR/scripts/ops/offhost-upload.sh"; then
+  ok "offhost-upload.sh usa la misma normalizacion de base"
+else
+  no "offhost-upload.sh usa otra normalizacion de base <-- las dos variables difieren"
+fi
+
 printf '\n  %d ok, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]] || exit 1

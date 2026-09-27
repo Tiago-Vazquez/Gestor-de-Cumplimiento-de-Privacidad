@@ -320,59 +320,94 @@ divergente respecto al código actual.
 La verificación dura (`migration journal mismatch`, sin WARNING) significa otra
 cosa: el dump **no** corresponde a ese manifest y el restore se detiene.
 
-## 11. Restaurar sin acceso al repositorio (prerrequisito de DR)
+## 11. Restaurar sin acceso al repositorio (bundle de M26.0)
 
-### Por qué importa
+### Qué cambió en M26.0
 
-`postgres-restore.sh` **construye** las imágenes `migrate` y `api` desde el
-`Dockerfile.api` del checkout actual. Eso significa que:
+Antes de M26.0 este procedimiento era incompleto: `postgres-restore.sh` resuelve
+sus helpers del checkout, así que sin repositorio el restore no se ejecutaba.
+M26.0 entregó `build-restore-bundle.sh`, que empaqueta esas dependencias para
+poder restaurar en un host limpio.
 
-- si el repositorio no es alcanzable, **el restore no se ejecuta**, aunque el
-  backup esté perfectamente íntegro;
-- si el código actual no compila, el restore tampoco;
-- y las imágenes que se construyen son las del **código de hoy**, no las del
-  commit que se quiere recuperar.
-
-En un incidente real, quedarse sin acceso al código convierte un backup sano en
-un backup inútil.
-
-### Procedimiento
-
-Antes de un restore de disaster recovery, publica las imágenes del commit que
-debe recuperarse y pásalas por variable de entorno:
+### Qué es el bundle
 
 ```bash
-# 1. Publicar (o disponer) las imagenes del commit a recuperar
-export RESTORE_MIGRATE_IMAGE=mi-registro/privacy-migrate:<commit>
-export RESTORE_API_IMAGE=mi-registro/privacy-api:<commit>
+pnpm run ops:build-bundle -- --commit <sha>
 ```
 
-Con esas variables definidas, el restore **usa esas imágenes y no construye
-ninguna**. El script lo indica en su salida:
+El tarball contiene **todo lo que `postgres-restore.sh` resuelve del
+repositorio**:
 
-```text
-restore: using prebuilt migrate image <imagen>
-restore: using prebuilt API image <imagen>
+| Contenido | Para qué sirve |
+| --- | --- |
+| `scripts/ops/postgres-restore.sh` | El ejecutable del restore |
+| `scripts/ops/common.sh` | Helpers de hash y normalización |
+| `scripts/ops/verify-source-key.cjs` | Verificación criptográfica de la clave |
+| `scripts/ops/restore-roles.sql` | Bootstrap de roles de mínimo privilegio |
+| `scripts/ops/docker-compose.restore.yml` | Stack PostgreSQL aislado |
+| `lib/db/drizzle/**` | Migraciones, incluidas en el journal |
+| `MANIFEST.bundle` | Commit, imágenes y declaraciones de exclusión |
+| `MANIFEST.bundle.sha256` | Checksums de cada fichero empaquetado |
+| `INSTRUCCIONES.md` | Orden de restauración |
+
+### Lo que el bundle NO contiene
+
+Garantizado por el constructor, que aborta si lo encuentra:
+
+- **Backups.** Los tres artefactos viven en el almacenamiento off-host.
+- **`SOURCE_ENCRYPTION_KEY`.** Va por un canal de custodia separado.
+- **Credenciales de almacenamiento** (`B2_*`). La de lectura se entrega fuera
+  de banda durante el incidente.
+- **Código de la aplicación.** Solo viaja el tooling de restore.
+
+`MANIFEST.bundle` lo declara con `contains_source_encryption_key=no` y
+`contains_storage_credentials=no`.
+
+### Imágenes por digest
+
+El constructor **rechaza** una imagen por tag y solo acepta `nombre@sha256:...`:
+
+```bash
+RESTORE_API_IMAGE=privaris-api@sha256:<64-hex> \
+RESTORE_MIGRATE_IMAGE=privaris-migrate@sha256:<64-hex> \
+  bash scripts/ops/build-restore-bundle.sh --commit <sha>
 ```
 
-### Requisitos
+Un tag puede moverse después de construir el bundle, y entonces el host de DR
+ejecutaría código nunca verificado contra él. Sin digest, el constructor emite un
+`WARNING`: el bundle es completo pero **no es reproducible**.
 
-1. Las imágenes deben existir en el host donde se restaura, o ser descargables.
-2. El tag debe identificar **el commit o versión que se quiere recuperar**, no
-   `latest` ni un tag móvil.
-3. Deben incluir `scripts/ops/restore-roles.sql`, `docker-compose.restore.yml` y
-   el propio `postgres-restore.sh` de esa misma versión: el compose de restore se
-   lee del checkout, así que **hace falta el código, no solo las imágenes**.
+### Autoverificación
 
-> El punto 3 es una limitación conocida, no resuelta. Empaquetar todo en un
-> "restore bundle" portable es trabajo de M26.
+El constructor no se declara correcto por haber escrito un fichero: extrae lo que
+acaba de generar, verifica sus checksums, confirma los cinco ficheros
+obligatorios y la presencia de migraciones, y **falla** si algo no cuadra. En el
+host de DR se repite antes de restaurar:
 
-### Qué NO cubre esto
+```bash
+sha256sum -c MANIFEST.bundle.sha256
+```
 
-Este procedimiento no sustituye a un restore bundle, a backups off-host ni a
-PITR/WAL. Solo evita tener que compilar en el peor momento.
+### Relación entre el bundle y el almacenamiento off-host
 
-## 12. Observabilidad mínima actual
+Son piezas complementarias: el **bundle** lleva las *herramientas* para restaurar,
+el **bucket** lleva los *datos* (`<base>.dump`, `.roles.sql`, `.manifest`).
+Ninguno sirve sin el otro: un bundle sin dump no restaura nada, y un dump sin
+bundle obliga a reconstruir el tooling en el peor momento.
+
+### Límites actuales — leer antes de un DR real
+
+1. **No hay verificación contra Backblaze B2 real.** `offhost-upload.sh` está
+   probado **en contrato** contra un doble local (`OFFHOST_S3_CMD`), sin red ni
+   credenciales. Object Lock, lifecycle y la firma SigV4 **nunca se ejecutaron**
+   contra el proveedor. La cuenta no existe: la región se elige al crearla y no
+   puede cambiarse.
+2. **No hay ensayo de DR sobre un host limpio.** El bundle se ha construido,
+   extraído y validado, y `postgres-restore.sh` arranca desde el directorio
+   extraído. **No** se ha probado el ciclo backup → off-host → restore completo.
+3. **Sin scheduler ni alertas** (ver la sección 12).
+
+## 12. Observabilidad: qué existe y qué no
 
 ```bash
 docker compose ps
@@ -381,7 +416,280 @@ curl -s http://localhost:${API_PORT:-5000}/api/metrics
 ```
 
 El repositorio expone logs estructurados, `X-Request-Id`, métricas Prometheus y
-probes, pero aún no incluye alerting, PITR, réplicas ni retención centralizada.
-Eso queda explícitamente fuera de M24 y debe cerrarse antes de un SLA comercial
-fuerte.
+probes. **Lo siguiente sigue abierto:**
 
+| Ítem | Estado | Por qué |
+| --- | --- | --- |
+| **R9a — scheduler de backup** | **Abierto** | El backup no tiene disparador; es manual |
+| **R9c — alertas** | **Abierto** | Nada notifica un backup fallido |
+| **R9d — retención remota** | **Diseñado, no aplicado** | Las reglas lifecycle están decididas (90 d) pero exigen bucket |
+| **Salida `76` del uploader** | **Implementada** | Distingue subida fallida de fallo local |
+| **PITR / WAL** | **Abierto** | ADR-002 D5 lo aísla; sin destino off-host no puede ejecutarse |
+| **Réplicas / HA** | **Fuera de alcance** | ADR-002 D0 asume un único VPS |
+
+### El código 76 y por qué importa
+
+| Código | Significado |
+| --- | --- |
+| `0` | Los tres objetos publicados |
+| `1` | Configuración inválida; nada se publica |
+| `76` | Backup local correcto, **subida remota fallida** |
+
+Sin esa distinción, un `1` (disco lleno) y un `76` (host sano sin copia externa)
+serían el mismo aviso. **Hoy nadie consume esa señal**: es lo que un monitor
+necesitaría, y el monitor no existe.
+
+El backup local **nunca** se borra ante un `76`, y el uploader **no** intenta un
+borrado compensatorio de lo ya publicado: un set sin `.manifest` es inutilizable
+por diseño, y los huérfanos los reclama el lifecycle.
+
+## 13. Pérdida de `SOURCE_ENCRYPTION_KEY`
+
+### Qué clave es
+
+Es el secreto de la aplicación, distinto de las contraseñas de PostgreSQL y de
+`JWT_SECRET`. Cifra con **AES-256-GCM** la configuración de conexión completa de
+cada fuente (`sources.connection_config`, serializada como `JSON`). La clave
+efectiva es `sha256(secreto)`, sin KDF con sal ni coste.
+
+### Qué queda afectado si se pierde
+
+**Solo las credenciales de las fuentes de datos.** El resto sigue funcionando:
+
+| Afectado | No afectado |
+| --- | --- |
+| `sources.connection_config` ilegible | Usuarios, organizaciones, membresías |
+| Los escaneos no conectan con las fuentes | Hallazgos ya escaneados y persistidos |
+| Cada fuente muestra error de credenciales | Sesiones, invitaciones, auditoría |
+| | `JWT_SECRET` (independiente) |
+| | `POSTGRES_PASSWORD` y roles de runtime |
+| | Esquema y migraciones |
+
+**El backup no está cifrado con esta clave.** Es el cifrado de la *aplicación*;
+el dump viaja con el cifrado en reposo del proveedor. Perder la clave **no**
+impide restaurar la base: impide que las fuentes conecten.
+
+### Por qué no se puede rotar
+
+ADR-002 D3 lo declara: **no hay versionado de clave**. `decrypt` no puede
+distinguir "cifrado con la clave anterior" de "cifrado corrupto". Rotar sin migrar
+deja **ilegibles todas las configuraciones ya almacenadas**. Es un secreto de por
+vida del despliegue.
+
+### Material que debe existir fuera del host
+
+ADR-002 D2 establece custodia **operativa**: **dos copias offline en ubicaciones
+separadas**. Nunca en el repositorio ni en el bundle, ni en el bucket, ni junto a
+las credenciales `B2_*`.
+
+Una copia fuera del host **no** es copia en el bucket: comprometer el bucket
+comprometería la clave.
+
+### Verificar que una clave recuperada es la correcta
+
+Cada backup M25.3+ lleva `source_key_fingerprint` en su manifest:
+`sha256(sha256(clave))`. Se calcula **dentro del contenedor `api`**, único
+proceso que tiene la clave: **la clave cruda nunca llega al host ni al manifest**.
+
+```bash
+grep '^source_key_fingerprint=' <base>.manifest
+```
+
+| Situación | Resultado |
+| --- | --- |
+| La huella coincide | Continúa al descifrado |
+| La huella **difiere** | Falla de inmediato, sin descifrar |
+| Huella **ausente** (pre-M25.3) | Aviso y continúa; el descifrado verifica |
+| No hay fuentes cifradas | `key_check_verified=false`, `reason=no_encrypted_sources` |
+
+El último estado **no es un fallo ni un verde**: es un backup sin nada
+verificable. Un restore con él no debe declararse plenamente bueno.
+
+### Pasos antes de intentar un restore
+
+1. **Localiza la clave** según la custodia D2. No la busques a fuerza bruta: el
+   fingerprint dice si la que tienes es la correcta.
+2. **Compara el fingerprint** con el del manifest antes de gastar tiempo.
+3. **Verifica la longitud**: el restore exige ≥ 32 caracteres.
+4. **Sin fingerprint en el manifest**, el descifrado real sigue verificando; no
+   confíes solo en la longitud.
+5. **Nunca imprimas la clave** en tickets, capturas, logs ni canales.
+
+### Situaciones irrecuperables
+
+| Situación | Recuperable |
+| --- | --- |
+| Clave perdida, ambas copias offline intactas | **Sí**, con custodia |
+| Clave perdida, una copia intacta | **Sí**, con custodia |
+| Clave perdida, ambas copias destruidas | **No.** `connection_config` es irrecuperable |
+| Clave filtrada | **No** sin re-cifrar en sitio todas las fuentes (fuera de M25, D3) |
+| Se rotó sin migrar | **No.** Sin versionado, lo anterior es ilegible |
+| Fingerprint ausente y clave incorrecta | **No** para esas fuentes; el restore lo detecta al descifrar |
+
+**Punto central:** la custodia depende de **disciplina operativa**, no de
+infraestructura. No hay redundancia automática, ni rotación, ni envelope
+encryption. ADR-002 D2 lo acepta de forma explícita.
+
+### Relación con el bundle de restore
+
+El bundle **excluye la clave de forma verificable**: el constructor falla si
+encuentra `.env`, `SOURCE_ENCRYPTION_KEY`, `credentials` o `.b2-credentials`, y
+`MANIFEST.bundle` lo declara con `contains_source_encryption_key=no`.
+
+La clave llega por el canal de custodia, **fuera del bundle** y por un medio
+independiente del de las credenciales de almacenamiento. Son custodios
+complementarios: la credencial de lectura sin la clave no revela datos de fuentes
+cifrados, y la clave sin el dump no recupera nada.
+
+## 14. Pérdida completa del host
+
+> **Estado de verificación.** El flujo está documentado y sus piezas existen, pero
+> **no se ha ejecutado nunca de extremo a extremo**: no hay VPS de producción, ni
+> cuenta de B2, ni ensayo de DR. Trátalo como un procedimiento que hay que ensayar,
+> no como un camino probado.
+
+### Los tres estados de este procedimiento
+
+| Capacidad | Estado |
+| --- | --- |
+| Bundle portable, con digest de imagen y autoverificación | **M26.0, implementado y probado** |
+| Cliente de subida off-host, con orden, reintentos y salida 76 | **M26.0, probado en contrato** |
+| Bucket, objetos reales, descarga desde un host externo | **No existe** (requiere VPS y cuenta) |
+| Recorrido completo hasta `restore=ok` en un host limpio | **Nunca ensayado** |
+
+### Procedimiento
+
+**1. Obtén un host limpio.** Ubuntu con Docker Engine y Compose v2. Verifica antes
+de seguir:
+
+```bash
+docker --version && docker compose version
+```
+
+**2. Obtén el restore bundle** del commit que se quiere recuperar, y verifica su
+integridad **antes** de extraerlo:
+
+```bash
+sha256sum restore-bundle-<fecha>-<commit>.tar.gz   # contra el checksum publicado
+tar -xzf restore-bundle-<fecha>-<commit>.tar.gz
+cd <directorio extraido>
+sha256sum -c MANIFEST.bundle.sha256
+```
+
+Si la verificación falla, **para**: un bundle alterado no debe restaurar nada.
+
+**3. Obtén el material de custodia**, por canales separados:
+
+- `SOURCE_ENCRYPTION_KEY` (custodia D2, ver la sección 13).
+- Contraseñas nuevas de la base destino y de los roles de runtime.
+- `JWT_SECRET` nuevo: no hace falta reutilizar el anterior.
+
+**4. Recupera el backup off-host** con la credencial de **solo lectura** (prefijo
+`prod/`):
+
+```bash
+aws s3 cp --endpoint-url "$B2_S3_ENDPOINT" \
+  s3://$BACKUP_BUCKET/backups/prod/<base>.dump      /restore/<base>.dump
+aws s3 cp --endpoint-url "$B2_S3_ENDPOINT" \
+  s3://$BACKUP_BUCKET/backups/prod/<base>.roles.sql /restore/<base>.roles.sql
+aws s3 cp --endpoint-url "$B2_S3_ENDPOINT" \
+  s3://$BACKUP_BUCKET/backups/prod/<base>.manifest  /restore/<base>.manifest
+```
+
+**5. Distingue un juego completo.** Los tres objetos comparten `base`. **El
+`.manifest` es el commit lógico**: sin él, el juego está incompleto y no se
+restaura, aunque existan el dump y los roles. Un upload interrumpido deja
+exactamente ese estado.
+
+Confirma que el manifest referencia los otros dos:
+
+```bash
+grep -E '^(dump_file|roles_file|dump_sha256|roles_sha256)=' /restore/<base>.manifest
+```
+
+**6. Verifica la integridad** contra el manifest, antes de tocar nada:
+
+```bash
+cd /restore
+grep -E '^(dump_sha256|roles_sha256)=' <base>.manifest
+sha256sum <base>.dump <base>.roles.sql
+```
+
+Compara los dígitos a mano. Un `checksum mismatch` significa que el conjunto **no**
+corresponde a ese manifest: para, no intentes "reparar" nada.
+
+**7. Prepara el entorno.** Define las variables obligatorias. El compose de
+restore construye las imágenes salvo que le des digests:
+
+```bash
+export RESTORE_API_IMAGE=privaris-api@sha256:<64-hex>
+export RESTORE_MIGRATE_IMAGE=privaris-migrate@sha256:<64-hex>
+export RESTORE_POSTGRES_PASSWORD=...    # nueva para este despliegue
+export RESTORE_APP_ROLE_PASSWORD=...   # nueva
+export RESTORE_BG_ROLE_PASSWORD=...    # nueva
+export RESTORE_JWT_SECRET=...          # >= 32 caracteres, nuevo
+export RESTORE_SOURCE_ENCRYPTION_KEY=...  # por custodia, sección 13
+```
+
+**8. Valida la clave ANTES del restore**, para no gastar un restore completo en
+descubrir que la clave es incorrecta:
+
+```bash
+grep '^source_key_fingerprint=' /restore/<base>.manifest
+```
+
+Calcula `sha256(sha256(clave))` con la clave que tienes y compárala. Si difieren,
+**detente aquí**. Si el manifest no trae fingerprint, el propio restore lo
+verificará al descifrar.
+
+**9. Ejecuta el restore:**
+
+```bash
+RESTORE_CONFIRM=RESTORE bash scripts/ops/postgres-restore.sh \
+  --backup /restore/<base>.dump
+```
+
+**10. Exige los criterios de aceptación.** `restore=ok` **no basta**. Además:
+
+- `key_check_verified=true` (o el aviso honesto `no_encrypted_sources`),
+- `key_check_fingerprint=match` cuando el manifest trae fingerprint,
+- conteos coincidentes con el manifest,
+- `RLS verification` cubriendo las 7 tablas, con `bypassrls` correcto en
+  `app_role` (f) y `bg_role` (t),
+- `migration-count` coincidente.
+
+**11. Verifica el servicio recuperado:**
+
+```bash
+docker compose -p <project> -f scripts/ops/docker-compose.restore.yml ps
+curl -i http://localhost:18080/api/livez     # 200
+curl -i http://localhost:18080/api/readyz    # 200
+```
+
+**12. Decide el cutover.** El cambio de tráfico es una decisión de operador, no del
+script. Usa `RESTORE_KEEP=1` para inspeccionar antes de limpiar:
+
+```bash
+docker compose -p <project> -f scripts/ops/docker-compose.restore.yml \
+  down --volumes --remove-orphans
+```
+
+### Si algo falla
+
+| Síntoma | Dónde mirar |
+| --- | --- |
+| `docker: command not found` / Compose v1 | Instala Docker + Compose v2 antes de empezar |
+| `roles export not found` | Faltan los tres artefactos; vuelve al paso 5 |
+| `checksum mismatch` | Sección 9 |
+| `SOURCE_ENCRYPTION_KEY does not match this backup` | Sección 13 y paso 8 |
+| `decryption failed` | Sección 13: clave incorrecta sin fingerprint en el manifest |
+| `key_check_verified=false` + `no_encrypted_sources` | Estado honesto, no un fallo; pero no es un verde pleno |
+| Imágenes no descargables | Disponibilidad del registry, no del bundle |
+
+### Lo que este procedimiento NO cubre
+
+- **PITR / WAL**: no existe. El RPO real es la frecuencia del backup completo.
+- **Alertas**: si la subida falla con `76` y nadie mira el log, la pérdida pasa
+  inadvertida (sección 12).
+- **Alta disponibilidad**: ADR-002 D0 asume un único VPS; no hay réplicas.
+- **Multi-región**: la cuenta de B2 tiene una única región.
