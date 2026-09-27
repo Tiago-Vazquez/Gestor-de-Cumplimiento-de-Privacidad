@@ -26,6 +26,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/scripts/ci/docker-compose.dr-drill.yml"
+ASSERTS="$ROOT_DIR/scripts/ci/dr-asserts.sh"
 PROJECT_NAME="${M28_DR_PROJECT:-m28-dr-drill}"
 
 # A project distinct from the default one is mandatory: the drill tears down
