@@ -1,18 +1,20 @@
 # M28.0 - DR drill: an isolated SOURCE database for the backup/restore cycle.
 #
-# This stack exists only to produce a backup that the drill then restores into a
-# SEPARATE, freshly created target. It deliberately does NOT reuse the developer's
-# docker-compose.yml project: the drill must never touch a real database, and a
-# shared project name would make "the target is clean" unverifiable.
+# Reproduces the REAL startup order, reusing the real mechanism from
+# docker-compose.yml rather than inventing a parallel one:
 #
-# The source database is initialised with the seed below via
-# docker-entrypoint-initdb.d, so the drill starts from a known state instead of
-# whatever happened to be in the volume.
+#   postgres (healthy) -> migrate (one-shot) -> seed -> api
+#
+# The second M28.0 CI run failed with `postgres-1 exited (3)`: the seed was
+# mounted in docker-entrypoint-initdb.d, so it ran during initdb, BEFORE any
+# migration had created the tables it inserts into. Reusing the stack's own
+# `migrate` service fixes the ordering instead of reshaping the seed to fit a
+# half-built database.
 name: m28-dr-drill
 
 services:
-  # The source database. The seed runs only on a fresh volume, which is what the
-  # drill relies on: the volume is always created empty for this project.
+  # 1. PostgreSQL on an empty volume. No initdb seed: the schema comes from the
+  #    migrations, exactly as in production.
   postgres:
     image: postgres:16-alpine
     restart: "no"
@@ -22,13 +24,82 @@ services:
       POSTGRES_DB: privacy
     volumes:
       - source_pgdata:/var/lib/postgresql/data
-      - ./m28-dr-seed.sql:/docker-entrypoint-initdb.d/10-m28-dr-seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U privacy -d privacy"]
       interval: 3s
       timeout: 5s
       retries: 30
       start_period: 5s
+
+  # 2. Migrations + role provisioning, reusing the stack's own command,
+  #    Dockerfile target and db:migrate / db:provision-roles pair.
+  migrate:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.api
+      target: migrate
+    command: ["sh", "-c", "pnpm --filter @workspace/db run db:migrate && pnpm --filter @workspace/db run db:provision-roles"]
+    environment:
+      ADMIN_DATABASE_URL: postgresql://privacy:drill-source-pass@postgres:5432/privacy
+      APP_ROLE_PASSWORD: drill-app-pass
+      BG_ROLE_PASSWORD: drill-bg-pass
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # 3. Seed AFTER migrate, applied with psql against an existing schema.
+  #    Running it here instead of initdb is what makes the ordering explicit.
+  seed:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGPASSWORD: drill-source-pass
+    volumes:
+      - ./m28-dr-seed.sql:/seed.sql:ro
+    command: sh -c "psql -v ON_ERROR_STOP=1 -h postgres -U privacy -d privacy -f /seed.sql"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # 4. The API must be up for postgres-backup.sh: the source_key_fingerprint is
+  #    computed INSIDE the api container, and the backup omits that field when
+  #    the container is not running, which would weaken the drill's key check.
+  api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.api
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+      HOST: "0.0.0.0"
+      DATABASE_URL: postgresql://app_role:drill-app-pass@postgres:5432/privacy
+      BG_DATABASE_URL: postgresql://bg_role:drill-bg-pass@postgres:5432/privacy
+      JWT_SECRET: drill-jwt-secret-value-at-least-32-chars
+      SOURCE_ENCRYPTION_KEY: drill-encryption-key-at-least-32-chars
+      CORS_ORIGINS: ""
+      TRUST_PROXY: "false"
+      AUTH_RATE_LIMIT_STORE: memory
+      AUTH_REGISTRATION_ENABLED: "false"
+      SCAN_SCHEDULER_TICK_MS: "60000"
+      SCAN_SCHEDULER_BATCH: "5"
+      SERVE_STATIC: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+    ports:
+      - "18099:5000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/livez').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
 volumes:
   source_pgdata:
