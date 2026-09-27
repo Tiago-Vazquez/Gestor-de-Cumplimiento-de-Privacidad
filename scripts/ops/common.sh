@@ -76,3 +76,82 @@ journal_sha256_of() {
     "SELECT coalesce(string_agg(id::text || ':' || hash || ':' || created_at::text, chr(10) ORDER BY id), '') FROM drizzle.__drizzle_migrations;" \
     | sha256_stdin
 }
+
+# ---------------------------------------------------------------------------
+# M26.0 — bounded retry with sleep injection
+# ---------------------------------------------------------------------------
+#
+# The off-host upload is the only network operation the backup performs, and
+# the only part of it that can fail for reasons outside the VPS. Without a
+# retry a single transient 503 or a one-second TLS interruption turns a
+# perfectly good local backup into exit 76, which would page an operator for
+# something that resolves itself in two seconds.
+#
+# The sleep is injected through a function name rather than calling `sleep`
+# directly so the tests can run the whole loop with zero real waiting. A
+# production retry with a real backoff would make the test suite take minutes
+# and would still assert less, because the test could not control the delay it
+# is measuring. M25.6 institutionalised exactly this: test the contract, not
+# the wall clock.
+#
+# The loop is bounded and the attempt count is validated up front. An
+# unvalidated count would make a non-numeric OFFHOST_UPLOAD_RETRIES behave
+# like 1, silently degrading a deliberate retry policy to a single attempt —
+# the same class of silent degradation M25.5 fixed for
+# BACKUP_LOCK_GRACE_SECONDS, where a typo disguised one condition as another.
+retry_sleep() { sleep "$1"; }
+retry_sleep_hook="${RETRY_SLEEP_HOOK:-retry_sleep}"
+
+# Create a private temporary directory and echo its path.
+#
+# `mktemp -d` is not used directly. On the MSYS/Git Bash shell this repository is
+# developed against, its output is not reliably captured by `$( )`: the command
+# succeeds and prints a path, yet the captured value comes back empty, which
+# silently turns every later path into "/" and then `rm -rf "$STAGE"` deletes a
+# directory it never created. A silent empty value is worse than a hard failure
+# here, so the directory is created explicitly and the result is verified before
+# being echoed.
+make_temp_dir() {
+  local base="${TMPDIR:-/tmp}" dir n=0
+  # mkdir is atomic and exclusive, which is the property that makes this safe
+  # against a concurrent run on the same host.
+  while ((n < 100)); do
+    dir="$base/privaris-ops.$$.${RANDOM}${n}"
+    if mkdir -p "$dir" 2>/dev/null; then
+      # Verify the path is really a directory and non-empty: this is the check
+      # that would have caught the empty mktemp capture.
+      if [[ -n "$dir" && -d "$dir" ]]; then
+        printf '%s' "$dir"
+        return 0
+      fi
+    fi
+    n=$((n + 1))
+  done
+  return 1
+}
+
+# A positive integer. 0 is rejected rather than treated as "no retries" so that
+# an empty or misspelled value cannot be mistaken for a deliberate policy.
+is_positive_int() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
+
+# Run a command up to `attempts` times, sleeping `delay` seconds between tries.
+# Returns the command's own exit status so the caller can act on it. Only the
+# final attempt's status is meaningful; earlier failures are retried.
+retry_with_backoff() {
+  local attempts="$1" delay="$2" attempt status=0
+  # The two leading parameters must be removed before "$@" is used as the
+  # command, otherwise they are re-invoked as the command itself and the retry
+  # loop silently executes a number.
+  shift 2
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if ((attempt > 1)); then
+      "$retry_sleep_hook" "$delay"
+    fi
+    status=0
+    "$@" || status=$?
+    ((status == 0)) && return 0
+    # 76 is our own "remote failed" status. Retrying it is the whole point, so
+    # it is not special-cased here: any non-zero status is retried.
+  done
+  return "$status"
+}

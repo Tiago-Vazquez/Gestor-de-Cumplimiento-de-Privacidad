@@ -55,7 +55,8 @@ manifest=...manifest
 #### Concurrencia, unicidad y códigos de salida (M25.2)
 
 El script está preparado para ejecución desatendida. No implementa todavía ningún
-disparador (ni cron ni scheduled actions): eso es M25.3.
+disparador (ni cron ni scheduled actions): eso es **M26.0** (R9a), y va acompañado
+del cliente off-host y el bundle de restore, no es un cambio aislado.
 
 **Lock.** Se usa un **lock-dir**, no `flock(1)`, porque `flock` no existe en las
 shells mínimas contra las que se desarrolla este repositorio y porque un lock-dir
@@ -82,6 +83,45 @@ funciona igual en el contenedor de backup y en el host. El lock es
 
 `75` es el valor que un planificador debe tratar como "reintentar más tarde", no
 como fallo definitivo.
+
+**Retención (M26.0).** `BACKUP_RETENTION_DAYS` **ya no es la política de
+retención**: el default pasó de **14 a 3 días** y su rol se redujo a **buffer de
+staging local**. La autoridad de retención es el *lifecycle* del almacenamiento
+off-host (90 días, ADR-003). El `find -mtime` se conserva a propósito: sin él, un
+fallo de red dejaría al backup sin ninguna copia local, con el único juego de
+artefactos dentro de un bucket al que no se ha podido llegar.
+
+**Subida off-host (M26.0).** `pnpm run ops:offhost-upload` publica un set ya
+generado en `backups/<env>/<base>.{dump,roles.sql,manifest}`, **en ese orden**:
+el manifest es el **commit lógico** del set y su presencia significa "juego
+completo". Reintenta cada objeto (`OFFHOST_UPLOAD_RETRIES`, default 3) y devuelve:
+
+| Código | Significado |
+| --- | --- |
+| `0` | Los tres objetos publicados |
+| `1` | Configuración inválida o artefacto ausente (nada se publica) |
+| `76` | Backup local correcto, **subida fallida** |
+
+`76` es nuevo y deliberadamente distinto de `1`: `1` puede ser un disco lleno,
+mientras que `76` significa que el host está sano y simplemente no hay copia
+fuera. Una alerta que no los distingue no es accionable. **Ante un `76` el backup
+local nunca se borra**: eliminarlo por un fallo de red convertiría un problema de
+red en pérdida de datos. El script tampoco intenta un borrado compensatorio de
+los objetos ya publicados; un set sin manifest queda inutilizable por diseño.
+
+Por defecto la subida corre **desde el VPS** y **GitHub Actions no recibe
+credenciales de producción**: el artefacto nace en el VPS, y acoplar la copia
+off-host a la disponibilidad de un SaaS contradice el propósito de D1. El
+transporte es `aws s3api put-object` con `--endpoint-url`, y es inyectable vía
+`OFFHOST_S3_CMD` para poder probar el contrato sin red ni credenciales.
+
+**Bundle de restauración (M26.0).** `pnpm run ops:build-bundle` empaqueta todo lo
+que `postgres-restore.sh` resuelve del repositorio (script, `common.sh`,
+`verify-source-key.cjs`, `restore-roles.sql`, compose, migraciones) en un tarball
+que se extrae y ejecuta en un host sin checkout. Referencia las imágenes **por
+digest, nunca por tag**, y **no contiene** backups, `SOURCE_ENCRYPTION_KEY` ni
+credenciales. El constructor se autoverifica: extrae lo que acaba de escribir y
+verifica sus checksums antes de declararse correcto.
 
 **Unicidad de artefactos.** El nombre base es
 `m24-postgres-<timestamp-UTC>-<sufijo>`, donde el sufijo son los 6 caracteres

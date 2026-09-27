@@ -24,7 +24,9 @@ Se adopta la topología que el repositorio ya describe, **declarada explícitame
 ### D1. Backups off-host = object storage S3-compatible gestionado
 Se elige almacenamiento de objetos gestionado por tres propiedades concretas: **cifrado en reposo gestionado**, **inmutabilidad mediante Object Lock** (una cadena de custodia que un volumen de red no ofrece) y **políticas de lifecycle** para reemplazar el borrado local por `find -mtime` como mecanismo de retención. La misma decisión habilita D5: `archive_command` puede escribir WAL directamente al destino sin instalar un agente adicional.
 
-Restricción derivada de D2 y que se hace explícita aquí: **la `SOURCE_ENCRYPTION_KEY` y la clave de cifrado del dump no deben residir en el bucket ni con las mismas credenciales de acceso**. Quedan pendientes de definir región, clase de almacenamiento y presupuesto de retención de WAL.
+Restricción derivada de D2 y que se hace explícita aquí: **la `SOURCE_ENCRYPTION_KEY` y la clave de cifrado del dump no deben residir en el bucket ni con las mismas credenciales de acceso**. Quedan pendientes de definición la región, la clase de almacenamiento y el presupuesto de retención de WAL.
+
+> **Enmienda M26.0 (ADR-003).** La redacción anterior de D1 decía que el lifecycle serviría *"para reemplazar el borrado local por `find -mtime` como mecanismo de retención"*, lo que puede leerse como eliminar la línea `find -mtime`. **Se aclara que no se elimina.** El lifecycle pasa a ser la autoridad de retención **remota** (90 días) y `find -mtime` se conserva con rol reducido a **buffer de staging local** (14 → 3 días). Borrarlo dejaría al backup sin copia local ante un fallo de red, con el único juego de artefactos dentro de un bucket inaccesible. La decisión de destino no se modifica: se precisa el alcance de la palabra "retención".
 
 ### D2. `SOURCE_ENCRYPTION_KEY` con dos copias offline, procedimiento de recuperación y fingerprint en manifiesto
 Se adopta custodia **operativa** (dos copias offline, en ubicaciones separadas) más **verificación criptográfica**:
