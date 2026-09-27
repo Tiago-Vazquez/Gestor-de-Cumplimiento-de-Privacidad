@@ -15,3 +15,10 @@
 # reviewed in diffs during incidents.
 *.md text eol=lf
 *.json text eol=lf
+
+# M28.0: the same reasoning applies to Compose files and the environment
+# template. A CRLF YAML is parsed differently by some Compose versions, and
+# .env.example is diffed every time a variable is added, so a whole-file EOL
+# change buries the one-line change that was actually being reviewed.
+*.yml text eol=lf
+.env.example text eol=lf

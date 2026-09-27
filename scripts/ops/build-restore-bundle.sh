@@ -169,8 +169,30 @@ NO contiene: imagenes (referenciadas por digest en `MANIFEST.bundle`), backups
 verificacion de la clave han pasado.
 DOC
 
+# M28.0: reject a Windows-style path before `cd` can mangle it.
+#
+# Under Git Bash/MSYS, `cd "C:\Users\..." && pwd -P` returns the Windows path
+# with the MSYS mount prefix PREPENDED, producing a hybrid like
+# /mnt/c/Users/...:C:\Users\... . tar then writes to that hybrid path and the
+# bundle appears under a mangled directory instead of the requested one, with no
+# error at all. The guard is a shape check on the input, not a new accepted
+# format: it rejects what cannot work and leaves every working invocation
+# untouched.
+case "$OUT_DIR" in
+  [A-Za-z]:[\\/]*)
+    fail "BUNDLE_OUT_DIR must be a POSIX path in this shell, not a Windows path: $OUT_DIR"
+    ;;
+  *'\'*)
+    fail "BUNDLE_OUT_DIR must use forward slashes: $OUT_DIR"
+    ;;
+esac
+
 mkdir -p "$OUT_DIR"
 OUT_DIR="$(cd "$OUT_DIR" && pwd -P)"
+# `pwd -P` is what guarantees a usable path; a hybrid result means the input was
+# never a real directory in this filesystem, and continuing would silently write
+# the bundle somewhere unreachable.
+[[ "$OUT_DIR" == /* ]] || fail "BUNDLE_OUT_DIR did not resolve to an absolute path: $OUT_DIR"
 name="restore-bundle-$(date -u +%Y%m%dT%H%M%SZ)-${COMMIT:0:12}.tar.gz"
 tarball="$OUT_DIR/$name"
 

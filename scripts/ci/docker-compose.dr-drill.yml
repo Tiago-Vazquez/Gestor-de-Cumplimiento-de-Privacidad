@@ -1,0 +1,34 @@
+# M28.0 - DR drill: an isolated SOURCE database for the backup/restore cycle.
+#
+# This stack exists only to produce a backup that the drill then restores into a
+# SEPARATE, freshly created target. It deliberately does NOT reuse the developer's
+# docker-compose.yml project: the drill must never touch a real database, and a
+# shared project name would make "the target is clean" unverifiable.
+#
+# The source database is initialised with the seed below via
+# docker-entrypoint-initdb.d, so the drill starts from a known state instead of
+# whatever happened to be in the volume.
+name: m28-dr-drill
+
+services:
+  # The source database. The seed runs only on a fresh volume, which is what the
+  # drill relies on: the volume is always created empty for this project.
+  postgres:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: privacy
+      POSTGRES_PASSWORD: drill-source-pass
+      POSTGRES_DB: privacy
+    volumes:
+      - source_pgdata:/var/lib/postgresql/data
+      - ./m28-dr-seed.sql:/docker-entrypoint-initdb.d/10-m28-dr-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U privacy -d privacy"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  source_pgdata:
