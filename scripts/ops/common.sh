@@ -13,7 +13,14 @@
 # bakes into the manifest and a later verification of the very same file (typed
 # with a different path form) computes a clean 64-character hash and reports a
 # mismatch on a perfectly intact backup. Reading from stdin means the path never
-# reaches the tool, so the result is identical on Linux, WSL, Git Bash and macOS.
+# reaches the tool.
+#
+# Expected behaviour on every platform: reading the file from stdin yields a
+# digest that does not depend on how the path is spelled.
+# Verified by execution on: Linux (by construction, this tool is the reference
+# implementation) and MSYS/Git Bash (M25.5 drills produced identical digests for
+# POSIX and backslash paths). The shasum branch used on macOS, where sha256sum is
+# absent, is correct by inspection but has NOT been executed on macOS.
 sha256_of() {
   local file="$1"
   if command -v sha256sum >/dev/null 2>&1; then

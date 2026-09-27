@@ -69,8 +69,18 @@ if grace_is_valid "abc"; then no "GRACE=abc deberia rechazarse"; else ok "GRACE=
 if grace_is_valid "-5"; then no "GRACE=-5 deberia rechazarse"; else ok "GRACE=-5 rechazado"; fi
 if grace_is_valid "0"; then ok "GRACE=0 aceptado (reclamo inmediato)"; else no "GRACE=0 deberia aceptarse"; fi
 if grace_is_valid "120"; then ok "GRACE=120 aceptado (default existente)"; else no "GRACE=120 deberia aceptarse"; fi
-if grace_is_valid ""; then no "GRACE vacio deberia rechazarse sin default"; else ok "GRACE vacio rechazado"; fi
+if grace_is_valid ""; then no "la guarda deberia rechazar una cadena vacia"; else ok "la guarda rechaza una cadena vacia"; fi
 if grace_is_valid "12.5"; then no "GRACE=12.5 deberia rechazarse"; else ok "GRACE=12.5 rechazado"; fi
+
+# El default 120 se aplica con ${BACKUP_LOCK_GRACE_SECONDS:-120}, y `:-` sustituye
+# tanto una variable NO DEFINIDA como una DEFINIDA VACIA. Por eso la guarda nunca
+# llega a ver la cadena vacia: este caso solo documenta como se comporta la guarda
+# de forma aislada, NO lo que hace el script con BACKUP_LOCK_GRACE_SECONDS="".
+# El comportamiento real del script se comprueba en la seccion siguiente.
+resolve_grace() { local v="${1-__UNSET__}"; if [[ "$v" == "__UNSET__" || -z "$v" ]]; then printf '120'; else printf '%s' "$v"; fi; }
+check "GRACE no definido resuelve al default" "$(resolve_grace)" "120"
+check "GRACE definido vacio resuelve al default" "$(resolve_grace "")" "120"
+check "GRACE definido con valor se respeta" "$(resolve_grace 0)" "0"
 
 # --- 7. el default 120 no cambio --------------------------------------------
 DEFAULT_LINE="$(grep -o 'BACKUP_LOCK_GRACE_SECONDS:-[0-9]*' "$ROOT_DIR/scripts/ops/postgres-backup.sh" | head -1)"

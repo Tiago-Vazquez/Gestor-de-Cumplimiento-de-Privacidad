@@ -1,0 +1,5 @@
+# Shell scripts are executed, never diffed as text. Git's autocrlf conversion
+# would otherwise turn them into CRLF on Windows checkouts, and bash then fails
+# with `$'\r': command not found`. Pinning them to LF makes the M25.6 `test:ops`
+# gate reproducible regardless of each developer's core.autocrlf setting.
+*.sh text eol=lf

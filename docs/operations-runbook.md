@@ -260,7 +260,7 @@ backup: another backup already holds /secure/backups/privacy/postgres/.m24-backu
    El código 75 debe tratarse como "reintentar más tarde" en cualquier
    planificador, nunca como fallo definitivo.
 
-## 8. El restore falla por checksum
+## 9. El restore falla por checksum
 
 ### Identificar
 
@@ -297,7 +297,7 @@ Si ves un `checksum mismatch` en un backup antiguo creado en Windows, comprueba
 antes que el dump no haya sido modificado: el prefijo ya no debe impedir el
 restore.
 
-## 9. El restore avisa de divergencia de migraciones
+## 10. El restore avisa de divergencia de migraciones
 
 ### Identificar
 
@@ -320,7 +320,59 @@ divergente respecto al código actual.
 La verificación dura (`migration journal mismatch`, sin WARNING) significa otra
 cosa: el dump **no** corresponde a ese manifest y el restore se detiene.
 
-## 10. Observabilidad mínima actual
+## 11. Restaurar sin acceso al repositorio (prerrequisito de DR)
+
+### Por qué importa
+
+`postgres-restore.sh` **construye** las imágenes `migrate` y `api` desde el
+`Dockerfile.api` del checkout actual. Eso significa que:
+
+- si el repositorio no es alcanzable, **el restore no se ejecuta**, aunque el
+  backup esté perfectamente íntegro;
+- si el código actual no compila, el restore tampoco;
+- y las imágenes que se construyen son las del **código de hoy**, no las del
+  commit que se quiere recuperar.
+
+En un incidente real, quedarse sin acceso al código convierte un backup sano en
+un backup inútil.
+
+### Procedimiento
+
+Antes de un restore de disaster recovery, publica las imágenes del commit que
+debe recuperarse y pásalas por variable de entorno:
+
+```bash
+# 1. Publicar (o disponer) las imagenes del commit a recuperar
+export RESTORE_MIGRATE_IMAGE=mi-registro/privacy-migrate:<commit>
+export RESTORE_API_IMAGE=mi-registro/privacy-api:<commit>
+```
+
+Con esas variables definidas, el restore **usa esas imágenes y no construye
+ninguna**. El script lo indica en su salida:
+
+```text
+restore: using prebuilt migrate image <imagen>
+restore: using prebuilt API image <imagen>
+```
+
+### Requisitos
+
+1. Las imágenes deben existir en el host donde se restaura, o ser descargables.
+2. El tag debe identificar **el commit o versión que se quiere recuperar**, no
+   `latest` ni un tag móvil.
+3. Deben incluir `scripts/ops/restore-roles.sql`, `docker-compose.restore.yml` y
+   el propio `postgres-restore.sh` de esa misma versión: el compose de restore se
+   lee del checkout, así que **hace falta el código, no solo las imágenes**.
+
+> El punto 3 es una limitación conocida, no resuelta. Empaquetar todo en un
+> "restore bundle" portable es trabajo de M26.
+
+### Qué NO cubre esto
+
+Este procedimiento no sustituye a un restore bundle, a backups off-host ni a
+PITR/WAL. Solo evita tener que compilar en el peor momento.
+
+## 12. Observabilidad mínima actual
 
 ```bash
 docker compose ps

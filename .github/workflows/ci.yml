@@ -56,6 +56,13 @@ jobs:
       - name: Test frontend
         run: pnpm --filter @workspace/privacy-compliance-manager run test
 
+      # M25.6: the operational scripts (backup/restore integrity helpers) had a
+      # test suite that nothing executed, so a regression in CR handling, checksum
+      # normalisation or lock validation would have merged silently. The job must
+      # go red if any assertion fails.
+      - name: Test operational scripts
+        run: pnpm run test:ops
+
       - name: Audit dependencies (high and critical)
         run: pnpm audit --audit-level high
 
