@@ -85,11 +85,11 @@ overrides:
   esbuild: "0.27.3"
   # Security-only transitive pins required by the high/critical audit gate.
   # Keep these aligned with the patched versions reported by pnpm audit.
-  "fast-uri": "3.1.6"
+  "fast-uri": "3.1.7"
   "brace-expansion": "5.0.9"
   "js-yaml": "4.3.2"
   "nanoid": "3.3.18"
-  "@scalar/json-magic>undici": "7.29.0"
+  "@scalar/json-magic>undici": "7.29.1"
 
 
 # pnpm >= 11 build-script approval (replaces onlyBuiltDependencies there).
