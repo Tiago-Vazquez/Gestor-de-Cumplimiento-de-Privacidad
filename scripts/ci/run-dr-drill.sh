@@ -260,6 +260,21 @@ for img in "$RESTORE_MIGRATE_IMAGE" "$RESTORE_API_IMAGE"; do
   fi
 done
 ok "restore images are present locally (no build, no pull)"
+# The five variables that docker-compose.restore.yml REQUIRES are defined here, in
+# the drill's own scope, and exported. Two later commands parse that same compose
+# file: S6 (`ps -q db`) and the EXIT trap cleanup (`down`). While they only existed
+# as an inline prefix of the postgres-restore.sh invocation they died with that
+# subshell, and Compose then refused to interpolate every one of them
+# ("required variable RESTORE_... is missing a value").
+# Same synthetic values as before: nothing printed, no real secret, no default, and
+# the compose's own ${VAR:?} guard is left untouched.
+RESTORE_POSTGRES_PASSWORD="drill-restore-pass"
+RESTORE_APP_ROLE_PASSWORD="drill-app-pass"
+RESTORE_BG_ROLE_PASSWORD="drill-bg-pass"
+RESTORE_JWT_SECRET="drill-jwt-secret-value-at-least-32-chars"
+RESTORE_SOURCE_ENCRYPTION_KEY="$DRILL_KEY"
+export RESTORE_POSTGRES_PASSWORD RESTORE_APP_ROLE_PASSWORD RESTORE_BG_ROLE_PASSWORD \
+  RESTORE_JWT_SECRET RESTORE_SOURCE_ENCRYPTION_KEY
 RESTORE_OUT="$(cd "$RESTORE_DIR" && \
   RESTORE_CONFIRM=RESTORE \
   RESTORE_PROJECT_NAME="$RESTORE_PROJECT" \
@@ -267,11 +282,6 @@ RESTORE_OUT="$(cd "$RESTORE_DIR" && \
   RESTORE_MIGRATE_IMAGE="$RESTORE_MIGRATE_IMAGE" \
   RESTORE_POSTGRES_USER=restore_admin \
   RESTORE_POSTGRES_DB=privacy_restore \
-  RESTORE_POSTGRES_PASSWORD=drill-restore-pass \
-  RESTORE_APP_ROLE_PASSWORD=drill-app-pass \
-  RESTORE_BG_ROLE_PASSWORD=drill-bg-pass \
-  RESTORE_JWT_SECRET=drill-jwt-secret-value-at-least-32-chars \
-  RESTORE_SOURCE_ENCRYPTION_KEY="$DRILL_KEY" \
   RESTORE_KEEP=1 \
   bash scripts/ops/postgres-restore.sh --backup "$DUMP" 2>&1)" \
   || { printf '%s\n' "$RESTORE_OUT" >&2; die "postgres-restore.sh failed"; }
