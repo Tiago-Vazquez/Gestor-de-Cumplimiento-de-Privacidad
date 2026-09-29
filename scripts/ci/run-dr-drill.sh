@@ -71,6 +71,15 @@ SCRATCH_COMPOSE=""
 
 DRILL_KEY="$(node -e 'console.log(require("crypto").randomBytes(24).toString("base64"))')"
 [[ ${#DRILL_KEY} -ge 32 ]] || die "generated key is too short"
+# One key for the whole drill: it encrypts the seed, it is the source api's
+# SOURCE_ENCRYPTION_KEY, and it is the one handed to the restore. `export` (not just
+# a shell variable) is what makes it visible to EVERY process that parses the
+# scratch compose: the harness' own `compose`, the inline `down` calls, and
+# postgres-backup.sh, which is a separate process reading the same file and
+# computes the manifest fingerprint from the api container. The value is never
+# printed and never reaches the bundle, which is built from migrations and ops
+# scripts only.
+export DRILL_SOURCE_ENCRYPTION_KEY="$DRILL_KEY"
 [[ "$WORK" == /* ]] || die "work dir is not absolute: $WORK"
 
 compose() { docker compose -p "$PROJECT_NAME" -f "$SCRATCH_COMPOSE" "$@"; }

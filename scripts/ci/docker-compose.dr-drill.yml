@@ -77,7 +77,13 @@ services:
       DATABASE_URL: postgresql://app_role:drill-app-pass@db:5432/privacy
       BG_DATABASE_URL: postgresql://bg_role:drill-bg-pass@db:5432/privacy
       JWT_SECRET: drill-jwt-secret-value-at-least-32-chars
-      SOURCE_ENCRYPTION_KEY: drill-encryption-key-at-least-32-chars
+      # The api MUST hold the very same key that encrypted the seed's
+      # connection_config. postgres-backup.sh reads this value from inside this
+      # container to compute source_key_fingerprint, so a different key would make
+      # the manifest describe a key that never touched the data and the restore
+      # would refuse it. run-dr-drill.sh exports it from the generated DRILL_KEY;
+      # `:?` fails loudly instead of falling back to a fixed value.
+      SOURCE_ENCRYPTION_KEY: "${DRILL_SOURCE_ENCRYPTION_KEY:?not exported - run the drill via scripts/ci/run-dr-drill.sh}"
       CORS_ORIGINS: ""
       TRUST_PROXY: "false"
       AUTH_RATE_LIMIT_STORE: memory
