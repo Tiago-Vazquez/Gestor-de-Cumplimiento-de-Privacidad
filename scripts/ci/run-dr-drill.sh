@@ -232,9 +232,30 @@ tar -xzf "$TARBALL" -C "$RESTORE_DIR" || die "bundle did not extract"
 ok "bundle checksums verify after extraction"
 assert_bundle_contents "$RESTORE_DIR"
 # --- S5: the real restore, run FROM the bundle -----------------------------
+# The restore is handed PREBUILT images on purpose. postgres-restore.sh falls back
+# to `restore_compose build` when these are unset, and it cannot build from the
+# bundle: the bundle deliberately ships no Dockerfile.api (shipping application
+# code in a recovery artefact is exactly what the bundle contract forbids), so the
+# build died with "failed to read dockerfile: open Dockerfile.api: no such file or
+# directory". The images built for the source drill are the same artefacts, so they
+# are reused and no pull, build or registry is involved.
+RESTORE_API_IMAGE="${PROJECT_NAME}-api:latest"
+RESTORE_MIGRATE_IMAGE="${PROJECT_NAME}-migrate:latest"
+# Verified BEFORE handing them over, and deliberately without building or pulling:
+# if an image is missing the drill must say which one instead of letting the
+# restore fail later on a build error that points at the wrong place.
+for img in "$RESTORE_MIGRATE_IMAGE" "$RESTORE_API_IMAGE"; do
+  if ! docker image inspect "$img" >/dev/null 2>&1; then
+    printf 'dr-drill: required image %s is not present locally (expected from the source build)\n' "$img" >&2
+    exit 1
+  fi
+done
+ok "restore images are present locally (no build, no pull)"
 RESTORE_OUT="$(cd "$RESTORE_DIR" && \
   RESTORE_CONFIRM=RESTORE \
   RESTORE_PROJECT_NAME="$RESTORE_PROJECT" \
+  RESTORE_API_IMAGE="$RESTORE_API_IMAGE" \
+  RESTORE_MIGRATE_IMAGE="$RESTORE_MIGRATE_IMAGE" \
   RESTORE_POSTGRES_USER=restore_admin \
   RESTORE_POSTGRES_DB=privacy_restore \
   RESTORE_POSTGRES_PASSWORD=drill-restore-pass \
