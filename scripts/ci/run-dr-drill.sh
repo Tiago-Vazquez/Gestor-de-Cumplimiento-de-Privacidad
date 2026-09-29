@@ -29,6 +29,25 @@ COMPOSE_FILE="$ROOT_DIR/scripts/ci/docker-compose.dr-drill.yml"
 ASSERTS="$ROOT_DIR/scripts/ci/dr-asserts.sh"
 PROJECT_NAME="${M28_DR_PROJECT:-m28-dr-drill}"
 
+# Absolute repository root, needed for the SCRATCH compose's build context.
+#
+# The committed compose says `context: ../..`, which resolves correctly against
+# scripts/ci/. The drill does not use that file: it copies it into $WORK, and
+# compose resolves relative paths against the directory of the compose file, not
+# the working directory. From $WORK, `../..` points outside the checkout and the
+# build fails with "failed to read dockerfile: open Dockerfile.api: no such file
+# or directory". The scratch therefore carries the absolute root instead.
+#
+# `git rev-parse --show-toplevel` is preferred because it answers identically on
+# the Actions runner and on a local checkout. ROOT_DIR is the fallback for a tree
+# that is not a git checkout. Git Bash reports /c/... , which Docker Desktop does
+# not resolve as a build context, so cygpath normalises it to C:/... when present.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[[ -n "$REPO_ROOT" ]] || REPO_ROOT="$ROOT_DIR"
+if command -v cygpath >/dev/null 2>&1; then
+  REPO_ROOT="$(cygpath -m "$REPO_ROOT" 2>/dev/null || printf '%s' "$REPO_ROOT")"
+fi
+
 # A project distinct from the default one is mandatory: the drill tears down
 # volumes, and it must never be able to reach the developer's own database.
 if [[ "$PROJECT_NAME" == "gestor-de-cumplimiento-de-privacidad" ]]; then
@@ -107,10 +126,26 @@ fs.writeFileSync(process.argv[3], seed, "utf8");
 ok "seed expanded with a runtime-generated key"
 # The committed compose mounts the placeholder seed, so the drill uses a scratch
 # copy pointed at the expanded one. The committed seed stays placeholder-only.
+#
+# The scratch copy also needs its build context absolutised (see REPO_ROOT above):
+# the relative `context: ../..` is only meaningful next to scripts/ci/, and it
+# silently points at the wrong tree once the file lives in $WORK. The capture group
+# keeps each service's original indentation, and the value is quoted because a
+# Windows absolute path contains colons.
 SCRATCH_COMPOSE="$WORK/docker-compose.dr-drill.yml"
-sed "s#\./m28-dr-seed\.sql#$WORK/seed.expanded.sql#" "$COMPOSE_FILE" > "$SCRATCH_COMPOSE"
+sed -e "s#\./m28-dr-seed\.sql#$WORK/seed.expanded.sql#" \
+    -e "s#^\( *\)context: \.\./\.\.\$#\1context: \"$REPO_ROOT\"#" \
+    "$COMPOSE_FILE" > "$SCRATCH_COMPOSE"
 grep -q 'seed.expanded.sql' "$SCRATCH_COMPOSE" \
   || die "scratch compose does not reference the expanded seed"
+# Fail loudly here rather than at the first `compose up`: a build that cannot read
+# its Dockerfile aborts the whole drill in seconds, with an error that points at
+# the runner instead of at the relative path that caused it.
+if grep -q 'context: \.\./\.\.' "$SCRATCH_COMPOSE"; then
+  die "scratch compose still carries the relative build context"
+fi
+grep -qF "context: \"$REPO_ROOT\"" "$SCRATCH_COMPOSE" \
+  || die "scratch compose does not carry the absolute repository root"
 docker compose -p "$PROJECT_NAME" -f "$SCRATCH_COMPOSE" down --volumes --remove-orphans >/dev/null 2>&1 || true
 compose up -d --wait seed || die "source database did not become seeded"
 ok "source database is up"
