@@ -112,13 +112,13 @@ sed "s#\./m28-dr-seed\.sql#$WORK/seed.expanded.sql#" "$COMPOSE_FILE" > "$SCRATCH
 grep -q 'seed.expanded.sql' "$SCRATCH_COMPOSE" \
   || die "scratch compose does not reference the expanded seed"
 docker compose -p "$PROJECT_NAME" -f "$SCRATCH_COMPOSE" down --volumes --remove-orphans >/dev/null 2>&1 || true
-compose up -d --wait postgres || die "source database did not become healthy"
+compose up -d --wait seed || die "source database did not become seeded"
 ok "source database is up"
 
 # Prove the seed landed: a silent initdb failure would otherwise look like a
 # successful backup of an EMPTY database, which proves nothing.
 src_psql() {
-  docker exec -i "$(compose ps -q postgres)" psql -U privacy -d privacy -Atc "$1" 2>/dev/null
+  docker exec -i "$(compose ps -q db)" psql -U privacy -d privacy -Atc "$1" 2>/dev/null
 }
 for pair in "organizations 4" "users 2" "sources 2" "scans 4" "findings 2" "audit_events 1"; do
   set -- $pair
@@ -136,9 +136,16 @@ else
   no "expected 1 encrypted source, found ${encrypted:-0}"
 fi
 [[ "$encrypted" == "1" ]] || die "seed did not apply; the drill would prove nothing"
+# postgres-backup.sh computes source_key_fingerprint by exec'ing node INSIDE the
+# api container, and silently omits the field when no api container is running.
+# A backup taken before `api` is up would therefore still succeed while producing a
+# manifest that weakens the drill's key check, so api is started and waited for
+# here: S2 must not begin before this succeeds.
+compose up -d --wait api || die "api did not become healthy"
+ok "api is up (needed for the backup key fingerprint)"
 # --- S2: the real backup ---------------------------------------------------
 mkdir -p "$BACKUP_DIR"
-backup_out="$(COMPOSE_FILE="$SCRATCH_COMPOSE" BACKUP_DIR="$BACKUP_DIR" BACKUP_RETENTION_DAYS=3 \
+backup_out="$(COMPOSE_FILE="$SCRATCH_COMPOSE" COMPOSE_PROJECT_NAME="$PROJECT_NAME" BACKUP_DIR="$BACKUP_DIR" BACKUP_RETENTION_DAYS=3 \
   bash "$ROOT_DIR/scripts/ops/postgres-backup.sh" 2>&1)" \
   || { printf '%s\n' "$backup_out" >&2; die "postgres-backup.sh failed"; }
 DUMP="$(printf '%s\n' "$backup_out" | sed -n 's/^backup=//p' | head -n1)"
