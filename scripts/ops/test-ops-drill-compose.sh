@@ -147,14 +147,19 @@ check "seed espera a migrate con service_completed_successfully" \
   "$(dep_condition seed migrate)" "service_completed_successfully"
 
 # --- 7. api depende de db, migrate y seed -----------------------------------
-# La api solo es una dependencia fuerte si espera a las tres: levantarla contra
-# una base sin esquema levanta un proceso que muere de forma intermitente.
+# La api necesita esquema (db healthy + migrate completada) para arrancar, y NADA
+# mas. No debe depender de seed: `compose up api` materializa TODA la cadena de
+# depends_on, y el seed usa IDs fijos sin ON CONFLICT, de modo que una segunda
+# ejecucion moria con exit 3 y el drill no llegaba a arrancar la api. El seed lo
+# arranca el harness de forma explicita, asi que no pertenece aqui.
+# La asercion de `seed` es REGRESIVA a proposito: debe fallar si alguien lo
+# reintroduce, no simplemente dejar de mirarlo.
 check "api espera a db con service_healthy" \
   "$(dep_condition api db)" "service_healthy"
 check "api espera a migrate con service_completed_successfully" \
   "$(dep_condition api migrate)" "service_completed_successfully"
-check "api espera a seed con service_completed_successfully" \
-  "$(dep_condition api seed)" "service_completed_successfully"
+check_empty 'api NO depende de seed (re-ejecutarlo lo rompia: IDs fijos, sin ON CONFLICT)' \
+  "$(dep_condition api seed)"
 
 # --- 8. el seed ya no se monta por initdb -----------------------------------
 # El montaje en docker-entrypoint-initdb.d ejecutaba el seed durante initdb, antes
@@ -180,16 +185,30 @@ else
   ok "el harness no arranca 'postgres' con --wait"
 fi
 
-# --- 10 y 14. el arranque de seed y de api ocurre ANTES de S2 ----------------
-# El orden se comprueba por NUMERO DE LINEA, no por presencia. Un `compose up`
-# en algun sitio del fichero no demuestra nada: lo que importa es que la linea de
-# S2 (y la llamada al backup) sean posteriores.
-SEED_LINE="$(line_of 'compose up -d --wait seed' "$HARNESS")"
+# --- 10 y 14. el arranque de seed usa el mecanismo one-shot, NO --wait -------
+# `docker compose up --wait` exige que cada servicio termine running o healthy. Un
+# one-shot que termina bien no es ninguno de los dos, asi que devolvia 1 con
+# "container ... exited (0)" y el drill moria con un seed CORRECTO. El mecanismo
+# real arranca SIN --wait, identifica el contenedor y decide por su exit code.
+# Cada asercion protege una pieza distinta: reintroducir --wait, perder la
+# identificacion del contenedor, perder la espera o perder la decision por exit.
+SEED_LINE="$(line_of '^compose up -d seed' "$HARNESS")"
 API_LINE="$(line_of 'compose up -d --wait api' "$HARNESS")"
 S2_LINE="$(line_of '^# --- S2' "$HARNESS")"
 BACKUP_LINE="$(line_of 'postgres-backup.sh" 2>&1' "$HARNESS")"
 
-check_nonempty 'el harness arranca `seed` con --wait' "$SEED_LINE"
+check_nonempty 'el harness arranca `seed` con `compose up -d seed`' "$SEED_LINE"
+check 'el harness NO usa `compose up -d --wait seed` (--wait rompe los one-shot)' \
+  "$(code_hits "$HARNESS" 'up -d --wait seed')" "0"
+# Estas dos usan code_hits y NO line_of: un comentario que mencione el comando
+# no puede satisfacer la asercion. Con `line_of` un "docker wait" escrito en un
+# comentario hacia pasar el test aunque el harness usara otra cosa.
+check 'el harness identifica el contenedor con `compose ps --all --quiet seed` (--all: un one-shot ya terminado no aparece sin el)' \
+  "$(code_hits "$HARNESS" 'compose ps --all --quiet seed')" "1"
+check 'el harness espera al seed con `docker wait` (no basta con mencionarlo en un comentario)' \
+  "$(code_hits "$HARNESS" 'docker wait')" "1"
+check 'el harness exige que el exit code del seed sea 0' \
+  "$(code_hits "$HARNESS" 'seed_rc.*== *"0"')" "1"
 check_nonempty 'el harness arranca `api` con --wait' "$API_LINE"
 check_nonempty "el harness tiene una seccion S2" "$S2_LINE"
 check_nonempty "el harness invoca postgres-backup.sh" "$BACKUP_LINE"

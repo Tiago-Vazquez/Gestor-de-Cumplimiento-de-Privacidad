@@ -170,7 +170,9 @@ ok "source database is up"
 src_psql() {
   docker exec -i "$(compose ps -q db)" psql -U privacy -d privacy -Atc "$1" 2>/dev/null
 }
-for pair in "organizations 4" "users 2" "sources 2" "scans 4" "findings 2" "audit_events 1"; do
+# organizations is 5, not 4: migration 0016_backfill_tenant.sql inserts
+# `org-bootstrap` before the seed runs, and the seed then adds the four drill-org-N.
+for pair in "organizations 5" "users 2" "sources 2" "scans 4" "findings 2" "audit_events 1"; do
   set -- $pair
   actual="$(src_psql "SELECT count(*) FROM $1;")"
   if [[ "$actual" == "$2" ]]; then

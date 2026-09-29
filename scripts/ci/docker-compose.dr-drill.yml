@@ -90,8 +90,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      seed:
-        condition: service_completed_successfully
     ports:
       - "18099:5000"
     healthcheck:
