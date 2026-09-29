@@ -147,7 +147,22 @@ fi
 grep -qF "context: \"$REPO_ROOT\"" "$SCRATCH_COMPOSE" \
   || die "scratch compose does not carry the absolute repository root"
 docker compose -p "$PROJECT_NAME" -f "$SCRATCH_COMPOSE" down --volumes --remove-orphans >/dev/null 2>&1 || true
-compose up -d --wait seed || die "source database did not become seeded"
+# `seed` must NOT be started with `--wait`. `--wait` requires every service to end
+# up running or healthy, and a one-shot that completes successfully is neither, so
+# Compose returns 1 on a container that exited 0 ("container ... exited (0)") and
+# this line died on a SUCCESSFUL seed. Compose still honours the chain, so `up -d`
+# alone waits for db to be healthy and for migrate to exit 0 before starting seed.
+# The seed's own exit code is then the only thing that decides success.
+compose up -d seed >/dev/null || die "could not start the drill stack (db -> migrate -> seed)"
+# `--all` is required: `ps` hides containers that already exited, and a fast
+# one-shot is often gone before the first query. `head -n1` guards the shape.
+seed_id="$(compose ps --all --quiet seed 2>/dev/null | head -n1)"
+[[ -n "$seed_id" ]] || die "seed container could not be identified after compose up"
+# docker wait blocks until the container exits and prints its exit code, so this
+# waits for the seed to finish without depending on --wait. `unknown` on failure.
+seed_rc="$(docker wait "$seed_id" 2>/dev/null || echo unknown)"
+[[ "$seed_rc" == "0" ]] || die "seed failed: the seed container exited with code '$seed_rc'"
+ok "seed container completed with exit code 0"
 ok "source database is up"
 
 # Prove the seed landed: a silent initdb failure would otherwise look like a
