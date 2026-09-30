@@ -77,7 +77,17 @@ describe("M18 security hardening", () => {
     server = mod.default.listen(0);
   });
   afterAll(() => {
-    server.close();
+    // Guard deliberado, NO una ocultacion de un fallo. Si beforeAll lanza
+    // (por ejemplo si el import dinamico de ../app agota el tiempo bajo
+    // carga, cosa que si ocurre en local al correr API + frontend a la vez),
+    // la variable server queda undefined y el server.close() de este hook
+    // lanzaba un TypeError que SALTABA POR ENCIMA del error real de beforeAll
+    // en el reporte de vitest.
+    //
+    // Con el optional chaining: si beforeAll fallo, su error se reporta igual
+    // (es lo que vitest agrega), y si tuvo exito el servidor se cierra como
+    // antes. No cambia ninguna asercion ni hace pasar un test que falle.
+    server?.close();
   });
 
   describe("Fase 2 — rate limiting persistente", () => {

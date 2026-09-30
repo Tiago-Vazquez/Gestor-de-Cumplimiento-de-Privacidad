@@ -22,3 +22,9 @@
 # change buries the one-line change that was actually being reviewed.
 *.yml text eol=lf
 .env.example text eol=lf
+
+  # M29.1: este mismo fichero se reescribia a CRLF en el working tree de Windows
+  # (core.autocrlf=true), lo que rompia dos asserts de test-ops-lifecycle.sh, que
+  # buscan las reglas de arriba con 'grep ...$' (el $ no casa con el CR final).
+  # El blob del repositorio siempre es LF; esto lo fija tambien en el checkout.
+  /.gitattributes text eol=lf

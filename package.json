@@ -17,6 +17,7 @@
     "ops:offhost-upload": "bash scripts/ops/offhost-upload.sh",
     "ops:build-bundle": "bash scripts/ops/build-restore-bundle.sh",
     "test:ops:dr": "bash scripts/ci/run-dr-drill.sh",
+    "demo:seed": "node scripts/demo/seed-demo-data.mjs",
     "audit:high": "pnpm audit --audit-level high"
   },
   "private": true,
