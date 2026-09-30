@@ -1,0 +1,17 @@
+# M29.2 A1 - Cadencia del backup de produccion.
+# Plantilla; instalar en el VPS (ver backup-schedule.service).
+[Unit]
+Description=Disparo periodico del backup PostgreSQL (M29.2 A1)
+
+[Timer]
+# 02:17 UTC: fuera de las horas punta y fuera de los backups de otras
+# herramientas que suelen usar :00. La cadencia exacta la decide la operacion;
+# el runbook documenta que 24 h es el RPO asumido (ADR-002 D5: sin PITR).
+OnCalendar=*-*-* 02:17:00 UTC
+# Si el VPS estaba apagado a esa hora, ejecuta al arrancar.
+Persistent=true
+# Margen de dispersion para no lanzar todos los hosts a la vez.
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

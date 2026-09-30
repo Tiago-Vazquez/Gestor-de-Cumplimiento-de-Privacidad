@@ -54,9 +54,46 @@ manifest=...manifest
 
 #### Concurrencia, unicidad y códigos de salida (M25.2)
 
-El script está preparado para ejecución desatendida. No implementa todavía ningún
-disparador (ni cron ni scheduled actions): eso es **M26.0** (R9a), y va acompañado
-del cliente off-host y el bundle de restore, no es un cambio aislado.
+El backup se dispara de forma periodica desde el **VPS**, no desde GitHub
+Actions: el PostgreSQL de produccion es privado y el disco de un runner de GitHub
+es efimero, asi que un `schedule` alli nunca tendria acceso real al backup.
+
+**Contrato (en el repositorio).** `scripts/ops/backup-schedule.sh` envuelve a
+`postgres-backup.sh` sin duplicar nada y traduce su codigo de salida:
+
+| Codigo | Significado | `result=` |
+| --- | --- | --- |
+| `0` | Backup completo (local y off-host) | `ok` |
+| `75` | `EXIT_LOCKED`: ya hay un backup en curso (no es un fallo) | `skipped_locked` |
+| `76` | `EXIT_UPLOAD_FAILED`: backup local correcto, subida remota fallida | `partial_upload_failed` |
+| otro | Fallo real del backup | `failed` |
+
+El codigo original se propaga sin enmascarar: `75` y `76` nunca se reportan como
+`0`. No hay retries (solaparian con el backup en curso) y el lock sigue siendo
+el de `postgres-backup.sh`.
+
+**Disparador (infraestructura, fuera del repo).** Plantillas systemd en
+`scripts/ops/backup-schedule.service` y `.timer`:
+
+```bash
+# Instalar en el VPS
+sudo cp scripts/ops/backup-schedule.service scripts/ops/backup-schedule.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now backup-schedule.timer
+
+# Proxima ejecucion programada
+systemctl list-timers backup-schedule.timer
+
+# Ejecucion manual, fuera de horario
+sudo systemctl start backup-schedule.service
+journalctl -u backup-schedule.service -n 50
+```
+
+Equivalente con cron (sin `Persistent`):
+
+```cron
+17 2 * * * cd /opt/privaris && ./scripts/ops/backup-schedule.sh >> /var/log/backup-schedule.log 2>&1
+```
 
 **Lock.** Se usa un **lock-dir**, no `flock(1)`, porque `flock` no existe en las
 shells mínimas contra las que se desarrolla este repositorio y porque un lock-dir

@@ -169,8 +169,7 @@ Documentadas explicitamente, sin adornos:
 
 - **No hay MFA ni recuperacion de password.** El login es email + contrasena.
   Excluido de forma explicita en `ADR-003`.
-- **No hay scheduler de backup (R9a) ni alertas (R9c).** El backup es manual
-  y su fallo no notifica a nadie.
+- **El backup tiene disparador en codigo, pero hay que instalarlo en el VPS** (R9a parcial): contrato `ops:backup-schedule` + unidades systemd. Sin VPS sigue siendo manual. **No hay alertas** (R9c): un backup fallido no notifica a nadie.
 - **No hay B2, Object Lock, lifecycle ni PITR.** Bloqueados hasta que exista un
   VPS de produccion; la region de B2 es irreversible al crear la cuenta.
 - **No hay TLS, reverse proxy ni dominio** en el repositorio.

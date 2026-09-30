@@ -420,8 +420,8 @@ probes. **Lo siguiente sigue abierto:**
 
 | Ítem | Estado | Por qué |
 | --- | --- | --- |
-| **R9a — scheduler de backup** | **Abierto** | El backup no tiene disparador; es manual |
-| **R9c — alertas** | **Abierto** | Nada notifica un backup fallido |
+| **R9a — scheduler de backup** | **Implementado en código, pendiente de desplegar** | El contrato es `scripts/ops/backup-schedule.sh` + unidades systemd; falta instalarlo y probarlo en el VPS |
+| **R9c — alertas** | **Abierto** | Nada notifica un backup fallido (M29.2 A2) |
 | **R9d — retención remota** | **Diseñado, no aplicado** | Las reglas lifecycle están decididas (90 d) pero exigen bucket |
 | **Salida `76` del uploader** | **Implementada** | Distingue subida fallida de fallo local |
 | **PITR / WAL** | **Abierto** | ADR-002 D5 lo aísla; sin destino off-host no puede ejecutarse |
@@ -440,6 +440,35 @@ serían el mismo aviso. **Hoy nadie consume esa señal**: es lo que un monitor
 necesitaría, y el monitor no existe.
 
 El backup local **nunca** se borra ante un `76`, y el uploader **no** intenta un
+### Qué dispara el backup
+
+`scripts/ops/backup-schedule.sh` es el contrato; el calendario vive fuera del
+repositorio:
+
+```bash
+# VPS: instalar el calendario
+sudo cp scripts/ops/backup-schedule.service scripts/ops/backup-schedule.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now backup-schedule.timer
+systemctl list-timers backup-schedule.timer     # próxima ejecución
+
+# ejecutar a mano, fuera de horario
+sudo systemctl start backup-schedule.service
+journalctl -u backup-schedule.service -n 50
+```
+
+Sin unidades systemd, el equivalente es una entrada de cron (ver `DEPLOY.md`).
+
+**Por qué no GitHub Actions:** la base de producción es privada y el disco de un
+runner de GitHub es efímero, así que un `schedule` allí no ejecutaría el backup
+real. El script del repositorio es el mismo en ambos casos.
+
+**Interpretar el resultado.** Cada ejecución deja una línea
+`backup-schedule: result=<ok|skipped_locked|partial_upload_failed|failed> exit_code=<n>`
+con el **mismo** código que devolvió `postgres-backup.sh` (`0`, `75`, `76` u otro):
+
+- `skipped_locked` (75) **no es un fallo**: ya había un backup en curso.
+- `partial_upload_failed` (76) **sí requiere atención**: el backup local está bien
+  pero no llegó a off-host. Es la señal que R9c deberá notificar.
 borrado compensatorio de lo ya publicado: un set sin `.manifest` es inutilizable
 por diseño, y los huérfanos los reclama el lifecycle.
 
