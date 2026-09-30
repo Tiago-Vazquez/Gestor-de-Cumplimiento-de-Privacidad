@@ -1,0 +1,24 @@
+# Shell scripts are executed, never diffed as text. Git's autocrlf conversion
+# would otherwise turn them into CRLF on Windows checkouts, and bash then fails
+# with `$'\r': command not found`. Pinning them to LF makes the M25.6 `test:ops`
+# gate reproducible regardless of each developer's core.autocrlf setting.
+*.sh text eol=lf
+
+# M27.0: documentation and manifests were being rewritten to CRLF on Windows
+# checkouts, producing an `LF will be replaced by CRLF` warning on every
+# `git status`. The churn was not cosmetic: during M26.0 a hand-normalised file
+# lost the leading dash of a bash comment, which silently truncated a block.
+#
+# There is no technical reason to keep them CRLF. Neither type is executed by a
+# shell, and normalising them keeps diffs limited to real content changes. *.md
+# is pinned rather than left to core.autocrlf precisely because the runbook is
+# reviewed in diffs during incidents.
+*.md text eol=lf
+*.json text eol=lf
+
+# M28.0: the same reasoning applies to Compose files and the environment
+# template. A CRLF YAML is parsed differently by some Compose versions, and
+# .env.example is diffed every time a variable is added, so a whole-file EOL
+# change buries the one-line change that was actually being reviewed.
+*.yml text eol=lf
+.env.example text eol=lf

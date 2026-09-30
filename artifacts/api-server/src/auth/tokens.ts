@@ -19,6 +19,15 @@ export type AuthTokenPayload = {
   roles: string[];
   /** JWT ID opcional para identificación única de sesión (revocación futura). */
   jti?: string;
+  /**
+   * Token CSRF de synchronizer ligado a la sesión (M11.1). Se genera en el
+   * login, viaja FIRMADO dentro del JWT (por tanto es inmutable sin romper la
+   * firma y está unívocamente asociado a ese `jti`), se expone al frontend por
+   * `GET /api/csrf-token` y se valida en las mutaciones autenticadas por
+   * cookie. Al revocar la sesión (logout) el JWT deja de ser aceptado y el
+   * token pierde toda utilidad. Nunca se loguea ni se expone en errores.
+   */
+  csrf?: string;
 };
 
 /**
@@ -116,6 +125,7 @@ export async function signToken(
     name: payload.name ?? null,
     roles: payload.roles,
     jti,
+    ...(payload.csrf ? { csrf: payload.csrf } : {}),
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(payload.sub)
@@ -149,6 +159,7 @@ export async function verifyToken(token: string): Promise<AuthTokenPayload | nul
       name: typeof payload.name === "string" ? payload.name : null,
       roles,
       jti: typeof payload.jti === "string" ? payload.jti : undefined,
+      csrf: typeof payload.csrf === "string" ? payload.csrf : undefined,
     };
   } catch {
     return null;

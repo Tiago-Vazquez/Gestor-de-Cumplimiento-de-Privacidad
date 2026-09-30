@@ -27,13 +27,6 @@ El arranque es **fail-fast**: `assertAuthConfigForEnv()` (en `src/auth/tokens.ts
 - En producción (`NODE_ENV=production`) el arranque **aborta** si está activo, y `authDisabled()` devuelve `false` igualmente (defensa en profundidad: el middleware ignora el bypass aunque la variable llegue al entorno).
 - Cualquier otro valor (incluido `"TRUE"`) mantiene la autenticación activa.
 
-### `AUTH_BOOTSTRAP_ENABLED` (default: deshabilitado — opt-in)
-
-- Solo `true`/`1` habilita el login bootstrap (`POST /api/auth/login` con `{ token }` contra `AUTH_BOOTSTRAP_TOKEN`), que usa la identidad fija `bootstrap-admin` con rol admin.
-- Ausente, vacío, `"false"`, `"0"`, `"TRUE"` o cualquier typo → deshabilitado (401 uniforme, sin tocar repos ni emitir JWT).
-- Si se habilita en producción, se registra una advertencia en el log de arranque. Flujo **legacy**: pendiente de eliminación una vez exista provisioning alternativo (TODO en `src/routes/auth.ts`).
-- `AUTH_BOOTSTRAP_TOKEN` es obligatorio si el bootstrap se habilita; sin valor configurado el endpoint responde 500 (nunca compara contra vacío).
-
 ### `AUTH_REGISTRATION_ENABLED` (default: deshabilitado — opt-in)
 
 - Solo `true`/`1` habilita el registro público `POST /api/auth/register` (rol inicial `auditor`).
@@ -57,12 +50,40 @@ El arranque es **fail-fast**: `assertAuthConfigForEnv()` (en `src/auth/tokens.ts
 - **Unset = same-origin only**: no se emiten cabeceras CORS y el navegador bloquea los cross-origin.
 - Nunca `*` en producción: la sesión viaja en cookie (`httpOnly`, `sameSite=lax`, `secure` en producción) y las credenciales exigen origen exacto.
 
+## Provisioning del primer administrador (M22)
+
+El bootstrap legacy (`AUTH_BOOTSTRAP_TOKEN` / identidad fija `bootstrap-admin`)
+fue **eliminado** en M22. Una instalación nueva crea su primer administrador con
+una operación administrativa explícita (fuera del flujo HTTP):
+
+```bash
+ADMIN_DATABASE_URL='postgresql://privacy:...@db:5432/privacy' \
+PROVISION_ADMIN_EMAIL='admin@example.com' \
+PROVISION_ADMIN_PASSWORD='...' \
+pnpm --filter @workspace/db run db:provision-admin
+```
+
+Esto crea la primera organización + el usuario admin (hash scrypt) + rol global
+`admin` + membership `owner`. Luego el admin inicia sesión con email + password.
+Idempotente: re-ejecutable sin duplicar.
+
+## Conexiones de base de datos (3 roles)
+
+| Variable | Rol | Uso |
+|---|---|---|
+| `DATABASE_URL` | `app_role` (NOBYPASSRLS) | API HTTP |
+| `BG_DATABASE_URL` | `bg_role` (BYPASSRLS) | scanner/scheduler/recovery |
+| `ADMIN_DATABASE_URL` | `privacy` (superuser) | migraciones + provisioning |
+
+Las contraseñas de `app_role`/`bg_role` **no** están hardcodeadas: la migración
+`0019` las deja en `NULL` y `db:provision-roles` las fija desde
+`APP_ROLE_PASSWORD`/`BG_ROLE_PASSWORD` (secretos externos del entorno).
+
 ## Rate limiting (in-memory)
 
 | Endpoint | Límite | Ventana |
 |---|---|---|
 | `POST /api/auth/login` (local) | 5 | 15 min por IP |
-| `POST /api/auth/login` (bootstrap) | 5 | 15 min por IP |
 | `POST /api/auth/register` | 10 | 15 min por IP |
 
 Almacenamiento en memoria de proceso: válido para una instancia. Despliegues multi-instancia requieren un store compartido (p. ej. Redis) — trabajo pendiente documentado (F17).

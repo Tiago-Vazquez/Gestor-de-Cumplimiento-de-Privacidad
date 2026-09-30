@@ -1,47 +1,76 @@
-import { and, asc, count, desc, eq, ne, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ne, type SQL } from "drizzle-orm";
 import { activityTable, db, findingsTable, type Finding } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 import { newId } from "./ids";
+import { tenantScopeStrict, withTenant, setTenantLocal } from "./tenant";
 
 export type FindingsFilter = { status?: string; severity?: string };
+
+/**
+ * M21.3 — Predicado canónico D8 + scoping por tenant (D2). Único punto donde
+ * se combinan: los consumidores (compliance, dashboard, reports, scans) lo
+ * reutilizan para que ninguna métrica escape del tenant activo.
+ */
+export function activeFindingsWhere(tenantId: string): SQL | undefined {
+  const canonical = and(
+    ne(findingsTable.status, "resolved"),
+    eq(findingsTable.superseded, false),
+  );
+  return and(canonical, tenantScopeStrict(findingsTable.tenantId, tenantId));
+}
 
 /**
  * F4 (6.3B.20): LIMIT/OFFSET se aplican en la sentencia SQL (nunca solo en
  * cliente). Sin paginación explícita la consulta queda como antes.
  */
-export function list(filter: FindingsFilter = {}, pagination?: Pagination): Promise<Finding[]> {
-  const conditions: SQL[] = [];
-  if (filter.status) conditions.push(eq(findingsTable.status, filter.status));
-  if (filter.severity) conditions.push(eq(findingsTable.severity, filter.severity));
+export async function list(
+  filter: FindingsFilter,
+  pagination: Pagination | undefined,
+  tenantId: string,
+): Promise<Finding[]> {
+  return withTenant(tenantId, async (tx) => {
+    const conditions: SQL[] = [];
+    if (filter.status) conditions.push(eq(findingsTable.status, filter.status));
+    if (filter.severity) conditions.push(eq(findingsTable.severity, filter.severity));
+    // M21.8 — scoping ESTRICTO obligatorio en el WHERE.
+    conditions.push(tenantScopeStrict(findingsTable.tenantId, tenantId));
 
-  let query = db
-    .select()
-    .from(findingsTable)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(findingsTable.detectedAt), asc(findingsTable.id))
-    .$dynamic();
-  if (pagination) {
-    query = query.limit(pagination.limit).offset(pagination.offset);
-  }
-  return query;
-}
-
-export async function getById(id: string): Promise<Finding | null> {
-  const [row] = await db.select().from(findingsTable).where(eq(findingsTable.id, id));
-  return row ?? null;
+    let query = tx
+      .select()
+      .from(findingsTable)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(findingsTable.detectedAt), asc(findingsTable.id))
+      .$dynamic();
+    if (pagination) {
+      query = query.limit(pagination.limit).offset(pagination.offset);
+    }
+    return query;
+  });
 }
 
 /**
  * Cambia el estado de un hallazgo y registra el evento de actividad
  * correspondiente en la misma transacción (el handler responde 404 con
- * `null` sin haber escrito nada).
+ * `null` sin haber escrito nada). M21.3: el scoping vive en el WHERE del
+ * UPDATE — un finding ajeno produce 0 filas sin tocar nada.
  */
-export async function updateStatus({ id, status, at }: { id: string; status: string; at: Date }): Promise<Finding | null> {
+export async function updateStatus(
+  { id, status, at }: { id: string; status: string; at: Date },
+  tenantId: string,
+): Promise<Finding | null> {
   return db.transaction(async (tx) => {
+    // M21.8 — tenant context transaccional (RLS).
+    await setTenantLocal(tx, tenantId);
+
     const [updated] = await tx
       .update(findingsTable)
       .set({ status, updatedAt: at })
-      .where(eq(findingsTable.id, id))
+      .where(
+        and(
+          eq(findingsTable.id, id),
+          tenantScopeStrict(findingsTable.tenantId, tenantId),
+        ),
+      )
       .returning();
 
     if (!updated) return null;
@@ -53,30 +82,10 @@ export async function updateStatus({ id, status, at }: { id: string; status: str
       description: updated.title,
       createdAt: at,
       severity: updated.severity,
+      // M21.3 — el evento de actividad hereda el tenant del finding.
+      tenantId: updated.tenantId,
     });
 
     return updated;
   });
-}
-
-/**
- * Definición canónica de "finding activo" (D8, FASE 7.2 M2.b):
- * `status <> 'resolved'` AND `superseded = false`.
- *
- * Única fuente del predicado: `countOpen`, las agregaciones de
- * `compliance.repo`, `dashboard.repo`, `reports.repo` y la reconciliación
- * del scanner (M2.b.1) la reutilizan para que ninguna métrica cuente los
- * duplicados legacy (`superseded = true`, evidencia histórica conservada).
- */
-export function activeFindingsWhere(): SQL | undefined {
-  return and(ne(findingsTable.status, "resolved"), eq(findingsTable.superseded, false));
-}
-
-/** Hallazgos pendientes según la definición canónica de D8 (base de métricas). */
-export async function countOpen(): Promise<number> {
-  const [row] = await db
-    .select({ total: count() })
-    .from(findingsTable)
-    .where(activeFindingsWhere());
-  return row?.total ?? 0;
 }

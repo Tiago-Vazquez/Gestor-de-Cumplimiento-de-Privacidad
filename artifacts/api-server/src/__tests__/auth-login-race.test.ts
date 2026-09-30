@@ -3,11 +3,10 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
 process.env.AUTH_REGISTRATION_ENABLED = "true"; // 6.3B.20: registro opt-in (ausente = off)
 
 const mocks = vi.hoisted(() => ({
@@ -50,9 +49,10 @@ describe("Login transaccional (6.3B.12 - cierre del riesgo U3)", () => {
 
   beforeAll(async () => {
     server = app.listen(0);
+    await seedProvisionedAdmin(state());
     const boot = await request(server)
       .post("/api/auth/login")
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(boot.status).toBe(200);
     adminJwt = extractJwt(boot.headers["set-cookie"]);
 
@@ -161,11 +161,12 @@ describe("Login transaccional (6.3B.12 - cierre del riesgo U3)", () => {
   });
 
   it("bootstrap sigue funcionando (roles reales + sesion alta)", async () => {
+    await seedProvisionedAdmin(state());
     const login = await request(server)
       .post("/api/auth/login")
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(login.status).toBe(200);
-    expect(login.body.sub).toBe("bootstrap-admin");
+    expect(login.body.sub).toBe("admin-provisioned");
     expect(login.body.roles).toContain("admin");
 
     const jwt = extractJwt(login.headers["set-cookie"]);

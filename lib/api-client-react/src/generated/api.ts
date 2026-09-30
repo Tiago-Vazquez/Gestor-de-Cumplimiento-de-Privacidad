@@ -22,7 +22,11 @@ import type {
 import type {
   Activity,
   AdminUser,
+  AuditEvent,
   AuthLoginInput,
+  AuthLogoutAll200,
+  AuthPasswordChange200,
+  AuthRevokeSession200,
   AuthUser,
   ComplianceSummary,
   ComplianceTrend,
@@ -33,6 +37,8 @@ import type {
   GetActivityParams,
   GetComplianceTrendParams,
   HealthStatus,
+  ListAuditEventsParams,
+  ListAuditEventsPlatformParams,
   ListFindingsParams,
   ListMaskingJobsParams,
   ListReportsParams,
@@ -44,6 +50,7 @@ import type {
   MaskingInput,
   MaskingJob,
   MaskingPreview,
+  PasswordChangeInput,
   RegisterInput,
   Report,
   ReportInput,
@@ -52,8 +59,11 @@ import type {
   RuleInput,
   Scan,
   ScanInput,
+  SessionListResponse,
   SourceCreate,
   SourceDetail,
+  SourceSchedule,
+  SourceScheduleUpdate,
   SourceUpdate,
   UserUpdateInput
 } from './api.schemas';
@@ -172,7 +182,7 @@ export const getAuthLoginUrl = () => {
 }
 
 /**
- * @summary Login with local credentials (email + password) or legacy bootstrap token
+ * @summary Login with local credentials (email + password)
  */
 export const authLogin = async (authLoginInput: AuthLoginInput, options?: Parameters<typeof customFetch>[1]): Promise<AuthUser> => {
 
@@ -221,7 +231,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type AuthLoginMutationError = ErrorType<void>
 
     /**
- * @summary Login with local credentials (email + password) or legacy bootstrap token
+ * @summary Login with local credentials (email + password)
  */
 export const useAuthLogin = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authLogin>>, TError,{data: BodyType<AuthLoginInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -374,6 +384,299 @@ export const useAuthLogout = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getAuthLogoutMutationOptions(options));
+    }
+
+export const getAuthPasswordChangeUrl = () => {
+
+
+
+
+  return `/api/auth/password/change`
+}
+
+/**
+ * @summary Change own password (revokes all other active sessions; current session stays valid)
+ */
+export const authPasswordChange = async (passwordChangeInput: PasswordChangeInput, options?: Parameters<typeof customFetch>[1]): Promise<AuthPasswordChange200> => {
+
+  return customFetch<AuthPasswordChange200>(getAuthPasswordChangeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(passwordChangeInput)
+  }
+);}
+
+
+
+
+
+export const getAuthPasswordChangeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authPasswordChange>>, TError,{data: BodyType<PasswordChangeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authPasswordChange>>, TError,{data: BodyType<PasswordChangeInput>}, TContext> => {
+
+const mutationKey = ['authPasswordChange'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authPasswordChange>>, {data: BodyType<PasswordChangeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authPasswordChange(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthPasswordChangeMutationResult = NonNullable<Awaited<ReturnType<typeof authPasswordChange>>>
+    export type AuthPasswordChangeMutationBody = BodyType<PasswordChangeInput>
+    export type AuthPasswordChangeMutationError = ErrorType<void>
+
+    /**
+ * @summary Change own password (revokes all other active sessions; current session stays valid)
+ */
+export const useAuthPasswordChange = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authPasswordChange>>, TError,{data: BodyType<PasswordChangeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authPasswordChange>>,
+        TError,
+        {data: BodyType<PasswordChangeInput>},
+        TContext
+      > => {
+      return useMutation(getAuthPasswordChangeMutationOptions(options));
+    }
+
+export const getAuthListSessionsUrl = () => {
+
+
+
+
+  return `/api/auth/sessions`
+}
+
+/**
+ * Returns metadata (jti, createdAt, expiresAt, current) of all active sessions for the authenticated user. Never exposes CSRF tokens or secrets.
+ * @summary List own active sessions
+ */
+export const authListSessions = async ( options?: Parameters<typeof customFetch>[1]): Promise<SessionListResponse> => {
+
+  return customFetch<SessionListResponse>(getAuthListSessionsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getAuthListSessionsQueryKey = () => {
+    return [
+    `/api/auth/sessions`
+    ] as const;
+    }
+
+
+export const getAuthListSessionsQueryOptions = <TData = Awaited<ReturnType<typeof authListSessions>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof authListSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getAuthListSessionsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof authListSessions>>> = ({ signal }) => authListSessions({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof authListSessions>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type AuthListSessionsQueryResult = NonNullable<Awaited<ReturnType<typeof authListSessions>>>
+export type AuthListSessionsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List own active sessions
+ */
+
+export function useAuthListSessions<TData = Awaited<ReturnType<typeof authListSessions>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof authListSessions>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getAuthListSessionsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getAuthRevokeSessionUrl = (jti: string,) => {
+
+
+
+
+  return `/api/auth/sessions/${jti}`
+}
+
+/**
+ * Revokes a single session by jti. Returns 404 (not 403) for non-existent, already-revoked, or other users' sessions to prevent enumeration. Revoking the current session is allowed.
+ * @summary Revoke one own session
+ */
+export const authRevokeSession = async (jti: string, options?: Parameters<typeof customFetch>[1]): Promise<AuthRevokeSession200> => {
+
+  return customFetch<AuthRevokeSession200>(getAuthRevokeSessionUrl(jti),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getAuthRevokeSessionMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authRevokeSession>>, TError,{jti: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authRevokeSession>>, TError,{jti: string}, TContext> => {
+
+const mutationKey = ['authRevokeSession'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authRevokeSession>>, {jti: string}> = (props) => {
+          const {jti} = props ?? {};
+
+          return  authRevokeSession(jti,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthRevokeSessionMutationResult = NonNullable<Awaited<ReturnType<typeof authRevokeSession>>>
+
+    export type AuthRevokeSessionMutationError = ErrorType<void>
+
+    /**
+ * @summary Revoke one own session
+ */
+export const useAuthRevokeSession = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authRevokeSession>>, TError,{jti: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authRevokeSession>>,
+        TError,
+        {jti: string},
+        TContext
+      > => {
+      return useMutation(getAuthRevokeSessionMutationOptions(options));
+    }
+
+export const getAuthLogoutAllUrl = () => {
+
+
+
+
+  return `/api/auth/logout-all`
+}
+
+/**
+ * Revokes every active session of the authenticated user. The current session becomes invalid for subsequent requests (401 via allowlist). Other users' sessions are unaffected.
+ * @summary Revoke all own sessions (including current)
+ */
+export const authLogoutAll = async ( options?: Parameters<typeof customFetch>[1]): Promise<AuthLogoutAll200> => {
+
+  return customFetch<AuthLogoutAll200>(getAuthLogoutAllUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getAuthLogoutAllMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authLogoutAll>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authLogoutAll>>, TError,void, TContext> => {
+
+const mutationKey = ['authLogoutAll'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authLogoutAll>>, void> = () => {
+
+
+          return  authLogoutAll(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthLogoutAllMutationResult = NonNullable<Awaited<ReturnType<typeof authLogoutAll>>>
+
+    export type AuthLogoutAllMutationError = ErrorType<void>
+
+    /**
+ * @summary Revoke all own sessions (including current)
+ */
+export const useAuthLogoutAll = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authLogoutAll>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authLogoutAll>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getAuthLogoutAllMutationOptions(options));
     }
 
 export const getAuthMeUrl = () => {
@@ -759,6 +1062,176 @@ export const useUpdateUserRoles = <TError = ErrorType<void>,
       > => {
       return useMutation(getUpdateUserRolesMutationOptions(options));
     }
+
+export const getListAuditEventsUrl = (params?: ListAuditEventsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/audit-events?${stringifiedParams}` : `/api/audit-events`
+}
+
+/**
+ * Trazabilidad administrativa (M17), eventos más recientes primero. Solo rol `admin` (403 para cualquier otro rol). Filtros opcionales combinables; la consulta SIEMPRE está paginada (limit/offset aplicados en SQL) y nunca devuelve la tabla completa. `metadata` contiene exclusivamente información operacional segura: nunca contraseñas, JWT, cookies, tokens CSRF, claves de cifrado ni credenciales de conexión.
+ * @summary List administrative audit events (admin only)
+ */
+export const listAuditEvents = async (params?: ListAuditEventsParams, options?: Parameters<typeof customFetch>[1]): Promise<AuditEvent[]> => {
+
+  return customFetch<AuditEvent[]>(getListAuditEventsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAuditEventsQueryKey = (params?: ListAuditEventsParams,) => {
+    return [
+    `/api/audit-events`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAuditEventsQueryOptions = <TData = Awaited<ReturnType<typeof listAuditEvents>>, TError = ErrorType<void>>(params?: ListAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAuditEventsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAuditEvents>>> = ({ signal }) => listAuditEvents(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAuditEventsQueryResult = NonNullable<Awaited<ReturnType<typeof listAuditEvents>>>
+export type ListAuditEventsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List administrative audit events (admin only)
+ */
+
+export function useListAuditEvents<TData = Awaited<ReturnType<typeof listAuditEvents>>, TError = ErrorType<void>>(
+ params?: ListAuditEventsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEvents>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAuditEventsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAuditEventsPlatformUrl = (params?: ListAuditEventsPlatformParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/audit-events/platform?${stringifiedParams}` : `/api/audit-events/platform`
+}
+
+/**
+ * Trazabilidad administrativa de PLATAFORMA (M21.7.3). Devuelve exclusivamente eventos con `tenant_id` NULL (acciones de plataforma y eventos de sistema sin organización). Solo rol global `admin`; NO requiere organización activa. Filtros opcionales combinables; consulta SIEMPRE paginada (limit/offset en SQL). Conjunto disjunto de `GET /api/audit-events` (org-scoped).
+ * @summary List platform administrative audit events (admin only)
+ */
+export const listAuditEventsPlatform = async (params?: ListAuditEventsPlatformParams, options?: Parameters<typeof customFetch>[1]): Promise<AuditEvent[]> => {
+
+  return customFetch<AuditEvent[]>(getListAuditEventsPlatformUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAuditEventsPlatformQueryKey = (params?: ListAuditEventsPlatformParams,) => {
+    return [
+    `/api/audit-events/platform`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListAuditEventsPlatformQueryOptions = <TData = Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError = ErrorType<void>>(params?: ListAuditEventsPlatformParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAuditEventsPlatformQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAuditEventsPlatform>>> = ({ signal }) => listAuditEventsPlatform(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAuditEventsPlatformQueryResult = NonNullable<Awaited<ReturnType<typeof listAuditEventsPlatform>>>
+export type ListAuditEventsPlatformQueryError = ErrorType<void>
+
+
+/**
+ * @summary List platform administrative audit events (admin only)
+ */
+
+export function useListAuditEventsPlatform<TData = Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError = ErrorType<void>>(
+ params?: ListAuditEventsPlatformParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAuditEventsPlatform>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAuditEventsPlatformQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getGetDashboardUrl = () => {
 
@@ -1615,6 +2088,157 @@ export const useDeleteSource = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getDeleteSourceMutationOptions(options));
+    }
+
+export const getGetSourceScheduleUrl = (id: string,) => {
+
+
+
+
+  return `/api/sources/${id}/schedule`
+}
+
+/**
+ * Returns the scan schedule for a source. When no schedule exists yet, a default disabled schedule (intervalMinutes 1440) is returned.
+ * @summary Get the scan schedule of a data source
+ */
+export const getSourceSchedule = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<SourceSchedule> => {
+
+  return customFetch<SourceSchedule>(getGetSourceScheduleUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSourceScheduleQueryKey = (id: string,) => {
+    return [
+    `/api/sources/${id}/schedule`
+    ] as const;
+    }
+
+
+export const getGetSourceScheduleQueryOptions = <TData = Awaited<ReturnType<typeof getSourceSchedule>>, TError = ErrorType<void>>(id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSourceSchedule>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSourceScheduleQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSourceSchedule>>> = ({ signal }) => getSourceSchedule(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSourceSchedule>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSourceScheduleQueryResult = NonNullable<Awaited<ReturnType<typeof getSourceSchedule>>>
+export type GetSourceScheduleQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get the scan schedule of a data source
+ */
+
+export function useGetSourceSchedule<TData = Awaited<ReturnType<typeof getSourceSchedule>>, TError = ErrorType<void>>(
+ id: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSourceSchedule>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSourceScheduleQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateSourceScheduleUrl = (id: string,) => {
+
+
+
+
+  return `/api/sources/${id}/schedule`
+}
+
+/**
+ * Admin only. Upsert the scan schedule of a source. When enabled is true, intervalMinutes is required (400 when missing or out of range 15-10080). Enabling sets nextRunAt to now + intervalMinutes. Backend enforces this rule (M10.5).
+ * @summary Create or update the scan schedule of a data source
+ */
+export const updateSourceSchedule = async (id: string,
+    sourceScheduleUpdate: SourceScheduleUpdate, options?: Parameters<typeof customFetch>[1]): Promise<SourceSchedule> => {
+
+  return customFetch<SourceSchedule>(getUpdateSourceScheduleUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(sourceScheduleUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateSourceScheduleMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSourceSchedule>>, TError,{id: string;data: BodyType<SourceScheduleUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateSourceSchedule>>, TError,{id: string;data: BodyType<SourceScheduleUpdate>}, TContext> => {
+
+const mutationKey = ['updateSourceSchedule'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateSourceSchedule>>, {id: string;data: BodyType<SourceScheduleUpdate>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateSourceSchedule(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateSourceScheduleMutationResult = NonNullable<Awaited<ReturnType<typeof updateSourceSchedule>>>
+    export type UpdateSourceScheduleMutationBody = BodyType<SourceScheduleUpdate>
+    export type UpdateSourceScheduleMutationError = ErrorType<void>
+
+    /**
+ * @summary Create or update the scan schedule of a data source
+ */
+export const useUpdateSourceSchedule = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateSourceSchedule>>, TError,{id: string;data: BodyType<SourceScheduleUpdate>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateSourceSchedule>>,
+        TError,
+        {id: string;data: BodyType<SourceScheduleUpdate>},
+        TContext
+      > => {
+      return useMutation(getUpdateSourceScheduleMutationOptions(options));
     }
 
 export const getListRulesUrl = (params?: ListRulesParams,) => {
@@ -2765,3 +3389,10 @@ export function useDownloadMaskingJob<TData = Awaited<ReturnType<typeof download
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+

@@ -1,0 +1,137 @@
+name: Product quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: product-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  product:
+    name: Product gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10.18.3
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.2
+          cache: pnpm
+
+      - name: Install from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck libraries
+        run: pnpm run typecheck:libs
+
+      - name: Typecheck API
+        run: pnpm --filter @workspace/api-server run typecheck
+
+      - name: Typecheck frontend
+        run: pnpm --filter @workspace/privacy-compliance-manager run typecheck
+
+      - name: Build API and frontend
+        run: pnpm run build:product
+
+      - name: Test API
+        run: pnpm --filter @workspace/api-server run test
+
+      - name: Test frontend
+        run: pnpm --filter @workspace/privacy-compliance-manager run test
+
+      # M25.6: the operational scripts (backup/restore integrity helpers) had a
+      # test suite that nothing executed, so a regression in CR handling, checksum
+      # normalisation or lock validation would have merged silently. The job must
+      # go red if any assertion fails.
+      - name: Test operational scripts
+        run: pnpm run test:ops
+
+      - name: Audit dependencies (high and critical)
+        run: pnpm audit --audit-level high
+
+  connectors-integration:
+    name: Connector integration (PostgreSQL + MySQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      M24_CI_PROJECT: m24-connectors-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10.18.3
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.2
+          cache: pnpm
+
+      - name: Install from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Run real connector integration tests
+        run: bash scripts/ci/run-connectors-integration.sh
+
+  # M28.0: DR drill. Real backup -> bundle -> restore on disposable engines, with
+  # assertions on the data that survived. Kept out of `product` on purpose: it
+  # builds Docker images and takes minutes, and a slow job would train everyone
+  # to ignore the red one.
+  #
+  # It proves data preservation only. It does NOT cover Backblaze B2, Object
+  # Lock, lifecycle, or recovery on a separate host: those stay BLOCKED pending
+  # a production VPS.
+  dr-drill:
+    name: DR drill (backup -> bundle -> restore)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      M28_DR_PROJECT: m28-dr-drill-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10.18.3
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.22.2
+          cache: pnpm
+
+      - name: Install from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Run the DR drill
+        run: bash scripts/ci/run-dr-drill.sh
+
+      # Docker resources survive a failed run otherwise, and the next attempt
+      # would fail on leftover volumes instead of on the real problem.
+      - name: Show drill logs on failure
+        if: failure()
+        run: docker ps -a; docker volume ls

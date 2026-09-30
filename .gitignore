@@ -55,3 +55,7 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Local backup artifacts (never commit database dumps or role metadata)
+/backups/
+/restore-artifacts/

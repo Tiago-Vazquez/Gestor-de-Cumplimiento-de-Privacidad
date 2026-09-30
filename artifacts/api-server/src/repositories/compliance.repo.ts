@@ -1,7 +1,8 @@
 import { and, count, eq, gte, isNotNull, lt } from "drizzle-orm";
-import { db, findingsTable, scansTable } from "@workspace/db";
+import { findingsTable, scansTable, sourcesTable } from "@workspace/db";
 import { computeComplianceScore } from "./compliance-score";
 import { activeFindingsWhere } from "./findings.repo";
+import { tenantScopeStrict, withTenant } from "./tenant";
 import {
   UTC_MS_PER_DAY,
   buildTrendDayKeys,
@@ -108,39 +109,46 @@ export function summarizeComplianceAggregates(input: {
 }
 
 /** Snapshot de métricas de compliance (contrato `ComplianceSummary`). */
-export async function getComplianceSummary(): Promise<ComplianceSummaryData> {
-  const severityRows = await db
-    .select({ severity: findingsTable.severity, total: count() })
-    .from(findingsTable)
-    .where(activeFindingsWhere())
-    .groupBy(findingsTable.severity);
+export async function getComplianceSummary(tenantId: string): Promise<ComplianceSummaryData> {
+  return withTenant(tenantId, async (tx) => {
+    const severityRows = await tx
+      .select({ severity: findingsTable.severity, total: count() })
+      .from(findingsTable)
+      .where(activeFindingsWhere(tenantId))
+      .groupBy(findingsTable.severity);
 
-  const dataTypeRows = await db
-    .select({ dataType: findingsTable.dataType, total: count() })
-    .from(findingsTable)
-    .where(activeFindingsWhere())
-    .groupBy(findingsTable.dataType);
+    const dataTypeRows = await tx
+      .select({ dataType: findingsTable.dataType, total: count() })
+      .from(findingsTable)
+      .where(activeFindingsWhere(tenantId))
+      .groupBy(findingsTable.dataType);
 
-  // `sourceId IS NOT NULL`: los huérfanos (fuente eliminada) no participan.
-  const sourceRows = await db
-    .select({
-      sourceId: findingsTable.sourceId,
-      sourceName: findingsTable.sourceName,
-      openFindings: count(),
-    })
-    .from(findingsTable)
-    .where(and(activeFindingsWhere(), isNotNull(findingsTable.sourceId)))
-    .groupBy(findingsTable.sourceId, findingsTable.sourceName);
+    // `sourceId IS NOT NULL`: los huérfanos (fuente eliminada) no participan.
+    const sourceRows = await tx
+      .select({
+        sourceId: findingsTable.sourceId,
+        sourceName: findingsTable.sourceName,
+        openFindings: count(),
+      })
+      .from(findingsTable)
+      .where(
+        and(
+          activeFindingsWhere(tenantId),
+          isNotNull(findingsTable.sourceId),
+        ),
+      )
+      .groupBy(findingsTable.sourceId, findingsTable.sourceName);
 
-  const aggregates = summarizeComplianceAggregates({ severityRows, dataTypeRows, sourceRows });
+    const aggregates = summarizeComplianceAggregates({ severityRows, dataTypeRows, sourceRows });
 
-  return {
-    complianceScore: computeComplianceScore({ openFindings: aggregates.openFindings }),
-    openFindings: aggregates.openFindings,
-    findingsBySeverity: aggregates.findingsBySeverity,
-    findingsByDataType: aggregates.findingsByDataType,
-    findingsBySource: aggregates.findingsBySource,
-  };
+    return {
+      complianceScore: computeComplianceScore({ openFindings: aggregates.openFindings }),
+      openFindings: aggregates.openFindings,
+      findingsBySeverity: aggregates.findingsBySeverity,
+      findingsByDataType: aggregates.findingsByDataType,
+      findingsBySource: aggregates.findingsBySource,
+    };
+  });
 }
 
 /**
@@ -152,7 +160,11 @@ export async function getComplianceSummary(): Promise<ComplianceSummaryData> {
  * el rango se defiende igualmente aquí para que ningún caller silencie una
  * ventana inválida.
  */
-export async function getComplianceTrend(days: number, now: Date = new Date()): Promise<ComplianceTrendData> {
+export async function getComplianceTrend(
+  days: number,
+  now: Date = new Date(),
+  tenantId: string,
+): Promise<ComplianceTrendData> {
   if (!Number.isInteger(days) || days < 1 || days > COMPLIANCE_TREND_MAX_DAYS) {
     throw new RangeError(`days debe ser un entero en 1..${COMPLIANCE_TREND_MAX_DAYS}, recibido ${days}`);
   }
@@ -161,55 +173,65 @@ export async function getComplianceTrend(days: number, now: Date = new Date()): 
   const windowStart = utcDayStart(dayKeys[0]);
   const windowEnd = new Date(utcDayStart(dayKeys[dayKeys.length - 1]).getTime() + UTC_MS_PER_DAY);
 
-  // Altas: canónicos (superseded = false) por firstSeenAt. El status actual
-  // es irrelevante: un finding detectado lunes y resuelto martes SÍ cuenta el
-  // lunes (contrato ComplianceTrendPoint.newFindings).
-  const newFindingRows = await db
-    .select({ at: findingsTable.firstSeenAt })
-    .from(findingsTable)
-    .where(
-      and(
-        eq(findingsTable.superseded, false),
-        isNotNull(findingsTable.firstSeenAt),
-        gte(findingsTable.firstSeenAt, windowStart),
-        lt(findingsTable.firstSeenAt, windowEnd),
-      ),
-    );
+  // M21.8 — scoping ESTRICTO obligatorio por tenant.
+  const findingScope = tenantScopeStrict(findingsTable.tenantId, tenantId);
+  const sourceScope = tenantScopeStrict(sourcesTable.tenantId, tenantId);
 
-  // Resoluciones: instante persistido de resolución (updatedAt de filas
-  // actualmente 'resolved'; el único write que deja una fila en resolved).
-  const resolvedRows = await db
-    .select({ at: findingsTable.updatedAt })
-    .from(findingsTable)
-    .where(
-      and(
-        eq(findingsTable.status, "resolved"),
-        gte(findingsTable.updatedAt, windowStart),
-        lt(findingsTable.updatedAt, windowEnd),
-      ),
-    );
+  return withTenant(tenantId, async (tx) => {
+    // Altas: canónicos (superseded = false) por firstSeenAt. El status actual
+    // es irrelevante: un finding detectado lunes y resuelto martes SÍ cuenta el
+    // lunes (contrato ComplianceTrendPoint.newFindings).
+    const newFindingRows = await tx
+      .select({ at: findingsTable.firstSeenAt })
+      .from(findingsTable)
+      .where(
+        and(
+          eq(findingsTable.superseded, false),
+          isNotNull(findingsTable.firstSeenAt),
+          gte(findingsTable.firstSeenAt, windowStart),
+          lt(findingsTable.firstSeenAt, windowEnd),
+          findingScope,
+        ),
+      );
 
-  // Scans completados por completedAt; recordsScanned suma su recordsRead.
-  const scanRows = await db
-    .select({ at: scansTable.completedAt, recordsRead: scansTable.recordsRead })
-    .from(scansTable)
-    .where(
-      and(
-        eq(scansTable.status, "completed"),
-        isNotNull(scansTable.completedAt),
-        gte(scansTable.completedAt, windowStart),
-        lt(scansTable.completedAt, windowEnd),
-      ),
-    );
+    // Resoluciones: instante persistido de resolución (updatedAt de filas
+    // actualmente 'resolved'; el único write que deja una fila en resolved).
+    const resolvedRows = await tx
+      .select({ at: findingsTable.updatedAt })
+      .from(findingsTable)
+      .where(
+        and(
+          eq(findingsTable.status, "resolved"),
+          gte(findingsTable.updatedAt, windowStart),
+          lt(findingsTable.updatedAt, windowEnd),
+          findingScope,
+        ),
+      );
 
-  return {
-    days,
-    points: buildTrendPoints({
-      dayKeys,
-      newFindings: newFindingRows,
-      resolvedFindings: resolvedRows,
-      completedScans: scanRows,
-    }),
-  };
+    // Scans completados por completedAt; recordsScanned suma su recordsRead.
+    const scanRows = await tx
+      .select({ at: scansTable.completedAt, recordsRead: scansTable.recordsRead })
+      .from(scansTable)
+      .innerJoin(sourcesTable, eq(scansTable.sourceId, sourcesTable.id))
+      .where(
+        and(
+          eq(scansTable.status, "completed"),
+          isNotNull(scansTable.completedAt),
+          gte(scansTable.completedAt, windowStart),
+          lt(scansTable.completedAt, windowEnd),
+          sourceScope,
+        ),
+      );
+
+    return {
+      days,
+      points: buildTrendPoints({
+        dayKeys,
+        newFindings: newFindingRows,
+        resolvedFindings: resolvedRows,
+        completedScans: scanRows,
+      }),
+    };
+  });
 }
 

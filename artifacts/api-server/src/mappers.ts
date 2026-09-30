@@ -1,4 +1,4 @@
-import type { Activity, Finding, MaskingJob, Report, Rule, Scan, Source } from "@workspace/db";
+import type { Activity, AuditEvent, Finding, MaskingJob, Report, Rule, Scan, Source } from "@workspace/db";
 import type { ComplianceSummaryData, ComplianceTrendData } from "./repositories/compliance.repo";
 
 /**
@@ -9,6 +9,26 @@ import type { ComplianceSummaryData, ComplianceTrendData } from "./repositories/
  * derivada de una discrepancia contrato↔BD está marcada con su ID (D1, D2…)
  * del informe de auditoría de FASE 5.
  */
+
+/**
+ * M17 — fila `audit_events` → contrato `AuditEvent`. Las fechas se exponen como
+ * ISO-8601 (el zod del contrato las coacciona, igual que en el resto de
+ * mappers) y `metadata` se sirve tal cual: su contenido seguro se garantiza en
+ * el punto de registro (`lib/audit.ts`), no al leer.
+ */
+export function mapAuditEvent(event: AuditEvent) {
+  return {
+    id: event.id,
+    actorUserId: event.actorUserId,
+    action: event.action,
+    resourceType: event.resourceType,
+    resourceId: event.resourceId,
+    result: event.result,
+    requestId: event.requestId,
+    metadata: event.metadata,
+    createdAt: event.createdAt.toISOString(),
+  };
+}
 
 /** D1: el contrato exige `lastScanAt: string`; una fuente nunca escaneada
  * tiene la columna nula, así que se usa su fecha de creación como valor

@@ -3,11 +3,10 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
 process.env.AUTH_REGISTRATION_ENABLED = "true"; // 6.3B.20: registro opt-in (ausente = off)
 
 const mocks = vi.hoisted(() => ({ state: undefined as MockState | undefined }));
@@ -30,18 +29,18 @@ function extractJwt(setCookie: string | string[] | undefined): string {
 describe("Users admin API", () => {
   let server: ReturnType<Express["listen"]>;
   let adminJwt: string;
-  let bootstrapSub: string;
+  let adminSub: string;
   let auditorSub: string;
 
   beforeAll(async () => {
     server = app.listen(0);
-    // Bootstrap opt-in habilitado arriba (AUTH_BOOTSTRAP_ENABLED=true, 6.3B.15):
-    // crea bootstrap-admin con rol admin.
+    // provisiona el admin inicial (seedProvisionedAdmin) con rol admin.
+    await seedProvisionedAdmin(mocks.state!);
     const boot = await request(server).post("/api/auth/login")
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(boot.status).toBe(200);
     adminJwt = extractJwt(boot.headers["set-cookie"]);
-    bootstrapSub = boot.body.sub;
+    adminSub = boot.body.sub;
     // Un usuario auditor local.
     const reg = await request(server).post("/api/auth/register")
       .send({ email: "auditor@example.com", password: "secure-password-123" });
@@ -85,15 +84,15 @@ describe("Users admin API", () => {
         expect(u.email).toBeDefined();
         expect(Array.isArray(u.roles)).toBe(true);
       }
-      expect(res.body.some((u: { sub: string }) => u.sub === bootstrapSub)).toBe(true);
+      expect(res.body.some((u: { sub: string }) => u.sub === adminSub)).toBe(true);
     });
   });
 
   describe("GET /users/:sub", () => {
     it("returns single user without credentials", async () => {
-      const res = await admin().get(`/api/users/${bootstrapSub}`);
+      const res = await admin().get(`/api/users/${adminSub}`);
       expect(res.status).toBe(200);
-      expect(res.body.email).toBe("admin@local");
+      expect(res.body.email).toBe("admin@test.local");
       expect(res.body.passwordHash).toBeUndefined();
     });
     it("unknown sub -> 404", async () => {
@@ -118,7 +117,7 @@ describe("Users admin API", () => {
     });
     it("duplicate email -> 409", async () => {
       const res = await admin().patch(`/api/users/${auditorSub}`)
-        .send({ email: "admin@local" });
+        .send({ email: "admin@test.local" });
       expect(res.status).toBe(409);
     });
     it("ignores roles sent by client (never trusts client roles)", async () => {
@@ -142,13 +141,13 @@ describe("Users admin API", () => {
       expect(res.status).toBe(200);
       expect(res.body.roles).toEqual(["admin"]);
     });
-    it("demotes bootstrap-admin while another admin exists", async () => {
-      const res = await admin().patch(`/api/users/${bootstrapSub}/roles`)
+    it("demotes the provisioned admin while another admin exists", async () => {
+      const res = await admin().patch(`/api/users/${adminSub}/roles`)
         .send({ roles: ["auditor"] });
       expect(res.status).toBe(200);
       expect(res.body.roles).toEqual(["auditor"]);
 
-      // 6.3B.5c: el cambio efectivo de rol del bootstrap revocó SU propia
+      // 6.3B.5c: el cambio efectivo de rol del admin provisionado revocó SU propia
       // sesión (adminJwt ya no es válido, lo verifica Identity stability).
       // Re-autenticamos al otro admin (el auditor promovido en el test previo)
       // para continuar el resto de la suite.
@@ -169,7 +168,7 @@ describe("Users admin API", () => {
     });
     it("restores both admins", async () => {
       await admin().patch(`/api/users/${auditorSub}/roles`).send({ roles: ["admin"] });
-      const res = await admin().patch(`/api/users/${bootstrapSub}/roles`)
+      const res = await admin().patch(`/api/users/${adminSub}/roles`)
         .send({ roles: ["admin"] });
       expect(res.status).toBe(200);
       expect(res.body.roles).toEqual(["admin"]);

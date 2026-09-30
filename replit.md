@@ -10,7 +10,10 @@ Consola de cumplimiento que monitorea fuentes de datos, detecta información sen
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run db:generate` — generate a Drizzle migration after schema changes; review the generated SQL under `lib/db/drizzle/` before committing
 - `pnpm --filter @workspace/db run db:migrate` — apply pending Drizzle migrations to PostgreSQL (idempotent; also run by post-merge)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/db run db:provision-roles` — fija las contraseñas de app_role/bg_role desde `APP_ROLE_PASSWORD`/`BG_ROLE_PASSWORD`
+- `pnpm --filter @workspace/db run db:provision-admin` — crea la primera organización + primer admin (solo instalación nueva)
+- Required env (migraciones/provisioning): `ADMIN_DATABASE_URL` — conexión de superusuario (`privacy`)
+- Required env (API): `DATABASE_URL` (app_role) + `BG_DATABASE_URL` (bg_role)
 - Optional env (API): `CORS_ORIGINS` (comma-separated allowlist; unset in production = same-origin only, in dev defaults to the local Vite ports), `TRUST_PROXY` (default `1`, Replit router hop), `RATE_LIMIT_WINDOW_MS` (default `60000`), `RATE_LIMIT_MAX` (default `100`), `RATE_LIMIT_MUTATIONS_MAX` (default `30`), `JSON_BODY_LIMIT` (default `16kb`)
 
 ## Stack

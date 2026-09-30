@@ -96,21 +96,21 @@ describe("summarizeComplianceAggregates", () => {
 
 describe("getComplianceTrend (validación defensiva de ventana)", () => {
   it("rechaza days menores que 1", async () => {
-    await expect(getComplianceTrend(0)).rejects.toThrow(RangeError);
-    await expect(getComplianceTrend(-1)).rejects.toThrow(RangeError);
+    await expect(getComplianceTrend(0, new Date(), "org-test")).rejects.toThrow(RangeError);
+    await expect(getComplianceTrend(-1, new Date(), "org-test")).rejects.toThrow(RangeError);
   });
 
   it("rechaza days mayores que el máximo del contrato (90)", async () => {
-    await expect(getComplianceTrend(COMPLIANCE_TREND_MAX_DAYS + 1)).rejects.toThrow(RangeError);
+    await expect(getComplianceTrend(COMPLIANCE_TREND_MAX_DAYS + 1, new Date(), "org-test")).rejects.toThrow(RangeError);
   });
 
   it("rechaza days no enteros", async () => {
-    await expect(getComplianceTrend(2.5)).rejects.toThrow(RangeError);
-    await expect(getComplianceTrend(Number.NaN)).rejects.toThrow(RangeError);
+    await expect(getComplianceTrend(2.5, new Date(), "org-test")).rejects.toThrow(RangeError);
+    await expect(getComplianceTrend(Number.NaN, new Date(), "org-test")).rejects.toThrow(RangeError);
   });
 
   it("el error menciona el rango permitido 1..90", async () => {
-    await expect(getComplianceTrend(0)).rejects.toThrow(/1\.\.90/);
+    await expect(getComplianceTrend(0, new Date(), "org-test")).rejects.toThrow(/1\.\.90/);
   });
 
   it("los espejos del contrato OpenAPI son default=30 y max=90", () => {

@@ -1,0 +1,2 @@
+GRANT SELECT ON m23other.* TO 'm23user'@'%';
+FLUSH PRIVILEGES;

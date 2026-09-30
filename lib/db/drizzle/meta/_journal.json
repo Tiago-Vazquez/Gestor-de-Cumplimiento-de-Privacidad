@@ -62,6 +62,83 @@
       "when": 1789045774074,
       "tag": "0008_classy_chronomancer",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789223601774,
+      "tag": "0009_flat_payback",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789223700000,
+      "tag": "0010_session_idle",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789687084650,
+      "tag": "0011_mixed_vampiro",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789689923189,
+      "tag": "0012_opposite_talisman",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789775233401,
+      "tag": "0013_uneven_nico_minoru",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789988584213,
+      "tag": "0014_glamorous_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789997998733,
+      "tag": "0015_high_johnny_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790103000000,
+      "tag": "0016_backfill_tenant",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790103446162,
+      "tag": "0017_naive_proudstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790200000000,
+      "tag": "0018_rls_tenant_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790400000000,
+      "tag": "0019_neutralize_dev_role_passwords",
+      "breakpoints": true
     }
   ],
   "version": "7",

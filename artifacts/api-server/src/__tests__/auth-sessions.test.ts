@@ -4,11 +4,10 @@ import type { Express } from "express";
 import { decodeJwt } from "jose";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true"; // 6.3B.15: bootstrap opt-in (ausente = off)
 process.env.AUTH_REGISTRATION_ENABLED = "true"; // 6.3B.20: registro opt-in (ausente = off)
 
 // El factory de vi.mock corre durante la evaluación de imports (antes del body
@@ -80,11 +79,12 @@ describe("Session allowlist (login rows / logout revoke / replay 401)", () => {
   });
 
   it("B. bootstrap login creates a session row (same logic)", async () => {
+    await seedProvisionedAdmin(state());
     const login = await request(server)
       .post("/api/auth/login")
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(login.status).toBe(200);
-    expect(login.body.sub).toBe("bootstrap-admin");
+    expect(login.body.sub).toBe("admin-provisioned");
 
     const jwt = extractJwt(login.headers["set-cookie"]);
     const { jti, exp } = decodeJwt(jwt);
@@ -92,7 +92,7 @@ describe("Session allowlist (login rows / logout revoke / replay 401)", () => {
 
     const row = state().sessions.find((s) => s.jti === jti);
     expect(row).toBeDefined();
-    expect(row!.userSub).toBe("bootstrap-admin");
+    expect(row!.userSub).toBe("admin-provisioned");
     expect(row!.revokedAt).toBeNull();
     expect(row!.expiresAt.getTime()).toBe(exp! * 1000);
   });

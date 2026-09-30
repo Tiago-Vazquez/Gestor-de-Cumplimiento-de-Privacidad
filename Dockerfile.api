@@ -1,0 +1,66 @@
+# M12 — etage base: Node 22 + pnpm via corepack.
+FROM node:22.22.2-alpine AS base
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
+WORKDIR /repo
+
+# M12 — deps: TODOS los manifests del workspace (lista mecánica de
+# `git ls-files '*/package.json'`) para que pnpm resuelva el grafo completo
+# y valide el lockfile en un contexto Docker limpio. Solo package.json:
+# bytes que maximizan el hit de layer caching.
+FROM base AS deps
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY artifacts/api-server/package.json artifacts/api-server/
+COPY artifacts/privacy-compliance-manager/package.json artifacts/privacy-compliance-manager/
+COPY lib/api-client-react/package.json lib/api-client-react/
+COPY lib/api-spec/package.json lib/api-spec/
+COPY lib/api-zod/package.json lib/api-zod/
+COPY lib/auth/package.json lib/auth/
+COPY lib/db/package.json lib/db/
+COPY scripts/package.json scripts/
+RUN pnpm install --frozen-lockfile
+
+# M12 — build: código fuente del API + libs usadas y bundle esbuild existente.
+# Nota: `artifacts/mockup-sandbox` se excluye a propósito (paquete de maquetas
+# fuera del grafo de dependencias del API; su manifest sí se copió en deps solo
+# para que pnpm valide el lockfile completo).
+FROM deps AS build
+COPY tsconfig.base.json tsconfig.json ./
+COPY artifacts/api-server ./artifacts/api-server
+COPY lib ./lib
+RUN pnpm -r --filter "./lib/**" run build
+RUN pnpm --filter @workspace/api-server run build
+
+# M20.2-C — prod-deps: despliegue aislado del API con SOLO dependencias de
+# producción (`pnpm deploy`). Hereda de `build` para que los paquetes del
+# workspace ya compilados (lib/**/dist) se empaquen correctamente. pnpm 10
+# exige inject-workspace-packages=true salvo que se pase --legacy.
+FROM build AS prod-deps
+RUN pnpm deploy --filter @workspace/api-server --prod --legacy /out
+
+# M12 (C1, opción B) — stage `migrate`: hereda de `deps` (node_modules completo
+# con drizzle-kit) y conserva lo que `drizzle.config.ts` necesita:
+# config + src/schema/** + drizzle/*.sql. El compose lo usa con `target:
+# migrate` como job one-shot; `api/runtime` NO incluye nada de esto.
+# M22: `db:provision-admin` (dentro de este stage) importa `@workspace/auth`
+# (hash scrypt), así que también se copia `lib/auth` (workspace package).
+FROM deps AS migrate
+COPY lib/db ./lib/db
+COPY lib/auth ./lib/auth
+CMD ["pnpm", "--filter", "@workspace/db", "run", "db:migrate"]
+
+# M12 — runtime mínimo: solo dist/ + dependencias prod; usuario no root.
+FROM node:22.22.2-alpine AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+RUN addgroup -S app && adduser -S app -G app
+COPY --chown=app:app --from=build /repo/artifacts/api-server/dist ./dist
+COPY --chown=app:app --from=build /repo/artifacts/api-server/package.json ./
+# M20.2-C — node_modules podado (solo prod: express, pg, drizzle, pino,
+# rate-limit...) generado por `pnpm deploy` en el stage prod-deps.
+COPY --chown=app:app --from=prod-deps /out/node_modules ./node_modules
+USER app
+EXPOSE 5000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||'5000')+'/api/livez').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+CMD ["node", "--enable-source-maps", "./dist/index.mjs"]

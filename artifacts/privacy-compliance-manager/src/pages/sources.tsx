@@ -5,6 +5,7 @@ import {
   ApiError,
   getGetDashboardQueryKey,
   getGetSourceQueryKey,
+  getGetSourceScheduleQueryKey,
   getListScansQueryKey,
   getListSourcesQueryKey,
   SourceCreateEnvironment,
@@ -12,14 +13,16 @@ import {
   useCreateSource,
   useDeleteSource,
   useGetSource,
+  useGetSourceSchedule,
   useListSources,
   useStartScan,
   useUpdateSource,
 } from '@workspace/api-client-react';
-import type { DataSource, SourceConnectionInput, SourceCreate, SourceDetail, SourceUpdate } from '@workspace/api-client-react';
+import type { DataSource, SourceConnectionInput, SourceCreate, SourceDetail, SourceSchedule, SourceUpdate } from '@workspace/api-client-react';
 import { useAuth } from '@/auth/auth-context';
 import { PageHeading } from '@/components/app-shell';
 import { StatusBadge } from '@/components/status-badge';
+import { LAST_STATUS_LABEL, SCAN_SCHEDULE_DEFAULT_MINUTES, SourceScheduleDialog } from '@/components/SourceScheduleDialog';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -51,6 +54,17 @@ const describeError = (error: unknown, fallback: string) => {
 
 /** Límites copiados del contrato (SourceCreate / SourceConnectionInput / SourceUpdate). */
 const MAX_LENGTHS = { name: 256, host: 253, database: 128, user: 128, password: 256, schema: 128 } as const;
+
+/**
+ * M23.1 — kinds con formulario de conexión disponible (unión discriminada de
+ * SourceConnectionInput). El resto (mongodb/snowflake/bigquery) llega en M23.2:
+ * aquí NO se envía connection para esos kinds (el server la rechazaría).
+ */
+const CONNECTION_KINDS = ['postgresql', 'mysql'] as const;
+type ConnectionKind = (typeof CONNECTION_KINDS)[number];
+const isConnectionKind = (kind: string): kind is ConnectionKind =>
+  (CONNECTION_KINDS as readonly string[]).includes(kind);
+const defaultPortFor = (kind: string): string => (kind === 'mysql' ? '3306' : '5432');
 
 interface ConnectionDraft {
   host: string;
@@ -98,16 +112,17 @@ const buildConnectionError = (connection: ConnectionDraft): string | null => {
   return null;
 };
 
-const buildConnection = (connection: ConnectionDraft): SourceConnectionInput => {
-  const built: SourceConnectionInput = {
+const buildConnection = (connection: ConnectionDraft, kind: ConnectionKind): SourceConnectionInput => {
+  const built = {
+    kind,
     host: connection.host.trim(),
     port: Number(connection.port),
     database: connection.database.trim(),
     user: connection.user.trim(),
     password: connection.password,
-  };
+  } as SourceConnectionInput;
   const schema = connection.schema.trim();
-  if (schema) built.schema = schema;
+  if (schema && 'schema' in built) built.schema = schema;
   return built;
 };
 
@@ -120,9 +135,13 @@ const buildSourceCreate = (values: SourceFormValues): { source: SourceCreate; er
     // Sin credenciales: la fuente se crea como no escaneable (contrato).
     return { source: base, error: null };
   }
+  if (!isConnectionKind(values.kind)) {
+    // M23.1: la conexión solo existe para PostgreSQL/MySQL (M23.2 amplía).
+    return { source: null, error: 'La conexión solo está disponible para PostgreSQL y MySQL.' };
+  }
   const connectionError = buildConnectionError(values.connection);
   if (connectionError) return { source: null, error: connectionError };
-  return { source: { ...base, connection: buildConnection(values.connection) }, error: null };
+  return { source: { ...base, connection: buildConnection(values.connection, values.kind) }, error: null };
 };
 
 const buildSourceUpdate = (values: SourceFormValues): { source: SourceUpdate; error: null } | { source: null; error: string } => {
@@ -134,9 +153,12 @@ const buildSourceUpdate = (values: SourceFormValues): { source: SourceUpdate; er
   // usuario cargó datos nuevos. Si todos los campos quedan vacíos, el campo no
   // se envía y el backend conserva la configuración existente.
   if (hasConnectionInput(values.connection)) {
+    if (!isConnectionKind(values.kind)) {
+      return { source: null, error: 'La conexión solo está disponible para PostgreSQL y MySQL.' };
+    }
     const connectionError = buildConnectionError(values.connection);
     if (connectionError) return { source: null, error: connectionError };
-    update.connection = buildConnection(values.connection);
+    update.connection = buildConnection(values.connection, values.kind);
   }
   return { source: update, error: null };
 };
@@ -167,13 +189,15 @@ function SourceFields({ values, onChange, mode }: { values: SourceFormValues; on
           {Object.values(SourceCreateEnvironment).map((environment) => <option key={environment} value={environment}>{environment}</option>)}
         </select>
       </div>
-      <div className="grid gap-3 rounded-xl border border-border bg-[#f8fafb] p-4">
+      <div className="grid gap-3 rounded-xl border border-border bg-[#f8fafb] p-4" data-testid="connection-section">
         <div>
           <p className="label-caps">Conexión (opcional)</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {mode === 'edit'
-              ? 'Dejá todos los campos vacíos para conservar la configuración actual. La contraseña guardada nunca se muestra: para rotarla completá la conexión completa con la nueva contraseña.'
-              : 'Omitila para crear la fuente sin credenciales (no será escaneable hasta configurarla).'}
+            {!isConnectionKind(values.kind)
+              ? `El conector ${sourceNames[values.kind] ?? values.kind} todavía no admite credenciales (M23.2): la fuente se crea sin configuración y no será escaneable.`
+              : mode === 'edit'
+                ? 'Dejá todos los campos vacíos para conservar la configuración actual. La contraseña guardada nunca se muestra: para rotarla completá la conexión completa con la nueva contraseña.'
+                : 'Omitila para crear la fuente sin credenciales (no será escaneable hasta configurarla).'}
           </p>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
@@ -183,7 +207,7 @@ function SourceFields({ values, onChange, mode }: { values: SourceFormValues; on
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="source-port">Puerto</Label>
-            <Input id="source-port" data-testid="input-source-port" inputMode="numeric" value={values.connection.port} onChange={(event) => setConnection({ port: event.target.value })} placeholder="5432" />
+            <Input id="source-port" data-testid="input-source-port" inputMode="numeric" value={values.connection.port} onChange={(event) => setConnection({ port: event.target.value })} placeholder={defaultPortFor(values.kind)} />
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="source-database">Base de datos</Label>
@@ -208,7 +232,7 @@ function SourceFields({ values, onChange, mode }: { values: SourceFormValues; on
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="source-schema">Esquema (opcional)</Label>
-            <Input id="source-schema" data-testid="input-source-schema" value={values.connection.schema} onChange={(event) => setConnection({ schema: event.target.value })} placeholder="public" maxLength={MAX_LENGTHS.schema} />
+            <Input id="source-schema" data-testid="input-source-schema" value={values.connection.schema} onChange={(event) => setConnection({ schema: event.target.value })} placeholder={values.kind === 'mysql' ? 'misma base de datos' : 'public'} maxLength={MAX_LENGTHS.schema} />
           </div>
         </div>
       </div>
@@ -436,13 +460,54 @@ function DeleteSourceDialog({ source }: { source: DataSource }) {
   );
 }
 
-function SourceRow({ source, canAdmin, onEdit }: { source: DataSource; canAdmin: boolean; onEdit: (sourceId: string) => void }) {
+function formatInterval(minutes: number): string {
+  if (minutes >= 1440) return `cada ${minutes / 1440} d`;
+  if (minutes % 60 === 0) return `cada ${minutes / 60} h`;
+  return `cada ${minutes} min`;
+}
+
+/**
+ * Etiqueta del chip de programación (M15):
+ * - enabled=true → «Programado · cada X».
+ * - enabled=false con evidencia de configuración previa (historial o
+ *   intervalo propio) → «Pausado».
+ * - resto → «Manual».
+ *
+ * Limitación del contrato: GET devuelve el default disabled (intervalo
+ * `SCAN_SCHEDULE_DEFAULT_MINUTES`, sin historial) tanto para fuentes sin fila
+ * de schedule como para una fila pausada recién creada con el intervalo por
+ * defecto; ambos muestran «Manual», que describe el comportamiento efectivo.
+ */
+function scheduleChipLabel(schedule: SourceSchedule | null | undefined): string {
+  if (!schedule) return 'Manual';
+  if (schedule.enabled) return `Programado · ${formatInterval(schedule.intervalMinutes)}`;
+  const configured =
+    schedule.lastRunAt !== null ||
+    schedule.lastStatus !== null ||
+    schedule.intervalMinutes !== SCAN_SCHEDULE_DEFAULT_MINUTES;
+  return configured ? 'Pausado' : 'Manual';
+}
+
+/** Tooltip del chip: próxima ejecución, última ejecución y último resultado. */
+function scheduleTooltip(schedule: SourceSchedule | null | undefined): string | undefined {
+  if (!schedule) return undefined;
+  const parts = [
+    schedule.nextRunAt ? `Próxima ejecución: ${new Date(schedule.nextRunAt).toLocaleString('es-ES')}` : null,
+    schedule.lastRunAt ? `Última ejecución: ${new Date(schedule.lastRunAt).toLocaleString('es-ES')}` : null,
+    schedule.lastStatus ? `Último resultado: ${LAST_STATUS_LABEL[schedule.lastStatus] ?? schedule.lastStatus}` : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join('\n') : undefined;
+}
+
+function SourceRow({ source, canAdmin, onEdit, onSchedule }: { source: DataSource; canAdmin: boolean; onEdit: (sourceId: string) => void; onSchedule: (source: DataSource) => void }) {
+  const scheduleQuery = useGetSourceSchedule(source.id);
+  const schedule = scheduleQuery.data;
   const queryClient = useQueryClient();
   const scan = useStartScan();
   const Icon = sourceIcons[source.kind] ?? Database;
   const scanSource = () => scan.mutate({ data: { sourceId: source.id } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListSourcesQueryKey() }); queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() }); } });
   return <div className={rowActionsGrid} data-testid={`row-source-${source.id}`}>
-    <div className="flex min-w-0 items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e9eef5] text-[#45617d]"><Icon size={19} /></div><div className="min-w-0"><p className="truncate text-sm font-bold">{source.name}</p><p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"><span>{sourceNames[source.kind] ?? source.kind}</span><span>·</span><span>{source.tables} tablas</span></p></div></div>
+    <div className="flex min-w-0 items-center gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e9eef5] text-[#45617d]"><Icon size={19} /></div><div className="min-w-0"><p className="truncate text-sm font-bold">{source.name}</p><p className="mt-1 text-[10px] font-medium text-[#267a6d]" data-testid={`chip-schedule-${source.id}`} title={scheduleTooltip(schedule)}>{scheduleChipLabel(schedule)}</p></div></div>
     <StatusBadge value={source.environment} kind="generic" />
     <StatusBadge value={source.status} kind="status" />
     <div><p className="font-mono text-xs font-medium">{source.records.toLocaleString('es-ES')}</p><p className="mt-1 text-[10px] text-muted-foreground">registros</p></div>
@@ -450,6 +515,7 @@ function SourceRow({ source, canAdmin, onEdit }: { source: DataSource; canAdmin:
     {canAdmin ? <div className="flex flex-wrap items-center gap-1.5 md:justify-end">
       <button disabled={scan.isPending} onClick={scanSource} className={rowActionButton} data-testid={`button-scan-source-${source.id}`}>{scan.isPending ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> : <Play size={13} aria-hidden="true" />} Escanear</button>
       <button type="button" onClick={() => onEdit(source.id)} className={rowActionButton} data-testid={`button-edit-source-${source.id}`} aria-haspopup="dialog"><Pencil size={13} aria-hidden="true" /> Editar</button>
+      <button type="button" onClick={() => onSchedule(source)} className={rowActionButton} data-testid={`button-schedule-${source.id}`} aria-haspopup="dialog">Configurar</button>
       <DeleteSourceDialog source={source} />
     </div> : <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground/60">solo lectura</span>}
   </div>;
@@ -460,7 +526,12 @@ export default function SourcesPage() {
   const { isAdmin } = useAuth();
   const [createOpen, setCreateOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [scheduleSource, setScheduleSource] = useState<DataSource | null>(null);
   const sources = sourcesQuery.data ?? [];
+  const scheduleId = scheduleSource?.id ?? '';
+  const scheduleQuery = useGetSourceSchedule(scheduleId, {
+    query: { queryKey: getGetSourceScheduleQueryKey(scheduleId), enabled: scheduleSource !== null },
+  });
   const scannedRecently = sources.filter((source) => {
     try { const age = Date.now() - new Date(source.lastScanAt).getTime(); return age < 7 * 24 * 60 * 60 * 1000; } catch { return false; }
   }).length;
@@ -477,6 +548,14 @@ export default function SourcesPage() {
     {createOpen && isAdmin && <SourceCreatePanel onDone={() => setCreateOpen(false)} />}
     {editingId !== null && isAdmin && <SourceEditPanel sourceId={editingId} onDone={() => setEditingId(null)} />}
     <div className="mb-6 grid gap-4 sm:grid-cols-3"><div className="rounded-2xl border border-card-border bg-card p-5 shadow-[var(--shadow-card)]"><p className="label-caps">Cobertura total</p><p className="mt-2 font-display text-2xl font-bold">{coverage === null ? '—' : `${coverage}%`}</p><p className="mt-1 text-xs text-muted-foreground">{coverage === null ? 'sin fuentes conectadas' : `${scannedRecently} de ${sources.length} fuentes con escaneo en los últimos 7 días`}</p></div><div className="rounded-2xl border border-card-border bg-card p-5 shadow-[var(--shadow-card)]"><p className="label-caps">Registros bajo control</p><p className="mt-2 font-display text-2xl font-bold">{sources.reduce((sum, source) => sum + source.records, 0).toLocaleString('es-ES')}</p><p className="mt-1 text-xs text-muted-foreground">entre todos los entornos</p></div><div className="rounded-2xl border border-card-border bg-card p-5 shadow-[var(--shadow-card)]"><p className="label-caps">Última actualización</p><p className="mt-2 font-display text-2xl font-bold">{lastScanAt ? relative(lastScanAt) : '—'}</p><p className="mt-1 flex items-center gap-1.5 text-xs text-primary"><RefreshCw size={12} /> último scan registrado en la conexión</p></div></div>
-    {sourcesQuery.isLoading ? <div className="rounded-2xl border border-card-border bg-card p-5" data-testid="sources-loading">{[1, 2, 3].map((row) => <div className="flex gap-3 border-b border-border py-5" key={row}><div className="skeleton h-10 w-10 rounded-xl" /><div className="flex-1"><div className="skeleton h-4 w-1/3 rounded" /><div className="mt-2 skeleton h-3 w-1/4 rounded" /></div></div>)}</div> : sourcesQuery.isError ? <div className="rounded-2xl border border-[#edc5bd] bg-[#fff8f6] p-10 text-center" data-testid="list-error" role="alert"><p className="font-display font-bold">No pudimos conectar con las fuentes.</p><button onClick={() => sourcesQuery.refetch()} className="mt-4 text-xs font-bold text-primary underline" data-testid="button-retry-sources">Reintentar</button></div> : sourcesQuery.data?.length ? <div className="overflow-hidden rounded-2xl border border-card-border bg-card shadow-[var(--shadow-card)]"><div className="hidden grid-cols-[1.55fr_.8fr_.75fr_.72fr_.8fr_190px] gap-4 border-b border-border bg-[#f8fafb] px-5 py-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground md:grid"><span>Fuente</span><span>Entorno</span><span>Estado</span><span>Registros</span><span>Hallazgos</span><span /></div>{sourcesQuery.data.map((source) => <SourceRow key={source.id} source={source} canAdmin={isAdmin} onEdit={setEditingId} />)}</div> : <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center" data-testid="empty-state"><ShieldCheck className="mx-auto mb-3 text-muted-foreground/50" size={30} /><p className="font-display text-lg font-bold">Aún no hay fuentes conectadas</p><p className="mt-1 text-sm text-muted-foreground">Cuando añadas una conexión aparecerá aquí su cobertura.</p></div>}
+    {sourcesQuery.isLoading ? <div className="rounded-2xl border border-card-border bg-card p-5" data-testid="sources-loading">{[1, 2, 3].map((row) => <div className="flex gap-3 border-b border-border py-5" key={row}><div className="skeleton h-10 w-10 rounded-xl" /><div className="flex-1"><div className="skeleton h-4 w-1/3 rounded" /><div className="mt-2 skeleton h-3 w-1/4 rounded" /></div></div>)}</div> : sourcesQuery.isError ? <div className="rounded-2xl border border-[#edc5bd] bg-[#fff8f6] p-10 text-center" data-testid="list-error" role="alert"><p className="font-display font-bold">No pudimos conectar con las fuentes.</p><button onClick={() => sourcesQuery.refetch()} className="mt-4 text-xs font-bold text-primary underline" data-testid="button-retry-sources">Reintentar</button></div> : sourcesQuery.data?.length ? <div className="overflow-hidden rounded-2xl border border-card-border bg-card shadow-[var(--shadow-card)]"><div className="hidden grid-cols-[1.55fr_.8fr_.75fr_.72fr_.8fr_190px] gap-4 border-b border-border bg-[#f8fafb] px-5 py-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground md:grid"><span>Fuente</span><span>Entorno</span><span>Estado</span><span>Registros</span><span>Hallazgos</span><span /></div>{sourcesQuery.data.map((source) => <SourceRow key={source.id} source={source} canAdmin={isAdmin} onEdit={setEditingId} onSchedule={setScheduleSource} />)}</div> : <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center" data-testid="empty-state"><ShieldCheck className="mx-auto mb-3 text-muted-foreground/50" size={30} /><p className="font-display text-lg font-bold">Aún no hay fuentes conectadas</p><p className="mt-1 text-sm text-muted-foreground">Cuando añadas una conexión aparecerá aquí su cobertura.</p></div>}
+    {scheduleSource && (
+      <SourceScheduleDialog
+        sourceId={scheduleSource.id}
+        schedule={scheduleQuery.data ?? null}
+        open
+        onOpenChange={(open) => { if (!open) setScheduleSource(null); }}
+      />
+    )}
   </section>;
 }

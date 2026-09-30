@@ -1,7 +1,13 @@
 import { defineConfig } from "drizzle-kit";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
+// M22 (P0-1) — las migraciones y el provisioning usan la conexión de
+// SUPERUSUARIO (`privacy`), separada de la conexión de aplicación (`DATABASE_URL`
+// → app_role) y de la de background (`BG_DATABASE_URL` → bg_role). Así `privacy`
+// nunca llega al entorno de runtime de la API (least privilege).
+if (!process.env.ADMIN_DATABASE_URL) {
+  throw new Error(
+    "ADMIN_DATABASE_URL (superuser/privacy) is required for migrations and provisioning",
+  );
 }
 
 // Relative paths resolve against this package directory (pnpm sets the script
@@ -11,6 +17,6 @@ export default defineConfig({
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL,
+    url: process.env.ADMIN_DATABASE_URL,
   },
 });

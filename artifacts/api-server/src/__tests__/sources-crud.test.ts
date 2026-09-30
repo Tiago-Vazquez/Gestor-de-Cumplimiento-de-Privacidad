@@ -14,12 +14,11 @@ import request from "supertest";
 import type { Express } from "express";
 import app from "../app";
 import type { MockState } from "./mock-repos";
+import { fetchCsrfToken, seedProvisionedAdmin, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD } from "./test-utils";
 
 process.env.AUTH_DISABLED = "false";
 process.env.JWT_SECRET = "test-secret-of-at-least-32-characters!!";
 process.env.SOURCE_ENCRYPTION_KEY = "test-source-encryption-key-of-at-least-32-characters!!";
-process.env.AUTH_BOOTSTRAP_TOKEN = "bootstrap-token-for-tests-only";
-process.env.AUTH_BOOTSTRAP_ENABLED = "true";
 process.env.AUTH_REGISTRATION_ENABLED = "true";
 
 const mocks = vi.hoisted(() => ({ state: undefined as MockState | undefined }));
@@ -52,6 +51,7 @@ const validBody = {
   kind: "postgresql",
   environment: "production",
   connection: {
+    kind: "postgresql",
     host: "db.internal.example.com",
     port: 5432,
     database: "app",
@@ -64,28 +64,41 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
   let server: ReturnType<Express["listen"]>;
   let adminCookie: string;
   let auditorCookie: string;
+  let adminCsrf: string;
+  let auditorCsrf: string;
 
   beforeAll(async () => {
     server = app.listen(0);
 
+    await seedProvisionedAdmin(state());
     const boot = await request(server)
       .post("/api/auth/login")
       .set("X-Forwarded-For", nextIp())
-      .send({ token: "bootstrap-token-for-tests-only" });
+      .send({ email: TEST_ADMIN_EMAIL, password: TEST_ADMIN_PASSWORD });
     expect(boot.status).toBe(200);
     adminCookie = cookieOf(boot);
+    adminCsrf = await fetchCsrfToken(server, adminCookie);
 
     const reg = await request(server)
       .post("/api/auth/register")
       .set("X-Forwarded-For", nextIp())
       .send({ email: "auditor-src@example.com", password: "secure-password-123" });
     expect(reg.status).toBe(201);
+    // M21.5 — el auditor pertenece a org-bootstrap (fail-closed en lecturas).
+    (state().memberships ??= []).push({
+      organizationId: "org-bootstrap",
+      userSub: reg.body.sub,
+      role: "auditor",
+      invitedBy: null,
+      joinedAt: new Date(),
+    });
     const login = await request(server)
       .post("/api/auth/login")
       .set("X-Forwarded-For", nextIp())
       .send({ email: "auditor-src@example.com", password: "secure-password-123" });
     expect(login.status).toBe(200);
     auditorCookie = cookieOf(login);
+    auditorCsrf = await fetchCsrfToken(server, auditorCookie);
   });
 
   afterAll(() => {
@@ -104,6 +117,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .post("/api/sources")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send(validBody);
     expect(res.status).toBe(201);
     expect(res.body.id).toBeDefined();
@@ -121,6 +135,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .post("/api/sources")
       .set("Cookie", auditorCookie)
+      .set("X-CSRF-Token", auditorCsrf)
       .send(validBody);
     expect(res.status).toBe(403);
     expect(state().sources.length).toBe(before);
@@ -131,6 +146,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .post("/api/sources")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send({ name: "Source Placeholder", kind: "postgresql", environment: "development" });
     expect(res.status).toBe(201);
     expect(res.body.name).toBe("Source Placeholder");
@@ -140,11 +156,108 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     expect(state().sources.length).toBe(before + 1);
   });
 
+  it("POST /api/sources (admin) MySQL → 201, cifra con kind mysql y no filtra secretos", async () => {
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({
+        name: "MySQL CRM",
+        kind: "mysql",
+        environment: "production",
+        connection: {
+          kind: "mysql",
+          host: "mysql.internal.example.com",
+          port: 3306,
+          database: "crm",
+          user: "scanner",
+          password: "mysql-super-secret-456",
+        },
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.kind).toBe("mysql");
+    expect(res.body.scannable).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain("mysql-super-secret-456");
+    expect("connection" in res.body).toBe(false);
+    const created = state().sources.find((s) => s.name === "MySQL CRM");
+    // El ciphertext no contiene el kind en claro ni las credenciales.
+    expect(created?.connectionConfig).toBeTruthy();
+    expect(created?.connectionConfig ?? "").not.toContain("mysql-super-secret-456");
+    expect(created?.connectionConfig ?? "").not.toContain("3306");
+  });
+
+  it("POST /api/sources con kind mismatch (source mysql / connection postgresql) → 400 sin crear", async () => {
+    const before = state().sources.length;
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ ...validBody, name: "Mismatch", kind: "mysql" });
+    expect(res.status).toBe(400);
+    expect(state().sources.length).toBe(before);
+    expect(state().sources.some((s) => s.name === "Mismatch")).toBe(false);
+  });
+
+  it("POST /api/sources con connection para kind sin conector (mongodb) → 400 sin crear", async () => {
+    const before = state().sources.length;
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ ...validBody, name: "Mongo", kind: "mongodb" });
+    expect(res.status).toBe(400);
+    expect(state().sources.length).toBe(before);
+  });
+
+  it("POST /api/sources kind mongodb sin connection → 201 scannable=false (declarable, no escaneable)", async () => {
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ name: "Mongo Placeholder", kind: "mongodb", environment: "staging" });
+    expect(res.status).toBe(201);
+    expect(res.body.kind).toBe("mongodb");
+    expect(res.body.scannable).toBe(false);
+  });
+
+  it("POST /api/sources ignora campos desconocidos de connection (no se persisten)", async () => {
+    const { repos } = await import("../repositories");
+    const spy = vi.spyOn(repos.sources, "createSource");
+    const res = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({
+        ...validBody,
+        name: "Campos extra",
+        connection: { ...validBody.connection, connectTimeoutMs: 999999, rce: "payload()" },
+      });
+    expect(res.status).toBe(201);
+    // La ruta reenvía la config YA normalizada (solo campos conocidos).
+    const forwarded = spy.mock.calls.at(-1)?.[0] as { connection?: Record<string, unknown> };
+    expect(forwarded.connection).toEqual({
+      kind: "postgresql",
+      host: validBody.connection.host,
+      port: validBody.connection.port,
+      database: validBody.connection.database,
+      user: validBody.connection.user,
+      password: validBody.connection.password,
+      schema: "public",
+    });
+    expect(Object.keys(forwarded.connection ?? {})).not.toContain("connectTimeoutMs");
+    expect(Object.keys(forwarded.connection ?? {})).not.toContain("rce");
+    // El mock persiste un marcador opaco: nunca el plaintext de la credencial.
+    const created = state().sources.find((s) => s.name === "Campos extra");
+    expect(created?.connectionConfig).toBe("mock-encrypted-connection-string");
+    spy.mockRestore();
+  });
+
   it("POST /api/sources body inválido → 400", async () => {
     const before = state().sources.length;
     const res = await request(server)
       .post("/api/sources")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send({ name: "X", kind: "postgresql" }); // falta environment
     expect(res.status).toBe(400);
     expect(state().sources.length).toBe(before);
@@ -170,6 +283,7 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const res = await request(server)
       .patch("/api/sources/src-002")
       .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
       .send({ name: "Warehouse Renombrado" });
     expect(res.status).toBe(200);
     expect(res.body.name).toBe("Warehouse Renombrado");
@@ -178,11 +292,65 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     expect(row?.name).toBe("Warehouse Renombrado");
   });
 
+  it("PATCH /api/sources/:id con kind mismatch (kind mysql / connection postgresql) → 400 sin mutar", async () => {
+    const before = state().sources.find((s) => s.id === "src-004");
+    const res = await request(server)
+      .patch("/api/sources/src-004")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ kind: "mysql", connection: { ...validBody.connection } });
+    expect(res.status).toBe(400);
+    const after = state().sources.find((s) => s.id === "src-004");
+    expect(after?.kind).toBe(before?.kind);
+    expect(after?.connectionConfig).toBe(before?.connectionConfig ?? null);
+  });
+
+  it("PATCH /api/sources/:id connection MySQL sobre fuente MySQL → 200 y config aceptada", async () => {
+    const created = await request(server)
+      .post("/api/sources")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ name: "MySQL PATCH target", kind: "mysql", environment: "production" });
+    expect(created.status).toBe(201);
+
+    const res = await request(server)
+      .patch(`/api/sources/${created.body.id}`)
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({
+        connection: {
+          kind: "mysql",
+          host: "mysql2.internal.example.com",
+          port: 3307,
+          database: "crm2",
+          user: "scanner2",
+          password: "rotated-mysql-secret-789",
+        },
+      });
+    expect(res.status).toBe(200);
+    expect(res.body.scannable).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain("rotated-mysql-secret-789");
+    const row = state().sources.find((s) => s.id === created.body.id);
+    expect(row?.connectionConfig).toBe("mock-encrypted-connection-string");
+  });
+
+  it("PATCH /api/sources/:id connection para kind sin conector (snowflake) → 400 sin mutar", async () => {
+    // src-002 es un kind sin conector en M23.1: no puede recibir credenciales.
+    const res = await request(server)
+      .patch("/api/sources/src-002")
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf)
+      .send({ connection: { ...validBody.connection } });
+    expect(res.status).toBe(400);
+    expect(state().sources.find((s) => s.id === "src-002")?.connectionConfig ?? null).toBeNull();
+  });
+
   it("PATCH /api/sources/:id (auditor) → 403 sin mutar", async () => {
     const beforeName = state().sources.find((s) => s.id === "src-003")?.name;
     const res = await request(server)
       .patch("/api/sources/src-003")
       .set("Cookie", auditorCookie)
+      .set("X-CSRF-Token", auditorCsrf)
       .send({ name: "Hacked" });
     expect(res.status).toBe(403);
     expect(state().sources.find((s) => s.id === "src-003")?.name).toBe(beforeName);
@@ -192,7 +360,8 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const before = state().sources.length;
     const res = await request(server)
       .delete("/api/sources/src-004")
-      .set("Cookie", adminCookie);
+      .set("Cookie", adminCookie)
+      .set("X-CSRF-Token", adminCsrf);
     expect(res.status).toBe(204);
     expect(state().sources.length).toBe(before - 1);
     expect(state().sources.some((s) => s.id === "src-004")).toBe(false);
@@ -202,7 +371,8 @@ describe("Sources CRUD (FASE 7.0.0)", () => {
     const before = state().sources.length;
     const res = await request(server)
       .delete("/api/sources/src-001")
-      .set("Cookie", auditorCookie);
+      .set("Cookie", auditorCookie)
+      .set("X-CSRF-Token", auditorCsrf);
     expect(res.status).toBe(403);
     expect(state().sources.length).toBe(before);
     expect(state().sources.some((s) => s.id === "src-001")).toBe(true);
