@@ -76,7 +76,7 @@ export async function getDashboardData(tenantId: string): Promise<DashboardData>
       monitoredSources: sourcesRow?.total ?? 0,
       lastScanAt: lastScanRow?.last ? new Date(lastScanRow.last) : null,
       scanStatus: (runningRow?.total ?? 0) > 0 ? "scanning" : "monitoring",
-      complianceScore: computeComplianceScore({ openFindings }),
+      complianceScore: computeComplianceScore(countsBySeverity),
     };
   });
 }

@@ -27,7 +27,7 @@ import {
   MAX_MASKING_DATASET_BYTES,
   MAX_MASKING_RECORDS,
 } from "../lib/masking-limits";
-import { computeComplianceScore } from "../repositories/compliance-score";
+import { computeComplianceScore, type SeverityCounts } from "../repositories/compliance-score";
 import { buildTrendDayKeys, buildTrendPoints } from "../lib/trend-buckets";
 
 /**
@@ -941,9 +941,18 @@ export function createMockRepos() {
         );
       },
       async create({ name, period, at, tenantId }: { name: string; period: string; at: Date; tenantId?: string }) {
-        const openFindings = state.findings.filter(
+        // Espejo del repositorio real: el score necesita el desglose por
+        // severidad (ADR-004), no solo el total.
+        const active = state.findings.filter(
           (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
-        ).length;
+        );
+        const openFindings = active.length;
+        const severityCounts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+        for (const finding of active) {
+          if (finding.severity in severityCounts) {
+            severityCounts[finding.severity as keyof SeverityCounts] += 1;
+          }
+        }
         const report: MockRow<Report> = {
           id: nextId("r"),
           name,
@@ -951,7 +960,7 @@ export function createMockRepos() {
           status: "ready",
           createdAt: at,
           findings: openFindings,
-          complianceScore: computeComplianceScore({ openFindings }),
+          complianceScore: computeComplianceScore(severityCounts),
           format: "pdf",
           tenantId: tenantId ?? null,
         };
@@ -996,7 +1005,7 @@ export function createMockRepos() {
           monitoredSources: sources.length,
           lastScanAt,
           scanStatus: visibleScans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
-          complianceScore: computeComplianceScore({ openFindings: open.length }),
+          complianceScore: computeComplianceScore(countsBySeverity),
         };
       },
     },
@@ -1033,7 +1042,7 @@ export function createMockRepos() {
         }
         const openFindings = active.length;
         return {
-          complianceScore: computeComplianceScore({ openFindings }),
+          complianceScore: computeComplianceScore(findingsBySeverity),
           openFindings,
           findingsBySeverity,
           findingsByDataType,

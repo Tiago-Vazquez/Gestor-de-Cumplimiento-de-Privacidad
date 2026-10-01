@@ -1,8 +1,12 @@
 import { and, count, eq, gte, isNotNull, lt } from "drizzle-orm";
 import { findingsTable, scansTable, sourcesTable } from "@workspace/db";
-import { computeComplianceScore } from "./compliance-score";
+import { computeComplianceScore, type SeverityCounts } from "./compliance-score";
 import { activeFindingsWhere } from "./findings.repo";
 import { tenantScopeStrict, withTenant } from "./tenant";
+
+// `SeverityCounts` vive en `compliance-score.ts` (la politica) y se reexporta
+// aqui para no romper a quien ya lo importaba desde este modulo.
+export type { SeverityCounts };
 import {
   UTC_MS_PER_DAY,
   buildTrendDayKeys,
@@ -32,10 +36,9 @@ import {
 export const COMPLIANCE_TREND_DEFAULT_DAYS = 30;
 export const COMPLIANCE_TREND_MAX_DAYS = 90;
 
-export type SeverityCounts = { critical: number; high: number; medium: number; low: number };
 
 export type ComplianceSummaryData = {
-  /** Ver compliance-score.ts: política pendiente de definición (100/0). */
+  /** Ver compliance-score.ts (ADR-004): politica de pesos por severidad. */
   complianceScore: number;
   openFindings: number;
   findingsBySeverity: SeverityCounts;
@@ -142,7 +145,7 @@ export async function getComplianceSummary(tenantId: string): Promise<Compliance
     const aggregates = summarizeComplianceAggregates({ severityRows, dataTypeRows, sourceRows });
 
     return {
-      complianceScore: computeComplianceScore({ openFindings: aggregates.openFindings }),
+      complianceScore: computeComplianceScore(aggregates.findingsBySeverity),
       openFindings: aggregates.openFindings,
       findingsBySeverity: aggregates.findingsBySeverity,
       findingsByDataType: aggregates.findingsByDataType,

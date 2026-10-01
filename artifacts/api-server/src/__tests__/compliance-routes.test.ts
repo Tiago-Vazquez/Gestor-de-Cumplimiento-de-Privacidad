@@ -78,8 +78,8 @@ describe("Compliance routes", () => {
       // Activos canónicos: f-001/f-003/f-005 (open) + f-002 (in_review) = 4;
       // f-004 está resolved y no cuenta.
       expect(res.body.openFindings).toBe(4);
-      // Política 100/0 vigente (ver compliance-score.ts).
-      expect(res.body.complianceScore).toBe(0);
+      // ADR-004: 0*1 + 1*3 + 1*7 + 2*15 = 40 -> 100 - 40 = 60.
+      expect(res.body.complianceScore).toBe(60);
       expect(res.body.findingsBySeverity).toEqual({
         critical: 2,
         high: 1,

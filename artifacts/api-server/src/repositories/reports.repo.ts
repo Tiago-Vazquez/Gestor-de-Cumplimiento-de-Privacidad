@@ -2,7 +2,7 @@ import { count, desc, eq, and } from "drizzle-orm";
 import { activityTable, db, findingsTable, reportsTable, type Report } from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 import { activeFindingsWhere } from "./findings.repo";
-import { computeComplianceScore } from "./compliance-score";
+import { computeComplianceScore, type SeverityCounts } from "./compliance-score";
 import { newId } from "./ids";
 import { tenantScopeStrict, withTenant, setTenantLocal } from "./tenant";
 
@@ -62,11 +62,20 @@ export async function create({
     // M21.8 — tenant context transaccional (RLS).
     await setTenantLocal(tx, tenantId);
 
-    const [openRow] = await tx
-      .select({ total: count() })
+    // Desglose por severidad: el score lo exige (ADR-004). `findings` sigue
+    // siendo el TOTAL de activos, igual que antes.
+    const severityRows = await tx
+      .select({ severity: findingsTable.severity, total: count() })
       .from(findingsTable)
-      .where(activeFindingsWhere(tenantId));
-    const openFindings = openRow?.total ?? 0;
+      .where(activeFindingsWhere(tenantId))
+      .groupBy(findingsTable.severity);
+    const openFindings = severityRows.reduce((sum, row) => sum + row.total, 0);
+    const findingsBySeverity: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const row of severityRows) {
+      if (row.severity in findingsBySeverity) {
+        findingsBySeverity[row.severity as keyof SeverityCounts] = row.total;
+      }
+    }
 
     const [report] = await tx
       .insert(reportsTable)
@@ -77,7 +86,7 @@ export async function create({
         status: "ready",
         createdAt: at,
         findings: openFindings,
-        complianceScore: computeComplianceScore({ openFindings }),
+        complianceScore: computeComplianceScore(findingsBySeverity),
         format: "pdf",
         // M21.4 — el informe pertenece a la organización activa.
         tenantId,
