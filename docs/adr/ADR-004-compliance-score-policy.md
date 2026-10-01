@@ -3,7 +3,7 @@
 - **Estado**: Aceptado, con decision provisional explicita
 - **Fecha**: 2026-09-30
 - **Alcance**: M29.1 (Product & Demo Readiness)
-- **Riesgos asociados**: R2 (atenuado, no cerrado)
+- **Riesgos asociados**: ver "Riesgo de interpretacion"
 
 ## Contexto
 
@@ -84,4 +84,3 @@ Los pasos 1-3 son de producto y quedan FUERA de M29.1.
 
 - `artifacts/api-server/src/repositories/compliance-score.ts` (unica fuente)
 - `replit.md` (politica pendiente de aprobacion)
-- `docs/adr/ADR-002-m25-0-backup-and-dr-architecture.md` (R2)
