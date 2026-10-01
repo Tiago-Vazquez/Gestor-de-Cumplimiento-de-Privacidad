@@ -1,14 +1,14 @@
-# ADR-004 — Politica de `complianceScore` (PROVISIONAL)
+# ADR-004 — Politica de `complianceScore`
 
-- **Estado**: Aceptado, con decision provisional explicita
-- **Fecha**: 2026-09-30
+- **Estado**: Aceptado. Politica DEFINITIVA aprobada por producto.
+- **Fecha**: 2026-09-30 (decision provisional) · ampliada a definitiva
 - **Alcance**: M29.1 (Product & Demo Readiness)
 - **Riesgos asociados**: ver "Riesgo de interpretacion"
 
 ## Contexto
 
 El contrato de la API exige un `number` siempre, incluso con la base de datos
-vacia o antes de que el producto apruebe una formula de cumplimiento:
+vacia:
 
 - `Dashboard.complianceScore` (`Dashboard.complianceScore`)
 - `Report.complianceScore`
@@ -17,70 +17,123 @@ vacia o antes de que el producto apruebe una formula de cumplimiento:
 Ese numero se muestra en el dashboard (`dashboard.tsx`), en compliance
 (`compliance.tsx`) y en el shell (`app-shell.tsx`).
 
-Hoy NO existe una politica de scoring aprobada. El calculo esta aislado en
+El calculo esta aislado en
 `artifacts/api-server/src/repositories/compliance-score.ts`, que es la unica
 fuente: ningun repositorio conoce el detalle del calculo.
 
+Este ADR reforzo esa garantia: los mocks de `mock-repos.ts` dejaron de replicar
+la formula a mano y delegan en `computeComplianceScore`.
+
 ## Decision
 
-**Se mantiene la politica provisional actual, de forma explicita:**
+### Dominio de severidades
 
-```ts
-export function computeComplianceScore({ openFindings }: { openFindings: number }): number {
-  return openFindings === 0 ? 100 : 0;
-}
+El dominio de un hallazgo (`FindingSeverity`) tiene **cuatro** niveles, tal y
+como los fijan los contratos generados y el tipo `SeverityCounts`:
+
+| Nivel | Peso |
+| --- | --- |
+| `low` | 1 |
+| `medium` | 3 |
+| `high` | 7 |
+| `critical` | 15 |
+
+**`info` NO forma parte del dominio actual.** No existe en el contrato zod, ni en
+`SeverityCounts`, ni en la base de datos, y **no debe añadirse**.
+
+### Formula
+
+```text
+score = max(0, 100 - (low + 3*medium + 7*high + 15*critical))
 ```
 
-- `100` cuando no hay hallazgos abiertos (`status <> "resolved"`).
-- `0` cuando existe al menos un hallazgo abierto.
+Donde `low`, `medium`, `high` y `critical` son los **conteos de hallazgos
+ABIERTOS** por severidad.
 
-No se introduce formula ponderada, no se introduce `null`, no se oculta el
-valor y no se cambia el contrato de la API.
+### Reglas
 
-## Por que NO se introduce todavia una formula ponderada
+1. **Cero hallazgos abiertos** -> `100`.
+2. **Solo cuentan hallazgos abiertos y no superseded.** El filtro canonico es
+   `activeFindingsWhere()`: `status <> 'resolved' AND superseded = false`, con
+   scoping por organizacion. Los hallazgos cerrados **no participan**.
+3. **El score es global por organizacion.** Se calcula una vez sobre los
+   agregados de la organizacion activa.
+4. **No se promedian scores por fuente.** `findingsBySource` es informativo y no
+   participa del calculo.
+5. **El resultado siempre esta en `[0, 100]`** gracias a `max(0, ...)`.
+6. **El resultado es un entero.** Todos los pesos y conteos lo son.
+7. **Un unico `critical` produce `85`**, no `0`: la severidad maxima no anula el
+   score por si sola.
 
-Ponderar por severidad exige decidir el peso de cada nivel y como se agrega a
-nivel de organizacion. Esa es una **decision de producto**, no tecnica: el
-repositorio la tiene marcada como pendiente desde su creacion y nadie la ha
-resuelto. Fijarla aqui convertiria una suposicion del equipo de ingenieria en
-una "metodologia de cumplimiento" sin respaldo, que es justo lo que este ADR
-evita.
+### Severidad desconocida
+
+Una severidad fuera del dominio **NO** debe convertirse silenciosamente en peso
+`0`. Se **rechaza en la ingesta/validacion del dato**, antes de que llegue al
+dominio de scoring.
+
+Consecuencia de diseño: `computeComplianceScore` trabaja con los cuatro conteos
+validos y **no necesita decidir que hacer** ante una severidad desconocida, ni
+validarla. Esa responsabilidad queda en la capa de entrada.
+
+### Contrato
+
+- El contrato API `complianceScore: number` **permanece sin cambios**.
+- **No hay migraciones**: `reports.compliance_score` ya es `integer NOT NULL` y
+  la formula devuelve un entero.
 
 ## Alternativas consideradas
 
 | Opcion | Comportamiento | Impacto | Motivo de descarte |
 | --- | --- | --- | --- |
-| **A. 100 / 0 (elegida)** | Score binario | Contract intacto, 0 aserciones tocadas | Se mantiene; es explicito y no inventa granularidad |
-| B. Ponderada por severidad | Score intermedio | Cambia semantica de API y UI | Requiere politica de producto; ADR-002/003 no la definen |
+| A. 100 / 0 (provisional, ya superada) | Score binario | Contract intacto | Descartada: `0` con cualquier hallazgo hacia que `0.0%` se leyese como "el producto no funciona" |
+| **B. Ponderada por severidad (elegida)** | Score intermedio | Contract intacto | Elegida: aprobada por producto; granular sin romper el contrato |
 | C. `null` / "no evaluado" | Sin score | Rompe `zod.number()` y ~6 tests | Coste alto, sin valor para la demo |
 | D. Ocultar el score en la UI | Sin metrica | Cambio de producto | Reduce informacion sin resolver la duda de fondo |
+| E. Promediar score por fuente | Score por fuente | Cambio de contrato | Descartada: los pesos perderian sentido al promediar y penalizaria a organizaciones fragmentadas |
 
-## Impacto de la opcion A (lo que hay que saber)
+## Impacto tecnico
 
-- El dashboard muestra `100.0%` o `0.0%`. Nunca un valor intermedio.
-- Con hallazgos abiertos, la tarjeta muestra `0.0%`. Puede leerse como
-  "el producto no funciona" en lugar de "no hay politica aprobada".
-- `replit.md` documenta que la politica definitiva queda pendiente de
-  aprobacion de producto.
+- **Unico fichero de calculo**: `compliance-score.ts`.
+- Los agregados por severidad **ya se calculan** en `compliance.repo.ts`
+  (`findingsBySeverity`) y `dashboard.repo.ts` (`countsBySeverity`).
+- `reports.repo.ts` requiere un `groupBy` de severidad, hoy solo pide el total.
+- **Ninguna ruta, contrato OpenAPI ni consumidor de UI cambia.**
+- `SeverityCounts` se reutiliza como tipo de entrada, sin tipos nuevos.
 
 ## Riesgo de interpretacion
 
 **El score NO es un porcentaje legal de cumplimiento** y no debe presentarse
-como tal. Mide unicamente "hay o no hay hallazgos abiertos". Cualquier
-afirmacion de certificacion o cumplimiento normativo basada en este numero
-seria incorrecta.
+como tal. Es una medida de carga de hallazgos abiertos por severidad, no una
+certificacion. Cualquier afirmacion de certificacion o cumplimiento normativo
+basada en este numero seria incorrecta.
 
-## Que falta para convertirla en politica definitiva
+Con la formula aprobada el score pasa a ser **gradual**, lo que reduce la
+ambiguedad del `0.0%` binario, pero no elimina la necesidad de explicar que el
+numero no es una certificacion.
 
-1. Definir la ponderacion por severidad (info/low/medium/high/critical).
-2. Definir la agregacion a nivel de organizacion.
-3. Aprobar la politica como producto.
-4. Cambiar **solo** la implementacion de `computeComplianceScore`; ningun
-   repositorio ni consumidor necesita cambios (por diseño, ver el ADR).
+## Tests de aceptacion
 
-Los pasos 1-3 son de producto y quedan FUERA de M29.1.
+Estos casos gobiernan la implementacion. **Todavia no estan implementados**: la
+formula vigente sigue siendo la provisional `100 / 0`.
+
+| # | Entrada | Resultado esperado |
+| --- | --- | --- |
+| 1 | `{low:0, medium:0, high:0, critical:0}` | `100` |
+| 2 | un `low` | `99` |
+| 3 | un `medium` | `97` |
+| 4 | un `high` | `93` |
+| 5 | un `critical` | `85` |
+| 6 | `{low:2, medium:1, high:0, critical:1}` | `80` |
+| 7 | penalizacion exactamente `100` | `0` |
+| 8 | penalizacion superior a `100` | `0` |
+| 9 | hallazgos cerrados / superseded | no entran en el agregado |
+| 10 | contrato API | sigue devolviendo `number` |
 
 ## Referencias
 
 - `artifacts/api-server/src/repositories/compliance-score.ts` (unica fuente)
-- `replit.md` (politica pendiente de aprobacion)
+- `artifacts/api-server/src/repositories/compliance.repo.ts` (`SeverityCounts`,
+  `activeFindingsWhere`)
+- `artifacts/api-server/src/repositories/findings.repo.ts` (filtro canonico)
+- `lib/api-spec/openapi.yaml` (`complianceScore: { type: number }`)
+- `lib/db/src/schema/reports.ts` (`compliance_score integer NOT NULL`)
