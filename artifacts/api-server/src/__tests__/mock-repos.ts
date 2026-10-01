@@ -951,7 +951,7 @@ export function createMockRepos() {
           status: "ready",
           createdAt: at,
           findings: openFindings,
-          complianceScore: openFindings === 0 ? 100 : 0,
+          complianceScore: computeComplianceScore({ openFindings }),
           format: "pdf",
           tenantId: tenantId ?? null,
         };
@@ -996,7 +996,7 @@ export function createMockRepos() {
           monitoredSources: sources.length,
           lastScanAt,
           scanStatus: visibleScans.some((scan) => scan.status === "running") ? ("scanning" as const) : ("monitoring" as const),
-          complianceScore: open.length === 0 ? 100 : 0,
+          complianceScore: computeComplianceScore({ openFindings: open.length }),
         };
       },
     },
