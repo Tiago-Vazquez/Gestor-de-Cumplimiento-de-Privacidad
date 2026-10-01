@@ -169,7 +169,11 @@ Documentadas explicitamente, sin adornos:
 
 - **No hay MFA ni recuperacion de password.** El login es email + contrasena.
   Excluido de forma explicita en `ADR-003`.
-- **El backup tiene disparador en codigo, pero hay que instalarlo en el VPS** (R9a parcial): contrato `ops:backup-schedule` + unidades systemd. Sin VPS sigue siendo manual. **No hay alertas** (R9c): un backup fallido no notifica a nadie.
+- **El backup tiene disparador en codigo** (R9a): contrato `ops:backup-schedule` + unidades systemd, implementado y probado. No hay VPS ni entorno de produccion, asi que sigue siendo manual hasta que exista uno.
+- **Hay mecanismo de alertas** (R9c), implementado y probado: el backup programado y el
+  uploader emiten eventos de alerta mediante el seam generico `ALERT_CMD`; en el caso de
+  fallo de subida, el uploader conserva el exit code `76`. No hay canal desplegado: sin
+  configurar `ALERT_CMD` en un servidor, nadie recibe nada.
 - **No hay B2, Object Lock, lifecycle ni PITR.** Bloqueados hasta que exista un
   VPS de produccion; la region de B2 es irreversible al crear la cuenta.
 - **No hay TLS, reverse proxy ni dominio** en el repositorio.

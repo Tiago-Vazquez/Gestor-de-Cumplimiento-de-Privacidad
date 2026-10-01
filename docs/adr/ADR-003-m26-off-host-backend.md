@@ -225,5 +225,11 @@ sin copia local ante un fallo de red.
   en un host limpio, con referencias a imágenes por digest. La prueba definitiva
   sigue siendo un ensayo completo backup → off-host → restore con B2 real.
 - **R8** — sin cambio. PITR sigue aislado en D5 y sin implementar.
-- **R9b** — cerrado en diseño. **R9a** (scheduler), **R9c** (alertas) y **R9d**
-  (retención remota, especificada pero no aplicada) siguen abiertos.
+- **R9b** — cerrado en diseño.
+- **R9a** (scheduler) — **implementado y probado**; no desplegado, porque no
+  existe VPS ni entorno de producción.
+- **R9c** (alertas) — **implementado y probado**: el seam `ALERT_CMD` notifica
+  desde el backup programado y desde el uploader. No hay canal configurado; su
+  despliegue depende de la infraestructura que aún no existe.
+- **R9d** (retención remota, especificada pero no aplicada) — **abierto**: requiere el
+  bucket, que no existe.

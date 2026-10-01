@@ -169,10 +169,15 @@ revocables, CSRF, CORS fail-closed, cifrado de credenciales, auditoria,
 rate limiting, backup/restore verificado.
 
 **Parcial**:
-- Observabilidad: hay metricas, logs estructurados y probes, pero **no hay stack
-  de monitorizacion ni alertas** (R9c abierto). Un backup fallido no notifica a
-  nadie.
-- Backup: se ejecuta **manualmente**; no hay scheduler (R9a abierto).
+- Alertas de backup: el seam generico `ALERT_CMD` esta **implementado y probado** (R9c). El
+  backup programado y el uploader notifican `partial_upload_failed` cuando la subida
+  off-host falla, y `skipped_locked`/`failed` cuando falla el backup local. **No hay
+  canal desplegado ni servidor**: sin definir `ALERT_CMD` en un entorno real, un backup
+  fallido no notifica a nadie. No hay stack de monitorizacion mas alla de metricas,
+  logs estructurados y probes.
+- Backup: hay scheduler en codigo, **implementado y probado** (R9a, contrato
+  `ops:backup-schedule` + unidades systemd). No hay VPS ni entorno de produccion, asi
+  que hoy se ejecuta **manualmente**.
 
 **Pendiente**:
 - **MFA**: no implementado. Login solo por email + contrasena.
