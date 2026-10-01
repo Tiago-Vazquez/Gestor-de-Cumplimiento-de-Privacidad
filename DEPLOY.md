@@ -63,14 +63,25 @@ es efimero, asi que un `schedule` alli nunca tendria acceso real al backup.
 
 | Codigo | Significado | `result=` |
 | --- | --- | --- |
-| `0` | Backup completo (local y off-host) | `ok` |
+| `0` | Backup local completo | `ok` |
 | `75` | `EXIT_LOCKED`: ya hay un backup en curso (no es un fallo) | `skipped_locked` |
-| `76` | `EXIT_UPLOAD_FAILED`: backup local correcto, subida remota fallida | `partial_upload_failed` |
 | otro | Fallo real del backup | `failed` |
 
-El codigo original se propaga sin enmascarar: `75` y `76` nunca se reportan como
-`0`. No hay retries (solaparian con el backup en curso) y el lock sigue siendo
-el de `postgres-backup.sh`.
+El codigo original se propaga sin enmascarar: un `75` nunca se reporta como `0`.
+No hay retries (solaparian con el backup en curso) y el lock sigue siendo el de
+`postgres-backup.sh`.
+
+⚠️ **El disparador NO publica nada off-host.** El calendario ejecuta **solo**
+`postgres-backup.sh`, que no habla con B2. El `76` (`EXIT_UPLOAD_FAILED`) lo
+produce únicamente `offhost-upload.sh`, asi que **el flujo programado nunca lo
+devuelve** y una copia local correcta no implica copia externa. La publicacion
+off-host se lanza aparte con `pnpm run ops:offhost-upload`.
+
+**Alertas (M29.2 A2).** Definiendo `ALERT_CMD` como comando que recibe un JSON
+por stdin, se notifican `skipped_locked` y `failed` del backup programado, y
+`partial_upload_failed` desde el uploader cuando la subida falla. Sin definir la
+variable no hay alerta y nada cambia. El emisor comun esta en
+`scripts/ops/lib/alert.sh`; el destino se configura en el host, no en el repo.
 
 **Disparador (infraestructura, fuera del repo).** Plantillas systemd en
 `scripts/ops/backup-schedule.service` y `.timer`:

@@ -93,6 +93,7 @@ TB_FAIL_ON=""; TB_FAIL_MARKER=""; TB_FAIL_MODE=""
 TB_RETRIES=3; TB_DELAY=1
 TB_BUCKET="b"; TB_ENDPOINT="https://x.invalid"
 TB_DUMP="$DUMP"
+TB_ALERT_CMD=""
 
 # Defined before the first use on purpose: bash resolves a function at call time,
 # so a definition placed after the first call site silently becomes "command not
@@ -121,6 +122,7 @@ run_capture() {
       BACKUP_BUCKET="$TB_BUCKET" \
       B2_S3_ENDPOINT="$TB_ENDPOINT" \
       ${TB_VAR_NAME:+"$TB_VAR_NAME=$TB_VAR_VALUE"} \
+      ${TB_ALERT_CMD:+ALERT_CMD="$TB_ALERT_CMD"} \
       bash "$UPLOADER" --backup "$TB_DUMP" "$@" 2>&1)"; then
     RC=0
   else
@@ -133,6 +135,7 @@ run_capture() {
   TB_RETRIES=3; TB_DELAY=1
   TB_BUCKET="b"; TB_ENDPOINT="https://x.invalid"
   TB_DUMP="$DUMP"
+  TB_ALERT_CMD=""
 }
 
 # Convenience wrapper for the happy path with the real bucket name.
@@ -285,5 +288,136 @@ else
   no "el sufijo publicado no coincide con el que busca postgres-restore.sh"
 fi
 
+# =============================================================================
+# M29.2 A2 - Alertas en el punto donde nace el 76.
+#
+# El 76 lo produce ESTE script, asi que aqui se emite la alerta. Estos casos
+# son offline y deterministas: el canal es un comando que escribe el JSON
+# recibido por stdin en un fichero. Sin red, sin credenciales y sin proveedor.
+# =============================================================================
+echo ""
+echo "M29.2 A2 offhost alert tests (offline, sin red)"
+
+ALERT_OUT="$WORK/alert.json"
+ALERT_SINK="cat > $ALERT_OUT"
+
+# --- A1: upload exitoso NO alerta -------------------------------------------
+rm -f "$ALERT_OUT"
+TB_BUCKET="privaris-postgres-backups" TB_ALERT_CMD="$ALERT_SINK" run_capture
+check "A1 upload exitoso conserva exit 0" "$RC" "0"
+if [[ ! -s "$ALERT_OUT" ]]; then
+  ok "A2 upload exitoso NO emite alerta"
+else
+  no "A2 upload exitoso emitio alerta"
+fi
+
+# --- A3: fallo definitivo -> partial_upload_failed --------------------------
+# DOUBLE_FAIL_MODE=always hace fallar todos los intentos: es el fallo
+# definitivo que produce el 76, no el transitorio que se recupera.
+rm -f "$ALERT_OUT"
+TB_FAIL_MODE="always" TB_FAIL_ON="dump" TB_RETRIES=1 TB_DELAY=1 \
+  TB_BUCKET="privaris-postgres-backups" TB_ALERT_CMD="$ALERT_SINK" run_capture
+check "A3 fallo definitivo conserva exit 76 (no lo degrada)" "$RC" "76"
+if [[ -s "$ALERT_OUT" ]]; then
+  ok "A4 fallo definitivo emite alerta"
+else
+  no "A4 fallo definitivo NO emitio alerta"
+fi
+if grep -q '"result":"partial_upload_failed"' "$ALERT_OUT" 2>/dev/null; then
+  ok "A5 la alerta identifica partial_upload_failed"
+else
+  no "A5 la alerta no dice partial_upload_failed"
+fi
+if grep -q '"exit_code":76' "$ALERT_OUT" 2>/dev/null; then
+  ok "A6 el JSON lleva exit_code 76 como numero"
+else
+  no "A6 el JSON no lleva exit_code 76"
+fi
+if grep -qE '"timestamp":"[0-9]{4}-[0-9]{2}-[0-9]{2}T' "$ALERT_OUT" 2>/dev/null; then
+  ok "A7 el JSON lleva timestamp ISO-8601"
+else
+  no "A7 el JSON no lleva timestamp ISO-8601"
+fi
+
+# --- A8: sin ALERT_CMD no ocurre nada y el 76 sigue intacto -----------------
+rm -f "$ALERT_OUT"
+TB_FAIL_MODE="always" TB_FAIL_ON="dump" TB_RETRIES=1 TB_DELAY=1 \
+  TB_BUCKET="privaris-postgres-backups" run_capture
+check "A8 sin ALERT_CMD el 76 se conserva" "$RC" "76"
+if [[ ! -s "$ALERT_OUT" ]]; then
+  ok "A9 sin ALERT_CMD no se invoca ningun canal"
+else
+  no "A9 se invoco un canal sin ALERT_CMD"
+fi
+if grep -q 'alert' <<<"$OUT"; then
+  no "A10 sin ALERT_CMD la salida no debe hablar de alertas"
+else
+  ok "A10 sin ALERT_CMD no hay ruido en la salida"
+fi
+
+# --- A11: un ALERT_CMD caido NO oculta ni reemplaza el 76 --------------------
+TB_FAIL_MODE="always" TB_FAIL_ON="dump" TB_RETRIES=1 TB_DELAY=1 \
+  TB_BUCKET="privaris-postgres-backups" TB_ALERT_CMD="exit 42" run_capture
+check "A11 canal caido: el proceso sigue devolviendo 76" "$RC" "76"
+if grep -q 'alert delivery FAILED' <<<"$OUT"; then
+  ok "A12 el fallo del canal queda registrado"
+else
+  no "A12 el fallo del canal no quedo registrado"
+fi
+
+# --- A13: el calendario de A1 NO ejecuta este script -------------------------
+# Impide "arreglar" el hueco de R9c encadenando el uploader al timer: el
+# calendario debe seguir siendo SOLO backup local.
+# Se comprueba una INVOCACION, no una mencion: un comentario que cite el
+# uploader es legitimo (el seam comparte contrato con el), mientras que una
+# llamada real rompere el calendario de A1. Por eso se filtran las lineas de
+# comentario y se busca el nombre del script en codigo ejecutable.
+sched="$ROOT_DIR/scripts/ops/backup-schedule.sh"
+sched_code="$(grep -vE '^[[:space:]]*#' "$sched")"
+if grep -q 'offhost-upload' <<<"$sched_code"; then
+  no "A13 backup-schedule.sh NO debe invocar offhost-upload.sh"
+else
+  ok "A13 backup-schedule.sh no invoca offhost-upload.sh"
+fi
+if grep -qE 'OFFHOST_S3_CMD|bash .*offhost' <<<"$sched_code"; then
+  no "A13b backup-schedule.sh no debe ejecutar transporte off-host"
+else
+  ok "A13b backup-schedule.sh no ejecuta ningun transporte off-host"
+fi
+svc="$ROOT_DIR/scripts/ops/backup-schedule.service"
+if grep -q 'ExecStart=.*backup-schedule\.sh' "$svc" && ! grep -q 'offhost' "$svc"; then
+  ok "A14 la unidad systemd arranca backup-schedule.sh y no el uploader"
+else
+  no "A14 la unidad systemd no arranca solo backup-schedule.sh"
+fi
+
+# --- A15: el emisor es compartido, no duplicado ------------------------------
+lib="$ROOT_DIR/scripts/ops/lib/alert.sh"
+if [[ -f "$lib" ]]; then
+  ok "A15 existe la libreria compartida de alertas"
+else
+  no "A15 falta scripts/ops/lib/alert.sh"
+fi
+dupes="$(grep -c 'printf.*timestamp.*result.*exit_code' "$sched" "$ROOT_DIR/scripts/ops/offhost-upload.sh" 2>/dev/null | grep -v ':0$' || true)"
+if [[ -z "$dupes" ]]; then
+  ok "A16 el payload JSON esta definido una sola vez (en lib/alert.sh)"
+else
+  no "A16 el payload JSON esta duplicado en: $dupes"
+fi
+for s in "$sched" "$ROOT_DIR/scripts/ops/offhost-upload.sh"; do
+  if grep -q 'lib/alert.sh' "$s"; then
+    ok "A17 $(basename "$s") usa el emisor compartido"
+  else
+    no "A17 $(basename "$s") no usa lib/alert.sh"
+  fi
+done
+
+# --- A18: el emisor nunca cambia el codigo de salida ------------------------
+if bash -c 'set -Eeuo pipefail; source scripts/ops/lib/alert.sh; ALERT_CMD="exit 9"; emit_alert partial_upload_failed 76 2026-10-01T00:00:00Z; exit 76' 2>/dev/null; then
+  no "A18 el proceso deberia salir 76 con un canal caido"
+else
+  rc18=$?
+  check "A18 el codigo de salida sobrevive a un canal caido" "$rc18" "76"
+fi
 printf '\n  %d ok, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]] || exit 1

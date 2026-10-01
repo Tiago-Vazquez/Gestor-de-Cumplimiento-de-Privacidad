@@ -144,3 +144,119 @@ fi
 
 printf '\n  %d ok, %d fail\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]] || exit 1
+
+# =============================================================================
+# M29.2 A2 - Seam de alerta (ALERT_CMD). Offline y determinista.
+# El "canal" es un comando que escribe el JSON recibido por stdin en un
+# fichero: no hay red, ni proveedor, ni credenciales.
+# =============================================================================
+echo ""
+echo "M29.2 A2 alert seam tests (offline, sin red)"
+
+ALERT_OUT="$WORK/alert.json"
+
+# Doble de canal: guarda el payload. Si el scheduler no lo invoca, el fichero
+# se queda ausente -> eso ES la asercion de "no se invoco".
+make_alert_double() {
+  printf '#!/usr/bin/env bash\ncat > %q\n' "$ALERT_OUT"
+}
+
+run_alert() {
+  # $1 = codigo del backup, $2 = valor de ALERT_CMD (vacio = sin canal)
+  local code="$1" alert_cmd="$2" double out rc
+  double="$(make_double "$code")"
+  rm -f "$ALERT_OUT"
+  if [[ -z "$alert_cmd" ]]; then
+    out="$(env -u ALERT_CMD BACKUP_CMD="$double" bash "$SCHEDULER" 2>&1)"
+  else
+    out="$(ALERT_CMD="$alert_cmd" BACKUP_CMD="$double" bash "$SCHEDULER" 2>&1)"
+  fi
+  rc=$?
+  LAST_OUT="$out"
+  LAST_RC="$rc"
+}
+
+ALERT_OK="$(make_alert_double)"
+# --- T11: sin ALERT_CMD el comportamiento de R9a queda INTACTO --------------
+run_alert 0 ""
+check "T11 sin ALERT_CMD y backup ok conserva exit 0" "$LAST_RC" "0"
+if [[ ! -s "$ALERT_OUT" ]]; then ok "T11b sin ALERT_CMD no se invoca ningun canal"; else no "T11b se invoco un canal sin ALERT_CMD"; fi
+run_alert 76 ""
+check "T11d sin ALERT_CMD un 76 sigue propagandose como 76" "$LAST_RC" "76"
+if [[ ! -s "$ALERT_OUT" ]]; then ok "T11e sin ALERT_CMD un 76 tampoco notifica"; else no "T11e un 76 notifico sin ALERT_CMD"; fi
+
+# --- T12: result=ok NO alerta -------------------------------------------------
+run_alert 0 "$ALERT_OK"
+check "T12 ok conserva exit 0" "$LAST_RC" "0"
+if [[ ! -s "$ALERT_OUT" ]]; then ok "T12b ok NO invoca el canal de alerta"; else no "T12b ok SI invoco el canal"; fi
+
+# --- T13: skipped_locked (75) alerta -----------------------------------------
+run_alert 75 "$ALERT_OK"
+check "T13 skipped_locked conserva exit 75" "$LAST_RC" "75"
+if [[ -s "$ALERT_OUT" ]]; then ok "T13b skipped_locked SI invoca el canal"; else no "T13b skipped_locked NO notifico"; fi
+
+# --- T14: partial_upload_failed (76) alerta ---------------------------------
+run_alert 76 "$ALERT_OK"
+check "T14 partial_upload_failed conserva exit 76" "$LAST_RC" "76"
+if [[ -s "$ALERT_OUT" ]]; then ok "T14b partial_upload_failed SI invoca el canal"; else no "T14b partial_upload_failed NO notifico"; fi
+
+# --- T15: failed (otros codigos) alerta --------------------------------------
+run_alert 1 "$ALERT_OK"
+check "T15 failed conserva exit 1" "$LAST_RC" "1"
+if [[ -s "$ALERT_OUT" ]]; then ok "T15b failed SI invoca el canal"; else no "T15b failed NO notifico"; fi
+
+# --- T16: un canal caido NO altera el codigo del backup ----------------------
+# Garantia central de A2: el exit code es el del BACKUP, jamas el del canal.
+# Con result=ok el canal ni se invoca (politica), asi que el caso interesante
+# es un backup NO exitoso al que se le rompe el canal de aviso.
+run_alert 76 "exit 3"
+check "T16 backup 76 + canal caido => exit 76 (no se degrada a 3)" "$LAST_RC" "76"
+if grep -q "alert delivery FAILED" <<<"$LAST_OUT"; then
+  ok "T16b el fallo del canal queda registrado"
+else
+  no "T16b el fallo del canal no quedo registrado"
+fi
+run_alert 1 "exit 9"
+check "T16c backup 1 + canal caido => exit 1 (no enmascarado)" "$LAST_RC" "1"
+
+# --- T17: el JSON minimo lleva timestamp, result y exit_code ----------------
+run_alert 76 "$ALERT_OK"
+payload="$(cat "$ALERT_OUT" 2>/dev/null || true)"
+for field in timestamp result exit_code; do
+  if grep -q "\"$field\"" <<<"$payload"; then
+    ok "T17 el evento JSON incluye $field"
+  else
+    no "T17 el evento JSON NO incluye $field"
+  fi
+done
+if grep -q "\"result\":\"partial_upload_failed\"" <<<"$payload"; then
+  ok "T17b el campo result viaja con el valor correcto"
+else
+  no "T17b result no viaja con el valor correcto"
+fi
+if grep -q "\"exit_code\":76" <<<"$payload"; then
+  ok "T17c exit_code viaja como numero, no como cadena"
+else
+  no "T17c exit_code no viaja como numero"
+fi
+if grep -qE "\"timestamp\":\"[0-9]{4}-[0-9]{2}-[0-9]{2}T" <<<"$payload"; then
+  ok "T17d el timestamp tiene formato ISO-8601 UTC"
+else
+  no "T17d el timestamp no tiene formato ISO-8601"
+fi
+if [[ "$(wc -l < "$ALERT_OUT")" -le 1 ]]; then
+  ok "T17e el evento es un unico objeto JSON"
+else
+  no "T17e el evento ocupa mas de una linea"
+fi
+
+# --- T18: no se presupone ningun proveedor ----------------------------------
+prov="$(grep -nEi "slack|discord|telegram|smtp|sendgrid|mailgun|alertmanager|nodemailer|https?://" "$SCHEDULER" | grep -vE "^[0-9]+:[[:space:]]*#" || true)"
+if [[ -z "$prov" ]]; then
+  ok "T18 el disparador no presupone ningun proveedor concreto"
+else
+  no "T18 el disparador acopla un proveedor: $prov"
+fi
+
+printf "\n  %d ok, %d fail\n" "$PASS" "$FAIL"
+[[ "$FAIL" == 0 ]] || exit 1

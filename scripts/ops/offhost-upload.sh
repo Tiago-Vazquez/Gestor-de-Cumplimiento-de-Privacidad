@@ -18,12 +18,29 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/ops/common.sh
 source "$ROOT_DIR/scripts/ops/common.sh"
 
+# Prefijo de las lineas de alerta en los logs de este script.
+ALERT_LOG_PREFIX="offhost"
+
+# M29.2 A2: alerting. El 76 NACE AQUI, asi que la alerta se emite aqui: este es
+# el unico punto del repositorio donde se produce EXIT_UPLOAD_FAILED. El mismo
+# contrato ALERT_CMD que usa backup-schedule.sh, con el emisor compartido en
+# lib/alert.sh para que no haya dos definiciones del payload JSON.
+# El calendario de A1 NO ejecuta este script (ver docs/operations-runbook.md 12).
+# shellcheck source=scripts/ops/lib/alert.sh
+source "$ROOT_DIR/scripts/ops/lib/alert.sh"
+
 # M26.0: 75 is already EX_TEMPFAIL (lock held). 76 is new and distinct: the
 # local backup is complete and verified, but it is NOT off-host. The distinction
 # is the whole point. Exit 1 can be a full disk; 76 means the host is healthy
 # and simply has no off-site copy. An alert that cannot tell them apart is not
 # actionable.
 EXIT_UPLOAD_FAILED=76
+
+# Un unico timestamp por ejecucion, reutilizado por todas las alertas de este
+# script: varios objetos pueden fallar, pero un unico evento describe la
+# ejecucion. Se captura al inicio para que la hora sea la del intento, no la
+# del ultimo objeto reintentado.
+ALERT_TIMESTAMP="$(date -u +%FT%TZ)"
 
 BUCKET="${BACKUP_BUCKET:-}"
 # NOTE on ${VAR-default} vs ${VAR:-default}: the `:-` form also substitutes when
@@ -194,6 +211,11 @@ upload_one() {
   # upload failed would turn a network problem into data loss, which is the
   # exact failure this milestone exists to prevent.
   echo "offhost: the local backup is intact and will be retried on the next run" >&2
+
+  # M29.2 A2: se alerta en el punto exacto donde nace el 76. emit_alert devuelve
+  # siempre 0, asi que bajo `set -e` no aborta aqui ni convierte este fallo en
+  # exito: la linea siguiente sigue siendo la que fijara el codigo de salida.
+  emit_alert "partial_upload_failed" "$EXIT_UPLOAD_FAILED" "$ALERT_TIMESTAMP"
   return "$EXIT_UPLOAD_FAILED"
 }
 

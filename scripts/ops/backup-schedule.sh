@@ -42,6 +42,32 @@ emit() {
   fi
 }
 
+# --- M29.2 A2: seam de alerta (opcional y desacoplada) -----------------------
+# ALERT_CMD es un comando al que se entrega el evento en JSON por stdin. Es el
+# mismo patron que OFFHOST_S3_CMD en offhost-upload.sh: aqui no vive ningun
+# proveedor (ni Slack, ni SMTP, ni Discord, ni webhook). Si NO se define, no hay
+# alerta y el backup se comporta EXACTAMENTE igual que sin este bloque.
+#
+# POLITICA INICIAL (fijada por requisito, no deducida del codigo):
+#   ok                    -> NO alerta
+#   skipped_locked        -> alerta
+#   partial_upload_failed -> alerta
+#   failed                -> alerta
+#
+# GARANTIA CRITICA: el canal de alerta NUNCA cambia el codigo de salida. Un 0
+# sigue siendo 0 aunque el canal este caido, y un 75/76 no se degrada a 0. Un
+# backup correcto jamas puede convertirse en fallo por un problema de
+# notificacion (ni al reves).
+
+# El emisor vive en lib/alert.sh: una sola definicion del contrato JSON y de la
+# garantia "una alerta jamas cambia el codigo de salida". offhost-upload.sh
+# comparte exactamente el mismo contrato. alert_log se redirige a emit() para
+# que este script conserve su LOG_FILE.
+# shellcheck source=scripts/ops/lib/alert.sh
+source "$ROOT_DIR/scripts/ops/lib/alert.sh"
+
+alert_log() { emit "$*"; }
+
 emit "backup-schedule: invoking $(basename "$BACKUP_CMD")"
 started_at="$(date -u +%FT%TZ)"
 
@@ -52,18 +78,29 @@ rc=$?
 
 case "$rc" in
   0)
+    result="ok"
     emit "backup-schedule: result=ok exit_code=0 started_at=$started_at"
     ;;
   75)
+    result="skipped_locked"
     emit "backup-schedule: result=skipped_locked exit_code=75 (EXIT_LOCKED: another backup is in progress) started_at=$started_at"
     ;;
   76)
+    result="partial_upload_failed"
     emit "backup-schedule: result=partial_upload_failed exit_code=76 (EXIT_UPLOAD_FAILED: local backup ok, off-host upload failed) started_at=$started_at"
     ;;
   *)
+    result="failed"
     emit "backup-schedule: result=failed exit_code=$rc started_at=$started_at"
     ;;
 esac
+
+# --- M29.2 A2: la alerta se emite DESPUES de clasificar ---
+# Solo "ok" queda en silencio; cualquier otro resultado avisa.
+# Esta llamada NO puede alterar $rc: emit_alert devuelve 0 y nunca ejecuta exit.
+if [[ "$result" != "ok" ]]; then
+  emit_alert "$result" "$rc" "$started_at"
+fi
 
 # Se propaga el codigo ORIGINAL. Un 75 o 76 nunca se reporta como 0.
 exit "$rc"

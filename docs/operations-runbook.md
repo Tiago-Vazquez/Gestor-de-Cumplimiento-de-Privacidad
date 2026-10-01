@@ -421,9 +421,9 @@ probes. **Lo siguiente sigue abierto:**
 | Ítem | Estado | Por qué |
 | --- | --- | --- |
 | **R9a — scheduler de backup** | **Implementado en código, pendiente de desplegar** | El contrato es `scripts/ops/backup-schedule.sh` + unidades systemd; falta instalarlo y probarlo en el VPS |
-| **R9c — alertas** | **Abierto** | Nada notifica un backup fallido (M29.2 A2) |
+| **R9c — alertas** | **Implementado en codigo, pendiente de canal** | `ALERT_CMD` alerta desde el backup programado y desde el uploader; sin definirlo en el VPS nadie recibe nada (M29.2 A2) |
 | **R9d — retención remota** | **Diseñado, no aplicado** | Las reglas lifecycle están decididas (90 d) pero exigen bucket |
-| **Salida `76` del uploader** | **Implementada** | Distingue subida fallida de fallo local |
+| **Salida `76` del uploader** | **Implementada** | Distingue subida fallida de fallo local; la emite `offhost-upload.sh`, no el backup programado |
 | **PITR / WAL** | **Abierto** | ADR-002 D5 lo aísla; sin destino off-host no puede ejecutarse |
 | **Réplicas / HA** | **Fuera de alcance** | ADR-002 D0 asume un único VPS |
 
@@ -436,10 +436,15 @@ probes. **Lo siguiente sigue abierto:**
 | `76` | Backup local correcto, **subida remota fallida** |
 
 Sin esa distinción, un `1` (disco lleno) y un `76` (host sano sin copia externa)
-serían el mismo aviso. **Hoy nadie consume esa señal**: es lo que un monitor
-necesitaría, y el monitor no existe.
+serían el mismo aviso. El `76` lo produce **exclusivamente** `offhost-upload.sh`:
+`postgres-backup.sh` nunca devuelve ese código, y el calendario de A1 no
+ejecuta el uploader. Con `ALERT_CMD` configurado, la señal se entrega al canal
+desde el propio uploader.
 
 El backup local **nunca** se borra ante un `76`, y el uploader **no** intenta un
+borrado compensatorio de lo ya publicado: un set sin `.manifest` es inutilizable
+por diseño, y los huérfanos los reclama el lifecycle.
+
 ### Qué dispara el backup
 
 `scripts/ops/backup-schedule.sh` es el contrato; el calendario vive fuera del
@@ -463,14 +468,79 @@ runner de GitHub es efímero, así que un `schedule` allí no ejecutaría el bac
 real. El script del repositorio es el mismo en ambos casos.
 
 **Interpretar el resultado.** Cada ejecución deja una línea
-`backup-schedule: result=<ok|skipped_locked|partial_upload_failed|failed> exit_code=<n>`
-con el **mismo** código que devolvió `postgres-backup.sh` (`0`, `75`, `76` u otro):
+`backup-schedule: result=<ok|skipped_locked|failed> exit_code=<n>` con el **mismo**
+código que devolvió `postgres-backup.sh` (`0`, `75` u otro):
 
+- `ok` (0): el backup local se completó.
 - `skipped_locked` (75) **no es un fallo**: ya había un backup en curso.
-- `partial_upload_failed` (76) **sí requiere atención**: el backup local está bien
-  pero no llegó a off-host. Es la señal que R9c deberá notificar.
-borrado compensatorio de lo ya publicado: un set sin `.manifest` es inutilizable
-por diseño, y los huérfanos los reclama el lifecycle.
+- `failed`: el backup no se completó.
+
+⚠️ **El calendario NO publica nada off-host.** `backup-schedule.sh` invoca
+**solo** `postgres-backup.sh`, que no habla con B2. Por tanto:
+
+- El flujo programado **no ejecuta `offhost-upload.sh`** y **no puede devolver
+  `76`**: ese código lo produce únicamente el uploader.
+- El backup programado **no garantiza publicación off-host**. Una copia local
+  correcta a las 02:17 no implica nada fuera del host.
+- La publicación se lanza aparte, a mano, con `pnpm run ops:offhost-upload`
+  (ver `DEPLOY.md`).
+
+Por eso el caso `partial_upload_failed` **no aparece nunca en la línea del
+disparador**: se emite desde el uploader, donde nace el `76`.
+
+### Alertas del backup (M29.2 A2)
+
+La notificación se delega en `ALERT_CMD`: un comando al que se entrega el evento
+en JSON **por stdin**. El repositorio **no** presupone ningún proveedor (ni
+Slack, ni SMTP, ni Discord, ni Telegram, ni Alertmanager): el destino se enchufa
+desde fuera, en el VPS.
+
+El emisor está en `scripts/ops/lib/alert.sh`, **sourceado por los dos scripts**
+que pueden fallar, de modo que el contrato JSON existe en un único sitio:
+
+| Emisor | Cuándo emite |
+| --- | --- |
+| `backup-schedule.sh` | `skipped_locked` y `failed` del backup programado |
+| `offhost-upload.sh` | `partial_upload_failed`, en el punto exacto donde nace el `76` |
+
+Las dos rutas que ejecutan el uploader quedan cubiertas: `pnpm run
+ops:offhost-upload` y cualquier encadenado manual de `ops:backup` +
+`ops:offhost-upload`.
+
+```bash
+# Sin definir: no hay alerta, el backup se comporta igual y el scheduler no falla
+ALERT_CMD='logger -t backup-alert'
+
+# Con canal: recibe el JSON por stdin
+ALERT_CMD='/ruta/al/notificador.sh'
+```
+
+El evento tiene esta forma:
+
+```json
+{"timestamp":"2026-10-01T02:17:00Z","result":"partial_upload_failed","exit_code":76}
+```
+
+Política de emisión:
+
+| `result` | Alerta | Por qué |
+| --- | --- | --- |
+| `ok` | No | El backup funcionó |
+| `skipped_locked` | Sí | Un backup anterior sigue en curso |
+| `partial_upload_failed` | Sí | Hay copia local pero no off-host |
+| `failed` | Sí | El backup no se completó |
+
+`partial_upload_failed` solo lo puede emitir `offhost-upload.sh`, porque es el
+único script que devuelve `76`.
+
+**El canal nunca cambia el resultado.** Si `ALERT_CMD` falla, el fallo queda
+registrado (`alert delivery FAILED`) y el código de salida sigue siendo el del
+backup: un `76` no se convierte en `0` ni en el código del canal. Un backup
+correcto jamás se reporta como fallo por un problema de notificación.
+
+**Pendiente de infraestructura:** el contrato existe y está probado, pero sin
+un `ALERT_CMD` configurado en el VPS **nadie recibe nada**. Cerrar R9c exige
+elegir y credenciar el destino.
 
 ## 13. Pérdida de `SOURCE_ENCRYPTION_KEY`
 
