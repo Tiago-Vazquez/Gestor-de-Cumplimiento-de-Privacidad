@@ -183,8 +183,16 @@ rate limiting, backup/restore verificado.
 - **MFA**: no implementado. Login solo por email + contrasena.
 - **Recuperacion de contrasena**: no implementada.
 - **TLS / reverse proxy / dominio**: no incluidos en el repositorio.
-- **Politica de `complianceScore`**: provisional (100 / 0), no aprobada. Ver
-  `docs/adr/ADR-004`.
+
+**Aprobado e implementado**:
+- **Politica de `complianceScore`**: **aprobada** (`docs/adr/ADR-004`) e
+  **implementada**. Es una politica ponderada por severidad
+  (`low` 1, `medium` 3, `high` 7, `critical` 15) sobre los hallazgos **abiertos**
+  de la organizacion: `max(0, 100 - penalizacion)`, con piso en `0` y resultado
+  entero. Ya no es el `100 / 0` provisional. El calculo vive aislado en
+  `compliance-score.ts` y no altera el contrato de la API.
+- No es una certificacion ni un porcentaje legal de cumplimiento: mide carga de
+  hallazgos abiertos por severidad.
 
 **Dependiente de infraestructura externa**:
 - **Backblaze B2, Object Lock, lifecycle**: bloqueados hasta que exista un VPS.

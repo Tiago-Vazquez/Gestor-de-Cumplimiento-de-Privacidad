@@ -123,9 +123,15 @@ aplicar migraciones y seed.
 
 ## Limitaciones que conviene decir en voz alta
 
-- La puntuacion de cumplimiento es **provisional**.
+- La puntuacion de cumplimiento usa una **politica aprobada** (`ADR-004`),
+  ponderada por severidad. Mide hallazgos abiertos, no es una certificacion.
 - No hay MFA ni recuperacion de contrasena.
-- El backup es **manual** y no hay alertas de fallo.
+- El backup tiene **disparador programado y mecanismo de alertas implementados**,
+  pero **no estan desplegados**: la cadencia (`backup-schedule.timer`) es una
+  plantilla que instalar en el VPS, asi que hoy **ningun entorno proporcionado por
+  este repositorio ejecuta el backup de forma programada** y se lanza a mano. Tampoco
+  hay canal de alertas: sin un `ALERT_CMD` configurado en un servidor real,
+  nadie recibe avisos.
 - El DR drill valida preservacion de datos en local, **no** recuperacion ante
   perdida de la maquina.
 
