@@ -22,14 +22,13 @@ audit reports **0 critical and 0 high**; the gate is currently green. This is a
 measured result, not an assumption — re-run `pnpm audit --audit-level high` rather
 than trusting this paragraph, because the advisory database changes over time.
 
-The residual findings are development/test-only and do not weaken the required
-high/critical gate:
+After closing `esbuild` (GHSA-g7r4-m6w7-qqqr) and `qs` (GHSA-x5fp-wj9c-mxmx,
+GHSA-4mjr-xmp4-gh2g), the only residual finding is development/test-only and does
+not weaken the required high/critical gate:
 
 | Package | Severity | Path | Why it is accepted |
 | --- | --- | --- | --- |
-| `esbuild` | low | API build tooling | Not shipped as a runtime service. Already pinned to `0.27.3`; upgrade to `>=0.28.1` is a separately reviewed tool change. |
-| `qs` (2 advisories) | moderate | `supertest`/`superagent` test dependency | Test-only; the test server is never exposed. Fixed upstream by `>=6.16.0`; resolves when `supertest` updates its range. |
-| `vitest` / `@vitest/mocker` | moderate | API/frontend test runner | Test-only. Fixed in `>=4.1.11`; the current pin is `3.2.7`, chosen as the minimum that clears the high/critical gate without an unnecessary major bump. |
+| `vitest` / `@vitest/mocker` | moderate | API/frontend test runner | Test-only, single advisory (GHSA-82fw-gwwq-j7x9): it affects the Vitest **dev server**, not `vitest run`, which is what CI executes. Fixed in `>=4.1.11`; the current pin is `3.2.7`, chosen as the minimum that clears the high/critical gate without an unnecessary major bump. |
 
 ### Why Vitest 3 is required, not optional
 

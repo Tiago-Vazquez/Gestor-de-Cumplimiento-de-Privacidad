@@ -82,7 +82,7 @@ overrides:
   # linux-x64 (Replit) resolution is unchanged.
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
-  esbuild: "0.27.3"
+  esbuild: "0.28.1"
   # Security-only transitive pins required by the high/critical audit gate.
   # Keep these aligned with the patched versions reported by pnpm audit.
   "fast-uri": "3.1.8"
@@ -91,9 +91,12 @@ overrides:
   "nanoid": "3.3.18"
   "@scalar/json-magic>undici": "7.29.1"
 
+  # qs llega transitivo via supertest>superagent, cuyo rango ^6.14.1 ya admite
+  # 6.16.0; el override solo sube a la version parcheada (GHSA-x5fp-wj9c-mxmx).
+  "qs": "6.16.0"
 
 # pnpm >= 11 build-script approval (replaces onlyBuiltDependencies there).
-# esbuild is trusted in this workspace: it is pinned to 0.27.3 via `overrides`
+# esbuild is trusted in this workspace: it is pinned to 0.28.1 via `overrides`
 # and already allowlisted for pnpm <= 10 via `onlyBuiltDependencies`.
 allowBuilds:
   esbuild: true
