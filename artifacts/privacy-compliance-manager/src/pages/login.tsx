@@ -55,7 +55,7 @@ export default function LoginPage() {
             <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-[#efb34f] ring-2 ring-sidebar" />
           </span>
           <div>
-            <span className="block font-display text-[17px] font-bold tracking-[-0.02em] text-white">Sentinel</span>
+            <span className="block font-display text-[17px] font-bold tracking-[-0.02em] text-foreground">Sentinel</span>
             <span className="block font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground/60">privacy control</span>
           </div>
         </div>
