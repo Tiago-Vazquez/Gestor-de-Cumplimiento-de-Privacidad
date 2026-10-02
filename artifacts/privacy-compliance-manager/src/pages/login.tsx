@@ -103,7 +103,12 @@ export default function LoginPage() {
             {loading ? 'Validando…' : 'Iniciar sesión'}
             {loading ? <span className="skeleton h-4 w-4 rounded-full" /> : <LogIn size={15} />}
           </button>
-          <p className="mt-4 text-center text-xs text-muted-foreground">
+          <p className="mt-2 text-center text-xs text-muted-foreground">
+            <Link href="/forgot-password" className="underline" data-testid="link-forgot-password">
+              ¿Olvidaste tu contrasena?
+            </Link>
+          </p>
+<p className="mt-4 text-center text-xs text-muted-foreground">
             ¿No tienes cuenta?{' '}
             <Link href="/register" className="font-semibold text-primary hover:underline" data-testid="link-register">
               Regístrate

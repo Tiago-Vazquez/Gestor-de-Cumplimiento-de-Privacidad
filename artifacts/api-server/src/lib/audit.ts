@@ -38,6 +38,8 @@ export type AuditAction =
   | "logout_all"
   | "session_revoked"
   | "password_changed"
+  | "password_reset_requested"
+  | "password_reset_completed"
   | "user_updated"
   | "user_roles_updated"
   | "source_created"

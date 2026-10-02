@@ -54,6 +54,18 @@ type MockSession = Omit<Session, "activeOrgId"> & { activeOrgId?: string | null 
 
 export type MockState = {
   users: User[];
+  /** M30.0: tokens de recuperacion en memoria (solo el hash persiste). */
+  passwordResetTokens: Array<{
+    id: string;
+    userSub: string;
+    tokenHash: string;
+    expiresAt: Date;
+    consumedAt: Date | null;
+    requestedIp: string | null;
+    createdAt: Date;
+  }>;
+  /** Secuencia monotónica de ids (evita colisiones al invalidar). */
+  passwordResetSeq: number;
   userRoles: UserRole[];
   scanSchedules: ScanSchedule[];
   sessions: MockSession[];
@@ -279,6 +291,9 @@ export function createMockRepos() {
 
   const state: MockState = {
     users: [],
+    passwordResetTokens: [],
+    /** Secuencia monotónica de ids (evita colisiones al invalidar). */
+    passwordResetSeq: 0,
     userRoles: [],
   sessions: [],
   scanSchedules: [],
@@ -1089,6 +1104,60 @@ export function createMockRepos() {
               .map((scan) => ({ at: scan.completedAt, recordsRead: scan.recordsRead })),
           }),
         };
+      },
+    },
+    /**
+     * M30.0: recuperacion de contrasena. Mismo contrato que
+     * `repositories/password-reset.repo`, version in-memory: el token en claro
+     * NUNCA se persiste, solo su hash SHA-256.
+     */
+    passwordReset: {
+      async create(values: {
+        userSub: string;
+        tokenHash: string;
+        expiresAt: Date;
+        requestedIp?: string | null;
+      }) {
+        const now = new Date();
+        // Un nuevo request invalida los pendientes previos del mismo usuario.
+        for (const row of state.passwordResetTokens) {
+          if (row.userSub === values.userSub && row.consumedAt === null) row.consumedAt = now;
+        }
+        const row = {
+          id: `prt-${(state.passwordResetSeq = (state.passwordResetSeq ?? 0) + 1)}`,
+          userSub: values.userSub,
+          tokenHash: values.tokenHash,
+          expiresAt: values.expiresAt,
+          consumedAt: null as Date | null,
+          requestedIp: values.requestedIp ?? null,
+          createdAt: now,
+        };
+        state.passwordResetTokens.push(row);
+        return row;
+      },
+      async consumeByTokenHash(values: {
+        tokenHash: string;
+        newPasswordHash: string;
+        now: Date;
+      }) {
+        const token = state.passwordResetTokens.find((r) => r.tokenHash === values.tokenHash);
+        if (!token) return { ok: false as const, reason: "not_found" as const };
+        if (token.consumedAt) return { ok: false as const, reason: "already_used" as const };
+        if (token.expiresAt.getTime() <= values.now.getTime()) {
+          return { ok: false as const, reason: "expired" as const };
+        }
+        const user = state.users.find((u) => u.sub === token.userSub);
+        if (user) {
+          user.passwordHash = values.newPasswordHash;
+          user.updatedAt = values.now;
+        }
+        for (const session of state.sessions) {
+          if (session.userSub === token.userSub && session.revokedAt === null) {
+            session.revokedAt = values.now;
+          }
+        }
+        token.consumedAt = values.now;
+        return { ok: true as const, userSub: token.userSub };
       },
     },
     users: {

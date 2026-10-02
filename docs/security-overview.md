@@ -36,6 +36,28 @@ PostgreSQL: RLS con app.current_tenant (fail-closed)
 | Password de >= 32 caracteres en `SOURCE_ENCRYPTION_KEY` | Fail-closed en produccion | `lib/.../secret-manager.ts:32-46` |
 | Kill switch de registro | `AUTH_REGISTRATION_ENABLED` | `routes/auth.ts:266` |
 | Provisioning de admin | Script idempotente, fuera del flujo HTTP | `lib/db/src/provision-admin.ts` |
+| Recuperacion de contrasena | Token aleatorio de 32 bytes, solo SHA-256 en BD | `repositories/password-reset.repo.ts` |
+
+### 2.1 Recuperacion de contrasena (M30.0)
+
+Flujo de dos endpoints sin sesion: **el token es la credencial**.
+
+| Control | Decision |
+| --- | --- |
+| Token | `randomBytes(32)` en base64url (256 bits). En BD solo su SHA-256 (`token_hash`, indice unico). El token en claro nunca se persiste ni se registra. |
+| TTL | 1 hora (`PASSWORD_RESET_TTL_MS`). Pedir un reset nuevo invalida los pendientes anteriores del usuario. |
+| Anti-enumeracion | `POST /api/auth/password/forgot` responde **siempre** 202 con el mismo cuerpo, exista o no la cuenta. Un fallo del canal de entrega tampoco cambia la respuesta. |
+| Fallo indistinguible | `POST /api/auth/password/reset` responde el mismo 400 (`Invalid or expired reset token`) para token inexistente, expirado o ya usado. |
+| Consumo unico | `consumed_at` con `SELECT ... FOR UPDATE` + `IS NULL` en una transaccion que cambia la contrasena, revoca **todas** las sesiones del usuario y consume el token. Un fallo hace ROLLBACK. |
+| Rate limiting | Buckets propios y aislados: `forgot` 5/15min, `reset` 10/15min, con clave IP + email normalizado (mismo criterio que `loginLimiter`, para no aislar a una victima). |
+| Politica de contrasena | Reutiliza `isValidPassword`, la misma que registro y `password/change`. |
+
+**Entrega**: no hay SMTP. El enlace sale por un seam, `PASSWORD_RESET_DELIVERY_CMD`, que
+recibe el payload por **stdin** (mismo enfoque que `ALERT_CMD`). En desarrollo,
+`PASSWORD_RESET_DELIVERY_CMD=cat` imprime el enlace. Si el comando falla, se registra
+pero el endpoint **no** cambia de respuesta: un canal roto no puede convertirse en un
+`500` que delate si la cuenta existe. `PASSWORD_RESET_BASE_URL` permite fijar la base
+del enlace en produccion.
 
 `SOURCE_ENCRYPTION_KEY` ausente o corta **aborta el arranque** en produccion; en
 desarrollo emite warning y continua.
@@ -181,8 +203,11 @@ rate limiting, backup/restore verificado.
 
 **Pendiente**:
 - **MFA**: no implementado. Login solo por email + contrasena.
-- **Recuperacion de contrasena**: no implementada.
 - **TLS / reverse proxy / dominio**: no incluidos en el repositorio.
+- **Recuperacion de contrasena**: **implementada y probada** (M30.0) en cuanto al
+  modelo, los endpoints, la UI y los tests. Lo que **no** existe es el transporte:
+  sin un proveedor de correo configurado en `PASSWORD_RESET_DELIVERY_CMD` el enlace
+  no sale a nadie. El seam existe precisamente para no atar el flujo a un proveedor.
 
 **Aprobado e implementado**:
 - **Politica de `complianceScore`**: **aprobada** (`docs/adr/ADR-004`) e

@@ -139,6 +139,13 @@
       "when": 1790400000000,
       "tag": "0019_neutralize_dev_role_passwords",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790400000001,
+      "tag": "0020_password_reset_tokens",
+      "breakpoints": true
     }
   ],
   "version": "7",

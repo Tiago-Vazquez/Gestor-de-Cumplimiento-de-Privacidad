@@ -13,6 +13,8 @@ import { AuthProvider, useAuth } from '@/auth/auth-context';
 import { FullScreenSpinner, ProtectedRoute } from '@/auth/protected-route';
 import LoginPage from '@/pages/login';
 import RegisterPage from '@/pages/register';
+import ForgotPasswordPage from '@/pages/forgot-password';
+import ResetPasswordPage from '@/pages/reset-password';
 import DashboardPage from '@/pages/dashboard';
 import FindingsPage from '@/pages/findings';
 import SourcesPage from '@/pages/sources';
@@ -106,6 +108,8 @@ function Router() {
       <Switch>
         <Route path="/login" component={LoginPage} />
         <Route path="/register" component={RegisterPage} />
+      <Route path="/forgot-password" component={ForgotPasswordPage} />
+      <Route path="/reset-password" component={ResetPasswordPage} />
         <Route>
           <Redirect to="/login" />
         </Route>

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
+import { z } from "zod";
 import { rateLimit } from "express-rate-limit";
 import { optionalPersistentStore } from "../lib/rate-limit-store";
 import { logger } from "../lib/logger";
@@ -17,6 +18,8 @@ import { sendProblemJson } from "../lib/problem-json";
 import { generateCsrfToken } from "../auth/csrf";
 import { sessionIdleSeconds } from "../lib/env";
 import { recordAuditEvent } from "../lib/audit";
+import { deliverResetLink } from "../auth/password-reset-delivery";
+import * as passwordReset from "../repositories/password-reset.repo";
 import { hashPassword, verifyPassword } from "@workspace/auth";
 import {
   isValidName,
@@ -88,6 +91,45 @@ const registerLimiter = rateLimit({
     const email = typeof body.email === "string" ? normalizeEmail(body.email) : null;
     return email ? `${ip}:${email}` : ip;
   },
+});
+
+// M30.0 (recuperacion de contrasena): store por IP pura.
+// Se separan de login a proposito: el bucket de login se key por IP+email,
+// y el reset se pide SIN sesion, asi que solo hay IP.
+// Store PROPIO: compartir bucket con otro limiter los sabotearia entre si.
+const forgotStore = optionalPersistentStore("password-reset-forgot");
+const resetStore = optionalPersistentStore("password-reset-consume");
+
+/**
+ * M30.0: clave compuesta IP + email normalizado, misma logica que
+ * loginLimiter. Sin ella, un atacante podria agotar el bucket de una victima
+ * desde la misma IP y dejar a esa persona sin poder pedir su enlace.
+ */
+const forgotKeyGenerator = (req: { ip?: string; body?: unknown }) => {
+  const ip = req.ip ?? "";
+  const body = req.body as { email?: unknown } | undefined;
+  const email = typeof body?.email === "string" ? normalizeEmail(body.email) : null;
+  return email ? `${ip}:${email}` : ip;
+};
+
+const forgotLimiter = rateLimit({
+  store: forgotStore,
+  windowMs: 15 * 60 * 1000,
+  // 5 es alto a proposito: la respuesta es uniforme, asi que el limite
+  // protege el scrypt del reset, no oculta informacion.
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: forgotKeyGenerator as never,
+});
+
+const resetLimiter = rateLimit({
+  store: resetStore,
+  windowMs: 15 * 60 * 1000,
+  // scrypt es caro por intento: 10 es el techo de fuerza bruta tolerable.
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 const loginLimiter = rateLimit({
@@ -645,6 +687,129 @@ router.get("/me", requireAuth(), (req, res) => {
     sub: user?.sub ?? null,
     email: user?.email ?? null,
     roles: user?.roles ?? [],
+  });
+});
+
+
+// =============================================================================
+// M30.0 — Recuperación de contraseña.
+//
+// Sin sesión: por definición el usuario no recuerda su contraseña. Ninguna de
+// las dos rutas usa `requireAuth()`. La de reset tampoco usa `requireCsrf()`,
+// igual que `/login`: no hay sesión que proteger y el token ES la credencial.
+// =============================================================================
+
+/**
+ * Base del enlace. Deriva del origen de la petición porque, sinReverse proxy
+ * confiança, un host cabecero falsificado construiría un enlace que nadie
+ * recibe. El token es la credencial; el host solo decide dónde se llega.
+ */
+function resetLinkBase(req: { protocol: string; get(name: string): string | undefined }): string {
+  const configured = process.env.PASSWORD_RESET_BASE_URL;
+  if (configured && configured.trim() !== "") return configured.trim().replace(/\/+$/, "");
+  const host = req.get("host") ?? "localhost:8080";
+  return `${req.protocol}://${host}`;
+}
+
+const ForgotBody = z.object({
+  email: z.string().min(3).max(320),
+});
+
+/**
+ * `POST /api/auth/password/forgot` — pide un enlace de recuperación.
+ *
+ * Respuesta SIEMPRE 202 con el mismo cuerpo, exista o no la cuenta: responder
+ * distinto revelaría qué emails están registrados (enumeración de cuentas).
+ * El trabajo real ocurre igualmente; solo el resultado se oculta.
+ *
+ * El fallo del canal de entrega NUNCA cambia el código de respuesta: el
+ * contrato con el cliente es "si el email existe, recibirás un enlace".
+ */
+router.post("/password/forgot", forgotLimiter, async (req, res) => {
+  const parsed = ForgotBody.safeParse(req.body ?? {});
+  if (!parsed.success) throw badRequest("A valid email is required");
+
+  const email = normalizeEmail(parsed.data.email);
+  const account = email ? await repos.users.getByEmail(email) : null;
+
+  // Existe: se emite el token y se entrega el enlace por el seam.
+  if (account && account.passwordHash) {
+    const token = passwordReset.generatePasswordResetToken();
+    const expiresAt = new Date(Date.now() + passwordReset.PASSWORD_RESET_TTL_MS);
+    await repos.passwordReset.create({
+      userSub: account.sub,
+      tokenHash: passwordReset.hashPasswordResetToken(token),
+      expiresAt,
+      requestedIp: req.ip ?? null,
+    });
+    await deliverResetLink({
+      email: account.email,
+      resetUrl: `${resetLinkBase(req)}/reset-password?token=${encodeURIComponent(token)}`,
+      expiresAt,
+    });
+    await recordAuditEvent({
+      req,
+      actorUserId: account.sub,
+      action: "password_reset_requested",
+      resourceType: "session",
+      result: "success",
+      metadata: { method: "local" },
+    });
+  }
+
+  // No existe: no se crea nada, pero la respuesta es indistinguible.
+  res.status(202).json({
+    status: "accepted",
+    message: "If the account exists, a reset link has been sent.",
+  });
+});
+
+const ResetBody = z.object({
+  token: z.string().min(16).max(256),
+  newPassword: z.string().min(1).max(PASSWORD_MAX_LENGTH),
+});
+
+/**
+ * `POST /api/auth/password/reset` — consume el enlace y fija la contraseña.
+ *
+ * Todos los fallos (inexistente, expirado, ya usado) responden el MISMO 400
+ * con el mismo texto: distinguir "expirado" de "inexistente" convertiría el
+ * endpoint en un oráculo sobre tokens ya filtrados.
+ */
+router.post("/password/reset", resetLimiter, async (req, res) => {
+  const parsed = ResetBody.safeParse(req.body ?? {});
+  if (!parsed.success) throw badRequest("Invalid or expired reset token");
+
+  const { token, newPassword } = parsed.data;
+
+  if (!isValidPassword(newPassword)) {
+    throw badRequest("Password must be at least 12 characters");
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  const result = await repos.passwordReset.consumeByTokenHash({
+    tokenHash: passwordReset.hashPasswordResetToken(token),
+    newPasswordHash: passwordHash,
+    now: new Date(),
+  });
+
+  if (!result.ok) {
+    throw badRequest("Invalid or expired reset token");
+  }
+
+  // Trazabilidad. El token NO se registra jamás.
+  await recordAuditEvent({
+    req,
+    actorUserId: result.userSub,
+    action: "password_reset_completed",
+    resourceType: "session",
+    result: "success",
+    metadata: { method: "local", allSessionsRevoked: true },
+  });
+
+  res.status(200).json({
+    status: "ok",
+    message: "Password updated. All sessions have been revoked.",
   });
 });
 

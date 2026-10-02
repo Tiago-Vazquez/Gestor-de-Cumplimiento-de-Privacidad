@@ -10,6 +10,7 @@ import * as masking from "./masking.repo";
 import * as memberships from "./memberships.repo";
 import * as invitations from "./invitations.repo";
 import * as organizations from "./organizations.repo";
+import * as passwordReset from "./password-reset.repo";
 import * as rateLimits from "./rate-limits.repo";
 import * as reports from "./reports.repo";
 import * as rules from "./rules.repo";
@@ -30,6 +31,7 @@ export const repos = {
   masking,
   memberships,
   organizations,
+  passwordReset,
   rateLimits,
   reports,
   rules,
