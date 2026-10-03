@@ -1,6 +1,5 @@
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, writeFileSync } from "fs";
 import path from "path";
-import glob from "fast-glob";
 import chokidar from "chokidar";
 import type { FSWatcher } from "chokidar";
 import type { Plugin } from "vite";
@@ -39,11 +38,42 @@ export function mockupPreviewPlugin(): Plugin {
       .every((segment) => !segment.startsWith("_"));
   }
 
+  /**
+   * Recorre `dir` en profundidad y acumula las rutas POSIX de los `.tsx`.
+   *
+   * Reproduce el comportamiento del glob anterior (`**` bajo el directorio de
+   * mockups, ignorando cualquier ruta con un segmento `_`): se excluyen tanto
+   * las carpetas `_algo` como los ficheros `_componente.tsx`.
+   *
+   * El resultado se ordena para que el módulo generado sea estable entre
+   * sistemas de ficheros con distinto orden de lectura.
+   */
+  function collectTsxFiles(absDir: string, relBase: string, out: string[]): void {
+    let entries;
+    try {
+      entries = readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      // Directorio ausente o ilegible: equivale a cero mockups.
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith("_")) continue;
+      const abs = path.join(absDir, entry.name);
+      const rel = `${relBase}/${entry.name}`;
+      if (entry.isDirectory()) {
+        collectTsxFiles(abs, rel, out);
+      } else if (entry.isFile() && entry.name.endsWith(".tsx")) {
+        out.push(rel);
+      }
+    }
+  }
+
   async function discoverComponents(): Promise<Array<DiscoveredComponent>> {
-    const files = await glob(`${MOCKUPS_DIR}/**/*.tsx`, {
-      cwd: root,
-      ignore: ["**/_*/**", "**/_*.tsx"],
-    });
+    // Rutas relativas a la raíz del proyecto (`cwd` del glob anterior), con
+    // separador POSIX para que el mapa generado sea idéntico en Windows y Linux.
+    const found: string[] = [];
+    collectTsxFiles(getMockupsAbsDir(), MOCKUPS_DIR, found);
+    const files = found.sort();
 
     return files.map((f) => ({
       globKey: "./" + f.slice("src/".length),
