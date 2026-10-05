@@ -11,8 +11,10 @@
  * - Queries SIEMPRE parametrizadas; identificadores SOLO vía `quoteIdent`
  *   (backticks con escape) — nunca se interpola un nombre sin escapar.
  *
- * DEUDA DOCUMENTADA (M23.1, fuera de alcance): paginación LIMIT/OFFSET sin
- * ORDER BY estable (paridad con el comportamiento histórico de PostgreSQL).
+ * M41.1 — paginación estable: `readPage` ordena por la primary key de la tabla
+ * (resuelta vía `information_schema`) cuando existe; sin PK conserva el
+ * comportamiento histórico (orden no determinista). OFFSET/LIMIT sigue siendo
+ * vulnerable a inserciones/borrados concurrentes (limitación inherente).
  */
 import { createConnection, type Connection as MysqlRawConnection } from "mysql2/promise";
 import {
@@ -194,10 +196,46 @@ export async function listTables(
   return rows.map((row) => row.table_name ?? row.TABLE_NAME ?? "");
 }
 
+/** Cache de columnas PK por conexión (evita re-resolver el metadata por página). */
+const mysqlPrimaryKeyCache = new WeakMap<SourceConnection, Map<string, string[]>>();
+
+/**
+ * Resuelve las columnas de la primary key de la tabla (en orden), vía
+ * `information_schema.KEY_COLUMN_USAGE`. Devuelve `[]` si la tabla no tiene PK
+ * o si la conexión no declara namespace. La cache evita una consulta de
+ * metadata adicional en cada página.
+ */
+async function primaryKeyColumns(conn: MysqlConnection, table: string): Promise<string[]> {
+  const schema = conn.defaultNamespace;
+  if (!schema) return [];
+
+  let byTable = mysqlPrimaryKeyCache.get(conn);
+  if (!byTable) {
+    byTable = new Map();
+    mysqlPrimaryKeyCache.set(conn, byTable);
+  }
+  const cached = byTable.get(table);
+  if (cached !== undefined) return cached;
+
+  const rows = await conn.query<{ column_name: string }>(
+    `SELECT COLUMN_NAME AS \`column_name\`
+       FROM information_schema.KEY_COLUMN_USAGE
+      WHERE CONSTRAINT_NAME = 'PRIMARY'
+        AND TABLE_SCHEMA = ?
+        AND TABLE_NAME = ?
+      ORDER BY ORDINAL_POSITION`,
+    [schema, table],
+  );
+  const columns = rows.map((row) => row.column_name);
+  byTable.set(table, columns);
+  return columns;
+}
+
 /**
  * Lee una página de filas (LIMIT/OFFSET) desde una tabla. El nombre se escapa
- * con `quoteIdent` (backticks); limit/offset van parametrizados.
- * DEUDA: sin ORDER BY estable — paridad con PostgreSQL en M23.1.
+ * con `quoteIdent` (backticks); limit/offset van parametrizados. Cuando la
+ * tabla tiene primary key, la página se ordena por ella; sin PK se conserva el
+ * orden histórico (no determinista).
  */
 export async function readPage(
   conn: SourceConnection,
@@ -205,8 +243,10 @@ export async function readPage(
   p: { limit: number; offset: number },
 ): Promise<Record<string, unknown>[]> {
   const myConn = conn as MysqlConnection;
+  const pk = await primaryKeyColumns(myConn, table);
+  const orderBy = pk.length > 0 ? ` ORDER BY ${pk.map(quoteIdent).join(", ")}` : "";
   return myConn.query<Record<string, unknown>>(
-    `SELECT * FROM ${quoteIdent(table)} LIMIT ? OFFSET ?`,
+    `SELECT * FROM ${quoteIdent(table)}${orderBy} LIMIT ? OFFSET ?`,
     [p.limit, p.offset],
   );
 }

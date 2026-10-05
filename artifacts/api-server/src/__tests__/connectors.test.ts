@@ -208,9 +208,9 @@ describe("M23.1 conector — rechazo de config de otro motor (sin red)", () => {
 });
 
 describe("M23.1 connectores — SQL parametrizado (sin red)", () => {
-  it("PostgreSQL lista tablas con schema vinculado y lee con LIMIT/OFFSET", async () => {
+  it("PostgreSQL lista tablas con schema vinculado y lee ordenando por PK (LIMIT/OFFSET)", async () => {
     const query = vi.fn().mockResolvedValue([{ table_name: "users" }]);
-    const conn = { query, close: vi.fn().mockResolvedValue(undefined) };
+    const conn = { query, close: vi.fn().mockResolvedValue(undefined), defaultNamespace: "public" };
     const connector = getConnector("postgresql");
 
     const tables = await connector.listTables(conn, { namespace: "public" });
@@ -221,16 +221,23 @@ describe("M23.1 connectores — SQL parametrizado (sin red)", () => {
     expect(listParams).toEqual(["public"]);
     expect(listSql).not.toContain("public");
 
-    query.mockResolvedValue([{ id: 1 }]);
+    // readPage: primero resuelve la PK (metadata) y luego lee la página ordenada.
+    query
+      .mockResolvedValueOnce([{ column_name: "id" }])
+      .mockResolvedValueOnce([{ id: 1 }]);
     await connector.readPage(conn, { name: "users" }, { limit: 10, offset: 20 });
-    const [readSql, readParams] = query.mock.calls[1] as [string, unknown[]];
-    expect(readSql).toBe('SELECT * FROM "users" LIMIT $1 OFFSET $2');
+    const [pkSql, pkParams] = query.mock.calls[1] as [string, unknown[]];
+    expect(pkSql).toContain("information_schema.table_constraints");
+    expect(pkSql).toContain("constraint_type = 'PRIMARY KEY'");
+    expect(pkParams).toEqual(["public", "users"]);
+    const [readSql, readParams] = query.mock.calls[2] as [string, unknown[]];
+    expect(readSql).toBe('SELECT * FROM "users" ORDER BY "id" LIMIT $1 OFFSET $2');
     expect(readParams).toEqual([10, 20]);
   });
 
-  it("MySQL lista tablas con schema vinculado y lee con LIMIT/OFFSET", async () => {
+  it("MySQL lista tablas con schema vinculado y lee ordenando por PK (LIMIT/OFFSET)", async () => {
     const query = vi.fn().mockResolvedValue([{ table_name: "clientes" }]);
-    const conn = { query, close: vi.fn().mockResolvedValue(undefined) };
+    const conn = { query, close: vi.fn().mockResolvedValue(undefined), defaultNamespace: "crm" };
     const connector = getConnector("mysql");
 
     const tables = await connector.listTables(conn, { namespace: "crm" });
@@ -240,10 +247,16 @@ describe("M23.1 connectores — SQL parametrizado (sin red)", () => {
     expect(listParams).toEqual(["crm"]);
     expect(listSql).not.toContain("crm");
 
-    query.mockResolvedValue([{ id: 1 }]);
+    query
+      .mockResolvedValueOnce([{ column_name: "id" }])
+      .mockResolvedValueOnce([{ id: 1 }]);
     await connector.readPage(conn, { name: "clientes" }, { limit: 5, offset: 10 });
-    const [readSql, readParams] = query.mock.calls[1] as [string, unknown[]];
-    expect(readSql).toBe("SELECT * FROM `clientes` LIMIT ? OFFSET ?");
+    const [pkSql, pkParams] = query.mock.calls[1] as [string, unknown[]];
+    expect(pkSql).toContain("KEY_COLUMN_USAGE");
+    expect(pkSql).toContain("CONSTRAINT_NAME = 'PRIMARY'");
+    expect(pkParams).toEqual(["crm", "clientes"]);
+    const [readSql, readParams] = query.mock.calls[2] as [string, unknown[]];
+    expect(readSql).toBe("SELECT * FROM `clientes` ORDER BY `id` LIMIT ? OFFSET ?");
     expect(readParams).toEqual([5, 10]);
   });
 
@@ -257,9 +270,41 @@ describe("M23.1 connectores — SQL parametrizado (sin red)", () => {
 
   it("quotea identificadores hostiles en readPage (defensa ante inyección)", async () => {
     const query = vi.fn().mockResolvedValue([]);
-    const conn = { query, close: vi.fn().mockResolvedValue(undefined) };
+    const conn = { query, close: vi.fn().mockResolvedValue(undefined), defaultNamespace: "crm" };
     await getConnector("mysql").readPage(conn, { name: "a`; DROP TABLE x; --" }, { limit: 1, offset: 0 });
-    const [sql] = query.mock.calls[0] as [string];
-    expect(sql).toBe("SELECT * FROM `a``; DROP TABLE x; --` LIMIT ? OFFSET ?");
+    // El nombre hostil viaja como parámetro en la consulta de metadata.
+    const [pkSql, pkParams] = query.mock.calls[0] as [string, unknown[]];
+    expect(pkSql).toContain("KEY_COLUMN_USAGE");
+    expect(pkParams).toEqual(["crm", "a`; DROP TABLE x; --"]);
+    // Sin PK la lectura conserva el identificador citado y omite ORDER BY.
+    const [readSql] = query.mock.calls[1] as [string];
+    expect(readSql).toBe("SELECT * FROM `a``; DROP TABLE x; --` LIMIT ? OFFSET ?");
+  });
+
+  it("PostgreSQL ordena por PK compuesta (todas las columnas)", async () => {
+    const query = vi.fn().mockResolvedValue([]);
+    query.mockResolvedValueOnce([{ column_name: "org_id" }, { column_name: "member_sub" }]);
+    const conn = { query, close: vi.fn().mockResolvedValue(undefined), defaultNamespace: "public" };
+    await getConnector("postgresql").readPage(conn, { name: "memberships" }, { limit: 10, offset: 0 });
+    const [readSql] = query.mock.calls[1] as [string];
+    expect(readSql).toBe('SELECT * FROM "memberships" ORDER BY "org_id", "member_sub" LIMIT $1 OFFSET $2');
+  });
+
+  it("sin PK conserva el orden histórico (sin ORDER BY)", async () => {
+    const query = vi.fn().mockResolvedValue([]);
+    const conn = { query, close: vi.fn().mockResolvedValue(undefined), defaultNamespace: "public" };
+    await getConnector("postgresql").readPage(conn, { name: "logs" }, { limit: 10, offset: 0 });
+    const [readSql] = query.mock.calls[1] as [string];
+    expect(readSql).toBe('SELECT * FROM "logs" LIMIT $1 OFFSET $2');
+  });
+
+  it("resuelve la PK una sola vez por conexión (cache entre páginas)", async () => {
+    const query = vi.fn().mockResolvedValue([]);
+    query.mockResolvedValueOnce([{ column_name: "id" }]);
+    const conn = { query, close: vi.fn().mockResolvedValue(undefined), defaultNamespace: "public" };
+    await getConnector("postgresql").readPage(conn, { name: "users" }, { limit: 10, offset: 0 });
+    await getConnector("postgresql").readPage(conn, { name: "users" }, { limit: 10, offset: 10 });
+    // 1 consulta de metadata + 2 páginas (la PK no se re-resuelve).
+    expect(query).toHaveBeenCalledTimes(3);
   });
 });

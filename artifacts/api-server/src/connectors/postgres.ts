@@ -20,8 +20,10 @@
  * se entrega entre comillas dobles con escape (`quoteIdent`) para neutralizar
  * inyección: un identificador nunca se interpola sin escapar.
  *
- * DEUDA DOCUMENTADA (M23.1, fuera de alcance): `readPage` pagina con
- * LIMIT/OFFSET SIN ORDER BY estable (comportamiento histórico preservado).
+ * M41.1 — paginación estable: `readPage` ordena por la primary key de la tabla
+ * (resuelta vía `information_schema`) cuando existe; sin PK conserva el
+ * comportamiento histórico (orden no determinista). OFFSET/LIMIT sigue siendo
+ * vulnerable a inserciones/borrados concurrentes (limitación inherente).
  */
 import { pg } from "@workspace/db";
 import {
@@ -187,10 +189,48 @@ export async function listTables(
   return rows.map((row) => row.table_name);
 }
 
+/** Cache de columnas PK por conexión (evita re-resolver el metadata por página). */
+const pgPrimaryKeyCache = new WeakMap<SourceConnection, Map<string, string[]>>();
+
+/**
+ * Resuelve las columnas de la primary key de la tabla (en orden), vía
+ * `information_schema`. Devuelve `[]` si la tabla no tiene PK. La cache por
+ * conexión evita una consulta de metadata adicional en cada página.
+ */
+async function primaryKeyColumns(conn: PgConnection, table: string): Promise<string[]> {
+  let byTable = pgPrimaryKeyCache.get(conn);
+  if (!byTable) {
+    byTable = new Map();
+    pgPrimaryKeyCache.set(conn, byTable);
+  }
+  const cached = byTable.get(table);
+  if (cached !== undefined) return cached;
+
+  const schema = conn.defaultNamespace ?? "public";
+  const rows = await conn.query<{ column_name: string }>(
+    `SELECT kcu.column_name
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.key_column_usage kcu
+         ON tc.constraint_name = kcu.constraint_name
+        AND tc.constraint_schema = kcu.constraint_schema
+        AND tc.table_name = kcu.table_name
+        AND tc.table_schema = kcu.table_schema
+      WHERE tc.constraint_type = 'PRIMARY KEY'
+        AND tc.table_schema = $1
+        AND tc.table_name = $2
+      ORDER BY kcu.ordinal_position`,
+    [schema, table],
+  );
+  const columns = rows.map((row) => row.column_name);
+  byTable.set(table, columns);
+  return columns;
+}
+
 /**
  * Lee una página de filas (LIMIT/OFFSET) desde una tabla. El nombre de tabla
- * se escapa con `quoteIdent`; los valores van siempre parametrizados.
- * DEUDA: sin ORDER BY estable — preservado tal cual de la FASE 7.0.1 (M23.1).
+ * se escapa con `quoteIdent`; los valores van siempre parametrizados. Cuando
+ * la tabla tiene primary key, la página se ordena por ella para que el barrido
+ * sea determinista; sin PK se conserva el orden histórico (no determinista).
  */
 export async function readPage(
   conn: SourceConnection,
@@ -198,8 +238,10 @@ export async function readPage(
   p: { limit: number; offset: number },
 ): Promise<Record<string, unknown>[]> {
   const pgConn = conn as PgConnection;
+  const pk = await primaryKeyColumns(pgConn, table);
+  const orderBy = pk.length > 0 ? ` ORDER BY ${pk.map(quoteIdent).join(", ")}` : "";
   return pgConn.query<Record<string, unknown>>(
-    `SELECT * FROM ${quoteIdent(table)} LIMIT $1 OFFSET $2`,
+    `SELECT * FROM ${quoteIdent(table)}${orderBy} LIMIT $1 OFFSET $2`,
     [p.limit, p.offset],
   );
 }
