@@ -49,7 +49,7 @@ export default function DashboardPage() {
     <PageHeading eyebrow={`Vista de control · ${formatHeaderDate()}`} title="Siempre un paso adelante." description="El pulso de tus datos sensibles, reunido en un solo lugar." action={<div className="flex items-center gap-2 rounded-full border border-[#bcded6] bg-[#eff9f6] px-3 py-2 text-xs font-semibold text-[#267a6d]"><span className="h-2 w-2 animate-pulse rounded-full bg-[#31a886]" /> Monitoreo activo</div>} />
     {dashboardQuery.isLoading ? <LoadingCards /> : dashboardQuery.isError || !dashboard ? <DashboardError onRetry={() => dashboardQuery.refetch()} /> : <>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Puntuación" value={`${dashboard.complianceScore.toFixed(1)}%`} detail="cumplimiento global" icon={ShieldAlert} tone="teal" />
+        <MetricCard label="Puntuación" value={`${dashboard.complianceScore} / 100`} detail="cumplimiento global" icon={ShieldAlert} tone="teal" />
         <MetricCard label="Hallazgos abiertos" value={dashboard.openFindings.toLocaleString('es-ES')} detail="requieren seguimiento" icon={Radar} tone="amber" />
         <MetricCard label="Registros protegidos" value={dashboard.protectedRecords.toLocaleString('es-ES')} detail="en fuentes monitorizadas" icon={LockKeyhole} tone="navy" />
         <MetricCard label="Fuentes conectadas" value={dashboard.monitoredSources.toString()} detail={`último scan ${formatRelative(dashboard.lastScanAt)}`} icon={Database} tone="coral" />

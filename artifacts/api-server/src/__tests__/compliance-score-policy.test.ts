@@ -56,6 +56,15 @@ describe("ADR-004: complianceScore policy", () => {
     });
   });
 
+  describe("clamping at 100", () => {
+    it("caps the result at 100 even for an impossible negative count", () => {
+      // Un conteo negativo es una entrada imposible (COUNT(*) nunca es < 0),
+      // pero el techo garantiza que el score nunca supere 100.
+      expect(computeComplianceScore({ ...ZERO, low: -1 })).toBe(100);
+      expect(computeComplianceScore({ ...ZERO, critical: -100 })).toBe(100);
+    });
+  });
+
   describe("invariants", () => {
     const cases: Array<[string, SeverityCounts]> = [
       ["zeros", ZERO],

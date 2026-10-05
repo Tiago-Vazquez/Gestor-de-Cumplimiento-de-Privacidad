@@ -362,8 +362,13 @@ export const GetDashboardResponse = zod.object({
  * Aggregated compliance metrics computed from persisted findings and sources (canonical findings only: superseded rows are excluded). Computed on demand; no metric tables are involved.
  * @summary Get compliance metrics snapshot
  */
+export const getComplianceResponseComplianceScoreMin = 0;
+export const getComplianceResponseComplianceScoreMax = 100;
+
+
+
 export const GetComplianceResponse = zod.object({
-  "complianceScore": zod.number().describe('Compliance score computed exclusively by computeComplianceScore (single source of policy; ADR-004). Weighted by severity: low=1, medium=3, high=7, critical=15, as max(0, 100 - penalty). Always present; an integer in the conceptual range [0, 100].'),
+  "complianceScore": zod.number().min(getComplianceResponseComplianceScoreMin).max(getComplianceResponseComplianceScoreMax).describe('Compliance score computed exclusively by computeComplianceScore (single source of policy; ADR-004). Weighted by severity: low=1, medium=3, high=7, critical=15, as min(100, max(0, 100 - penalty)). Always present, bounded to [0, 100]. An integer in practice, not a legal or certification compliance percentage.'),
   "openFindings": zod.number().describe('Count of canonical active findings (status <> \'resolved\' AND superseded = false).'),
   "findingsBySeverity": zod.object({
   "critical": zod.number(),

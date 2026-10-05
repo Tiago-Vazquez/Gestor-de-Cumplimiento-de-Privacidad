@@ -15,7 +15,7 @@
  *
  * ## Formula
  *
- *     score = max(0, 100 - (low + 3*medium + 7*high + 15*critical))
+ *     score = min(100, max(0, 100 - (low + 3*medium + 7*high + 15*critical)))
  *
  * Los conteos son de hallazgos ABIERTOS por severidad. `info` NO forma parte
  * del dominio y no debe anadirse.
@@ -26,6 +26,14 @@
  * - El score es global por organizacion; no se promedia por fuente.
  * - El resultado es un entero siempre dentro de `[0, 100]`.
  * - Un unico `critical` produce `85`, no `0`.
+ *
+ * ## Contrato de entrada
+ *
+ * `SeverityCounts` son conteos producidos por el pipeline de agregacion
+ * (`COUNT(*)`): enteros no negativos. Esta funcion NO sanitiza ni valida la
+ * entrada; asume conteos validos. El techo `min(100, ...)` garantiza que el
+ * resultado pertenezca a `[0, 100]` incluso ante una entrada imposible (p. ej.
+ * un conteo negativo).
  *
  * ## Severidad desconocida
  *
@@ -50,5 +58,7 @@ export function computeComplianceScore(counts: SeverityCounts): number {
     (total, severity) => total + counts[severity] * SEVERITY_WEIGHT[severity],
     0,
   );
-  return Math.max(0, 100 - penalty);
+  // Techo explícito: garantiza el dominio [0, 100] incluso ante una entrada
+  // imposible (p. ej. un conteo negativo). No sanitiza ni valida la entrada.
+  return Math.min(100, Math.max(0, 100 - penalty));
 }

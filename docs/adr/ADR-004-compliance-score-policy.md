@@ -109,7 +109,8 @@ basada en este numero seria incorrecta.
 
 Con la formula aprobada el score pasa a ser **gradual**, lo que reduce la
 ambiguedad del `0.0%` binario, pero no elimina la necesidad de explicar que el
-numero no es una certificacion.
+numero no es una certificacion. La UI lo presenta como `score / 100` (por
+ejemplo `87 / 100`), nunca como `%`, para no inducir la lectura de porcentaje.
 
 ## Tests de aceptacion
 

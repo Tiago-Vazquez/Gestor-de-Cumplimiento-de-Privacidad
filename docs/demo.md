@@ -56,7 +56,8 @@ escaneo, y la tarjeta "Puntuacion".
 
 > **Importante para la demo**: la puntuacion de cumplimiento usa la politica
 > **ponderada por severidad** de `ADR-004` (`low`=1, `medium`=3, `high`=7,
-> `critical`=15). No es un porcentaje legal de cumplimiento. Ver `docs/adr/ADR-004`.
+> `critical`=15): un score entero de `0` a `100`, no un porcentaje legal ni una
+> certificacion; la UI lo muestra como `score / 100`. Ver `docs/adr/ADR-004`.
 
 ## 5. Fuentes (`/sources`)
 

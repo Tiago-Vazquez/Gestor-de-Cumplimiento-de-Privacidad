@@ -178,7 +178,8 @@ Documentadas explicitamente, sin adornos:
   VPS de produccion; la region de B2 es irreversible al crear la cuenta.
 - **No hay TLS, reverse proxy ni dominio** en el repositorio.
 - **La politica de `complianceScore` es ponderada por severidad** (`low`=1,
-  `medium`=3, `high`=7, `critical`=15): `max(0, 100 - penalizacion)`, entero en
-  `[0, 100]`. No es un porcentaje legal de cumplimiento. Ver `docs/adr/ADR-004`.
+  `medium`=3, `high`=7, `critical`=15): `min(100, max(0, 100 - penalizacion))`,
+  entero en `[0, 100]`. No es un porcentaje legal de cumplimiento ni una
+  certificacion; la UI lo presenta como `score / 100`. Ver `docs/adr/ADR-004`.
 - **El DR drill no cubre host-loss**: valida la preservacion de datos en local,
   no la recuperacion ante perdida de la maquina.

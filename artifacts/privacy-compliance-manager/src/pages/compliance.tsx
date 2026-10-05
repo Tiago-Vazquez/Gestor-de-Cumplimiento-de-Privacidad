@@ -141,7 +141,7 @@ export default function CompliancePage() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <MetricCard
               label="Puntuación"
-              value={`${compliance.complianceScore.toFixed(1)}%`}
+              value={`${compliance.complianceScore} / 100`}
               detail="cumplimiento global"
               icon={ShieldAlert}
               tone="teal"

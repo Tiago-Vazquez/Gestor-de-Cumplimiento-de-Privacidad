@@ -85,7 +85,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="text-xs font-semibold text-sidebar-primary">en vivo</span>
             </div>
             <div className="mb-2 flex items-end justify-between">
-              <span className="font-display text-2xl font-bold text-white">{typeof score === 'number' ? `${score.toFixed(1)}%` : '—'}</span>
+              <span className="font-display text-2xl font-bold text-white">{typeof score === 'number' ? `${score} / 100` : '—'}</span>
               <span className="font-mono text-[10px] text-sidebar-foreground/45">score global</span>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-border"><div className="h-full rounded-full bg-sidebar-primary" style={{ width: typeof score === 'number' ? `${Math.min(100, Math.max(0, score))}%` : '0%' }} /></div>
