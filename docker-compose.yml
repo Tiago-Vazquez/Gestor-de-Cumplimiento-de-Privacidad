@@ -64,10 +64,11 @@ services:
       AUTH_RATE_LIMIT_STORE: ${AUTH_RATE_LIMIT_STORE:-memory}
       AUTH_REGISTRATION_ENABLED: ${AUTH_REGISTRATION_ENABLED:-false}
       SESSION_IDLE_SECONDS: ${SESSION_IDLE_SECONDS:-1800}
-      # M30.0 — seam de entrega del enlace de recuperacion de contrasena.
-      # Sin definir quedan vacias y el endpoint sigue respondiendo 202 igual
-      # (el enlace no se entrega). El canal concreto lo elige el despliegue.
-      PASSWORD_RESET_DELIVERY_CMD: ${PASSWORD_RESET_DELIVERY_CMD:-}
+      # M31.0 — entrega real del enlace de recuperacion via Resend.
+      # Sin RESEND_API_KEY ni PASSWORD_RESET_FROM no hay entrega y el endpoint
+      # sigue respondiendo 202 igual (no hay enumeracion de cuentas).
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      PASSWORD_RESET_FROM: ${PASSWORD_RESET_FROM:-}
       PASSWORD_RESET_BASE_URL: ${PASSWORD_RESET_BASE_URL:-}
       SCAN_SCHEDULER_TICK_MS: ${SCAN_SCHEDULER_TICK_MS:-60000}
       SCAN_SCHEDULER_BATCH: ${SCAN_SCHEDULER_BATCH:-5}

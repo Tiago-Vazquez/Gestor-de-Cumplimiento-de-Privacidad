@@ -52,12 +52,14 @@ Flujo de dos endpoints sin sesion: **el token es la credencial**.
 | Rate limiting | Buckets propios y aislados: `forgot` 5/15min, `reset` 10/15min, con clave IP + email normalizado (mismo criterio que `loginLimiter`, para no aislar a una victima). |
 | Politica de contrasena | Reutiliza `isValidPassword`, la misma que registro y `password/change`. |
 
-**Entrega**: no hay SMTP. El enlace sale por un seam, `PASSWORD_RESET_DELIVERY_CMD`, que
-recibe el payload por **stdin** (mismo enfoque que `ALERT_CMD`). En desarrollo,
-`PASSWORD_RESET_DELIVERY_CMD=cat` imprime el enlace. Si el comando falla, se registra
-pero el endpoint **no** cambia de respuesta: un canal roto no puede convertirse en un
-`500` que delate si la cuenta existe. `PASSWORD_RESET_BASE_URL` permite fijar la base
-del enlace en produccion.
+**Entrega**: M31.0 envía el enlace por Resend vía su API HTTP (usando `fetch` nativo,
+sin dependencias nuevas). La configuración vive en `RESEND_API_KEY` (secreto),
+`PASSWORD_RESET_FROM` (remitente) y `PASSWORD_RESET_BASE_URL` (base del enlace). Sin
+`RESEND_API_KEY` ni `PASSWORD_RESET_FROM` no hay entrega y el endpoint sigue respondiendo
+el mismo `202`: el fallo del proveedor (HTTP no-2xx, error de red o configuración ausente)
+**nunca** cambia la respuesta, así que no hay enumeración de cuentas por esta vía. La API
+key viaja solo en la cabecera `Authorization` y no se registra; el `resetUrl` (que contiene
+el token) tampoco se registra.
 
 `SOURCE_ENCRYPTION_KEY` ausente o corta **aborta el arranque** en produccion; en
 desarrollo emite warning y continua.
@@ -205,9 +207,9 @@ rate limiting, backup/restore verificado.
 - **MFA**: no implementado. Login solo por email + contrasena.
 - **TLS / reverse proxy / dominio**: no incluidos en el repositorio.
 - **Recuperacion de contrasena**: **implementada y probada** (M30.0) en cuanto al
-  modelo, los endpoints, la UI y los tests. Lo que **no** existe es el transporte:
-  sin un proveedor de correo configurado en `PASSWORD_RESET_DELIVERY_CMD` el enlace
-  no sale a nadie. El seam existe precisamente para no atar el flujo a un proveedor.
+  modelo, los endpoints, la UI y los tests. M31.0 incorpora la entrega real vía
+  Resend. Queda pendiente en producción proveer `RESEND_API_KEY`/`PASSWORD_RESET_FROM`
+  por secreto/entorno: sin ellos no hay entrega (y el endpoint sigue respondiendo 202).
 
 **Aprobado e implementado**:
 - **Politica de `complianceScore`**: **aprobada** (`docs/adr/ADR-004`) e

@@ -396,6 +396,12 @@ aplicación; provisionadas por `db:provision-roles`). `DATABASE_URL`/`BG_DATABAS
 las compone el compose a partir de esos secretos; `ADMIN_DATABASE_URL` es la
 conexión de superusuario usada por migraciones/provisioning.
 
+Opcionales para recuperación de contraseña (M31.0, vía Resend): `RESEND_API_KEY`
+(secreto, nunca versionado) y `PASSWORD_RESET_FROM` (remitente). Sin ellas el
+endpoint `/auth/password/forgot` sigue respondiendo 202, pero no se envía ningún
+correo. `PASSWORD_RESET_BASE_URL` fija la base pública del enlace (obligatoria
+detrás de un proxy/dominio).
+
 ## Primer administrador (instalación nueva)
 
 El bootstrap legacy fue eliminado. Provisionar el primer admin una sola vez:

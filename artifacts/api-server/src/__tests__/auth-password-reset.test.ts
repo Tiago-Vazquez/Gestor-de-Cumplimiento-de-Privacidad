@@ -14,11 +14,13 @@
  * (mock-repos), servidor efimero. Sin `requireAuth` ni CSRF porque el token ES
  * la credencial.
  */
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import type { Server } from "http";
 import { hashPassword } from "@workspace/auth";
 import app from "../app";
+import { deliverResetLink } from "../auth/password-reset-delivery";
+import { logger } from "../lib/logger";
 import type { MockState } from "./mock-repos";
 import type { User } from "@workspace/db";
 
@@ -35,9 +37,9 @@ vi.mock("../repositories", async () => {
   return { repos: created.repos };
 });
 
-// El seam se captura con un comando que escribe el payload en un fichero, para
-// poder leer el enlace que "se entregaria" al usuario.
-const DELIVERY_CAPTURE = "/tmp/m30-reset-capture.json";
+// El adapter Resend se prueba con `fetch` mockeado (ver describe M31.0). En los
+// tests de `/forgot` la configuración de Resend está ausente, así que la
+// entrega devuelve `false` sin llamar a la red.
 let server: Server;
 
 function state(): MockState {
@@ -61,8 +63,6 @@ async function seededUser(email: string, password: string) {
   return user;
 }
 
-const CAPTURED = { url: null as string | null };
-
 async function forgot(email: string) {
   return request(server).post("/api/auth/password/forgot").send({ email });
 }
@@ -74,7 +74,10 @@ async function reset(token: string, newPassword: string) {
 }
 
 beforeAll(async () => {
-  process.env.PASSWORD_RESET_DELIVERY_CMD = `cat > ${DELIVERY_CAPTURE}`;
+  // En los tests de flujo no debe haber entrega real: sin configuración de
+  // Resend, deliverResetLink devuelve false sin tocar la red.
+  delete process.env.RESEND_API_KEY;
+  delete process.env.PASSWORD_RESET_FROM;
   server = app.listen(0);
 });
 
@@ -128,109 +131,81 @@ describe("M30.0 POST /api/auth/password/forgot", () => {
 });
 
 /**
- * Carga el seam con `PASSWORD_RESET_DELIVERY_CMD` freshly asignado.
+ * M31.0 — Delivery vía Resend.
  *
- * `password-reset-delivery.ts` lee la variable de entorno AL CARGAR EL MODULO
- * (`const DELIVERY_CMD = ...`). Sin `vi.resetModules()` el import devolvería la
- * instancia cacheada con el valor previo y el test no probaría nada.
+ * `deliverResetLink` lee la configuración en tiempo de llamada, por lo que no
+ * hace falta `vi.resetModules()`: basta fijar/limpiar las variables de entorno
+ * y mockear el `fetch` global.
  */
-async function loadSeamWith(cmd: string) {
-  const previous = process.env.PASSWORD_RESET_DELIVERY_CMD;
-  process.env.PASSWORD_RESET_DELIVERY_CMD = cmd;
-  vi.resetModules();
-  try {
-    const mod = await import("../auth/password-reset-delivery");
-    return await import("../auth/password-reset-delivery");
-  } finally {
-    void previous;
-  }
-}
+describe("M31.0 delivery vía Resend", () => {
+  const fetchMock = vi.fn();
+  const input = {
+    email: "destino@example.com",
+    resetUrl: "https://app.example/reset-password?token=SECRETTOKEN",
+    expiresAt: new Date(Date.now() + 60_000),
+  };
 
-describe("M30.0 seam de entrega: fallo del canal (C1)", () => {
-  it("un comando de entrega inexistente NO tumba el proceso ni lanza excepciones", async () => {
-    // Caso real de fallo de canal: el comando configurado no existe o no se
-    // puede arrancar. El seam debe tragarse el fallo y devolver `false`; nunca
-    // propagar, porque `/password/forgot` responde 202 sea cual sea el canal.
-    const { deliverResetLink } = await loadSeamWith("m30-comando-que-no-existe-xyz");
-
-    const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => unhandled.push(reason);
-    process.on("uncaughtException", onUnhandled);
-    try {
-      const delivered = await deliverResetLink({
-        email: "canal@example.com",
-        resetUrl: "https://app.example/reset-password?token=FAKE",
-        expiresAt: new Date(Date.now() + 60_000),
-      });
-
-      expect(delivered).toBe(false);
-      // Margen para que un rechazo asíncrono llegara a propagarse.
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(unhandled).toEqual([]);
-    } finally {
-      process.off("uncaughtException", onUnhandled);
-    }
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    process.env.RESEND_API_KEY = "test-resend-api-key";
+    process.env.PASSWORD_RESET_FROM = "Privaris <no-reply@example.com>";
   });
 
-  it("un payload que desborda el pipe del hijo NO provoca 'Unhandled error'", async () => {
-    // Regresión directa de C1: si el comando cierra su stdin antes de que
-    // terminemos de escribir, Node emite `error` (write EOF) sobre el stream.
-    // SIN el listener registrado, eso es un `Unhandled 'error' event` que MATA
-    // el proceso. Con el listener, el error se ignora y manda el `close`.
-    //
-    // El payload real cabe holgadamente en el buffer del pipe (64 KiB), así que
-    // aquí se fuerza un payload grande a propósito para ejercitar esa rama.
-    const { deliverResetLink } = await loadSeamWith("exit 0");
-
-    const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => unhandled.push(reason);
-    process.on("uncaughtException", onUnhandled);
-    try {
-      const bigUrl = `https://app.example/reset-password?token=${"A".repeat(200_000)}`;
-      const delivered = await deliverResetLink({
-        email: "pipe@example.com",
-        resetUrl: bigUrl,
-        expiresAt: new Date(Date.now() + 60_000),
-      });
-
-      // exit 0 sale con 0: el seam lo considera entregado aunque el hijo no
-      // haya leido nada. Lo que importa es que no hubo excepcion.
-      expect(delivered).toBe(true);
-      // Margen amplio: el error de escritura se emite de forma asíncrona.
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(unhandled).toEqual([]);
-    } finally {
-      process.off("uncaughtException", onUnhandled);
-    }
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.RESEND_API_KEY;
+    delete process.env.PASSWORD_RESET_FROM;
   });
 
-  it("un comando que cierra el stdin sin consumirlo no lanza 'Unhandled error'", async () => {
-    // Segundo escenario de C1, con el tamaño de payload REAL (~109 B): un
-    // comando que ignora stdin. Antes del fix, este es el camino que podía
-    // dejar el stream en error; con el listener, el `close` decide el resultado.
-    const { deliverResetLink } = await loadSeamWith("exit 1");
+  it("devuelve true cuando Resend responde 2xx", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 } as Response);
+    await expect(deliverResetLink(input)).resolves.toBe(true);
+  });
 
-    const unhandled: unknown[] = [];
-    const onUnhandled = (reason: unknown) => unhandled.push(reason);
-    process.on("uncaughtException", onUnhandled);
-    try {
-      const delivered = await deliverResetLink({
-        email: "sin-stdin@example.com",
-        resetUrl: "https://app.example/reset-password?token=REALISTA",
-        expiresAt: new Date(Date.now() + 60_000),
-      });
+  it("devuelve false cuando Resend responde 4xx/5xx", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 500 } as Response);
+    await expect(deliverResetLink(input)).resolves.toBe(false);
+  });
 
-      // `exit 1` falla de forma EXPLICITA e identica en cualquier shell:
-      // cmd.exe en Windows y /bin/sh en CI. Usar `true` NO es portable: es un
-      // builtin POSIX que sale con 0 en Ubuntu y con 1 en Windows, asi que el
-      // exit code (y por tanto `delivered`) dependia del SO del runner.
-      // El contrato verificado aqui es que el fallo se contiene, sin lanzar.
-      expect(delivered).toBe(false);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(unhandled).toEqual([]);
-    } finally {
-      process.off("uncaughtException", onUnhandled);
-    }
+  it("devuelve false cuando fetch lanza un error de red", async () => {
+    fetchMock.mockRejectedValue(new Error("network down"));
+    await expect(deliverResetLink(input)).resolves.toBe(false);
+  });
+
+  it("devuelve false cuando falta la configuración", async () => {
+    delete process.env.RESEND_API_KEY;
+    await expect(deliverResetLink(input)).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("envía destinatario, remitente y reset URL correctos, con la API key en Authorization", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200 } as Response);
+    await deliverResetLink(input);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.resend.com/emails");
+
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-resend-api-key");
+
+    const body = JSON.parse(init.body as string);
+    expect(body.from).toBe("Privaris <no-reply@example.com>");
+    expect(body.to).toEqual(["destino@example.com"]);
+    expect(body.text).toContain(input.resetUrl);
+  });
+
+  it("no registra la API key ni el reset URL en logs", async () => {
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValue({ ok: false, status: 500 } as Response);
+    await deliverResetLink(input);
+
+    expect(errorSpy).toHaveBeenCalled();
+    const logged = JSON.stringify(errorSpy.mock.calls);
+    expect(logged).not.toContain("test-resend-api-key");
+    expect(logged).not.toContain("SECRETTOKEN");
+    errorSpy.mockRestore();
   });
 });
 describe("M30.0 POST /api/auth/password/reset", () => {
