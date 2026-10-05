@@ -112,7 +112,7 @@ describe('RulesPage � listado (M7.b)', () => {
     expect(screen.getByTestId('row-rule-rule-1')).toHaveTextContent(/1[.,]?284/);
     expect(screen.getByTestId('row-rule-rule-2')).toHaveTextContent('Tarjetas de crédito');
     expect(screen.getByTestId('row-rule-rule-2')).toHaveTextContent('PCI DSS');
-    expect(screen.getByText(/1 activas/)).toBeInTheDocument();
+    expect(screen.getByText(/1 habilitadas/)).toBeInTheDocument();
     expect(screen.getByTestId('rules-footer')).toBeInTheDocument();
   });
 });
