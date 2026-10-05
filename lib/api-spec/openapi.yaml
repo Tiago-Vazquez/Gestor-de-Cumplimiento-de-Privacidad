@@ -135,6 +135,59 @@ paths:
           description: Missing/invalid CSRF token (cookie-based sessions)
         "429":
           description: Too many password change attempts (rate limited)
+  /auth/password/forgot:
+    post:
+      operationId: authPasswordForgot
+      tags: [auth]
+      summary: Request a password recovery link (response is identical whether or not the account exists)
+      # Public endpoint: no session and no CSRF token. The reset link itself is
+      # the credential, so the response must never echo the token or the link.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordForgotInput"
+      responses:
+        "202":
+          description: >-
+            Accepted. The response is intentionally indistinguishable from the
+            case where the account does not exist, so it cannot be used to
+            enumerate registered emails.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordForgotAccepted"
+        "400":
+          description: Invalid request (missing or malformed email)
+        "429":
+          description: Too many password recovery requests (rate limited)
+  /auth/password/reset:
+    post:
+      operationId: authPasswordReset
+      tags: [auth]
+      summary: Consume a recovery token and set a new password (single use; revokes all sessions)
+      # Public endpoint: no session and no CSRF token. The token IS the
+      # credential, so it is never echoed in the response nor logged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordResetInput"
+      responses:
+        "200":
+          description: Password updated; all sessions revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordResetSuccess"
+        "400":
+          description: >-
+            Invalid request, expired or already-used token, or the new password
+            does not meet the password policy
+        "429":
+          description: Too many password reset attempts (rate limited)
   /auth/sessions:
     get:
       operationId: authListSessions
@@ -1153,6 +1206,41 @@ components:
       properties:
         currentPassword: { type: string, format: password }
         newPassword: { type: string, format: password, minLength: 12 }
+    PasswordForgotInput:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          minLength: 3
+          maxLength: 320
+          description: User email (normalized to lowercase server-side)
+    PasswordForgotAccepted:
+      type: object
+      required: [status, message]
+      description: >-
+        Uniform acknowledgement for every request, whether or not the account
+        exists. Never contains the recovery token or the reset link.
+      properties:
+        status: { type: string, enum: [accepted] }
+        message: { type: string }
+    PasswordResetInput:
+      type: object
+      required: [token, newPassword]
+      properties:
+        token:
+          type: string
+          minLength: 16
+          maxLength: 256
+          description: Single-use recovery token (base64url, 43 chars)
+        newPassword: { type: string, format: password, minLength: 12, maxLength: 1024 }
+    PasswordResetSuccess:
+      type: object
+      required: [status, message]
+      description: Password updated; every active session of the account was revoked.
+      properties:
+        status: { type: string, enum: [ok] }
+        message: { type: string }
     RegisterInput:
       type: object
       required: [email, password]

@@ -84,6 +84,46 @@ export const AuthPasswordChangeResponse = zod.object({
 
 
 /**
+ * @summary Request a password recovery link (response is identical whether or not the account exists)
+ */
+export const authPasswordForgotBodyEmailMin = 3;
+export const authPasswordForgotBodyEmailMax = 320;
+
+
+
+export const AuthPasswordForgotBody = zod.object({
+  "email": zod.string().min(authPasswordForgotBodyEmailMin).max(authPasswordForgotBodyEmailMax).describe('User email (normalized to lowercase server-side)')
+})
+
+export const AuthPasswordForgotResponse = zod.object({
+  "status": zod.enum(['accepted']),
+  "message": zod.string()
+}).describe('Uniform acknowledgement for every request, whether or not the account exists. Never contains the recovery token or the reset link.')
+
+
+/**
+ * @summary Consume a recovery token and set a new password (single use; revokes all sessions)
+ */
+export const authPasswordResetBodyTokenMin = 16;
+export const authPasswordResetBodyTokenMax = 256;
+
+export const authPasswordResetBodyNewPasswordMin = 12;
+export const authPasswordResetBodyNewPasswordMax = 1024;
+
+
+
+export const AuthPasswordResetBody = zod.object({
+  "token": zod.string().min(authPasswordResetBodyTokenMin).max(authPasswordResetBodyTokenMax).describe('Single-use recovery token (base64url, 43 chars)'),
+  "newPassword": zod.string().min(authPasswordResetBodyNewPasswordMin).max(authPasswordResetBodyNewPasswordMax)
+})
+
+export const AuthPasswordResetResponse = zod.object({
+  "status": zod.enum(['ok']),
+  "message": zod.string()
+}).describe('Password updated; every active session of the account was revoked.')
+
+
+/**
  * Returns metadata (jti, createdAt, expiresAt, current) of all active sessions for the authenticated user. Never exposes CSRF tokens or secrets.
  * @summary List own active sessions
  */

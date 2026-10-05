@@ -51,6 +51,10 @@ import type {
   MaskingJob,
   MaskingPreview,
   PasswordChangeInput,
+  PasswordForgotAccepted,
+  PasswordForgotInput,
+  PasswordResetInput,
+  PasswordResetSuccess,
   RegisterInput,
   Report,
   ReportInput,
@@ -455,6 +459,148 @@ export const useAuthPasswordChange = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getAuthPasswordChangeMutationOptions(options));
+    }
+
+export const getAuthPasswordForgotUrl = () => {
+
+
+
+
+  return `/api/auth/password/forgot`
+}
+
+/**
+ * @summary Request a password recovery link (response is identical whether or not the account exists)
+ */
+export const authPasswordForgot = async (passwordForgotInput: PasswordForgotInput, options?: Parameters<typeof customFetch>[1]): Promise<PasswordForgotAccepted> => {
+
+  return customFetch<PasswordForgotAccepted>(getAuthPasswordForgotUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(passwordForgotInput)
+  }
+);}
+
+
+
+
+
+export const getAuthPasswordForgotMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authPasswordForgot>>, TError,{data: BodyType<PasswordForgotInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authPasswordForgot>>, TError,{data: BodyType<PasswordForgotInput>}, TContext> => {
+
+const mutationKey = ['authPasswordForgot'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authPasswordForgot>>, {data: BodyType<PasswordForgotInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authPasswordForgot(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthPasswordForgotMutationResult = NonNullable<Awaited<ReturnType<typeof authPasswordForgot>>>
+    export type AuthPasswordForgotMutationBody = BodyType<PasswordForgotInput>
+    export type AuthPasswordForgotMutationError = ErrorType<void>
+
+    /**
+ * @summary Request a password recovery link (response is identical whether or not the account exists)
+ */
+export const useAuthPasswordForgot = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authPasswordForgot>>, TError,{data: BodyType<PasswordForgotInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authPasswordForgot>>,
+        TError,
+        {data: BodyType<PasswordForgotInput>},
+        TContext
+      > => {
+      return useMutation(getAuthPasswordForgotMutationOptions(options));
+    }
+
+export const getAuthPasswordResetUrl = () => {
+
+
+
+
+  return `/api/auth/password/reset`
+}
+
+/**
+ * @summary Consume a recovery token and set a new password (single use; revokes all sessions)
+ */
+export const authPasswordReset = async (passwordResetInput: PasswordResetInput, options?: Parameters<typeof customFetch>[1]): Promise<PasswordResetSuccess> => {
+
+  return customFetch<PasswordResetSuccess>(getAuthPasswordResetUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(passwordResetInput)
+  }
+);}
+
+
+
+
+
+export const getAuthPasswordResetMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authPasswordReset>>, TError,{data: BodyType<PasswordResetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authPasswordReset>>, TError,{data: BodyType<PasswordResetInput>}, TContext> => {
+
+const mutationKey = ['authPasswordReset'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authPasswordReset>>, {data: BodyType<PasswordResetInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authPasswordReset(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthPasswordResetMutationResult = NonNullable<Awaited<ReturnType<typeof authPasswordReset>>>
+    export type AuthPasswordResetMutationBody = BodyType<PasswordResetInput>
+    export type AuthPasswordResetMutationError = ErrorType<void>
+
+    /**
+ * @summary Consume a recovery token and set a new password (single use; revokes all sessions)
+ */
+export const useAuthPasswordReset = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authPasswordReset>>, TError,{data: BodyType<PasswordResetInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authPasswordReset>>,
+        TError,
+        {data: BodyType<PasswordResetInput>},
+        TContext
+      > => {
+      return useMutation(getAuthPasswordResetMutationOptions(options));
     }
 
 export const getAuthListSessionsUrl = () => {

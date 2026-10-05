@@ -18,6 +18,59 @@ export interface PasswordChangeInput {
   newPassword: string;
 }
 
+export interface PasswordForgotInput {
+  /**
+     * User email (normalized to lowercase server-side)
+     * @minLength 3
+     * @maxLength 320
+     */
+  email: string;
+}
+
+export type PasswordForgotAcceptedStatus = typeof PasswordForgotAcceptedStatus[keyof typeof PasswordForgotAcceptedStatus];
+
+
+export const PasswordForgotAcceptedStatus = {
+  accepted: 'accepted',
+} as const;
+
+/**
+ * Uniform acknowledgement for every request, whether or not the account exists. Never contains the recovery token or the reset link.
+ */
+export interface PasswordForgotAccepted {
+  status: PasswordForgotAcceptedStatus;
+  message: string;
+}
+
+export interface PasswordResetInput {
+  /**
+     * Single-use recovery token (base64url, 43 chars)
+     * @minLength 16
+     * @maxLength 256
+     */
+  token: string;
+  /**
+     * @minLength 12
+     * @maxLength 1024
+     */
+  newPassword: string;
+}
+
+export type PasswordResetSuccessStatus = typeof PasswordResetSuccessStatus[keyof typeof PasswordResetSuccessStatus];
+
+
+export const PasswordResetSuccessStatus = {
+  ok: 'ok',
+} as const;
+
+/**
+ * Password updated; every active session of the account was revoked.
+ */
+export interface PasswordResetSuccess {
+  status: PasswordResetSuccessStatus;
+  message: string;
+}
+
 export interface RegisterInput {
   /** User email (normalized to lowercase server-side) */
   email: string;
