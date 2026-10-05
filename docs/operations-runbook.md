@@ -542,6 +542,89 @@ correcto jamás se reporta como fallo por un problema de notificación.
 un `ALERT_CMD` configurado en el VPS **nadie recibe nada**. Cerrar R9c exige
 elegir y credenciar el destino.
 
+### Automatizar la subida off-host (segundo timer)
+
+El timer `backup-schedule.timer` solo ejecuta el backup **local**. Para que un
+backup exitoso se publique off-host sin intervención manual, añade un **segundo
+timer** que ejecute `offhost-upload.sh` sobre el set más reciente. No se
+modifica ningún script del repositorio: el wrapper y las unidades systemd viven
+en el VPS (infraestructura).
+
+**Dependencia.** El upload debe correr **después** de que `postgres-backup.sh`
+haya terminado correctamente. Basta con separar ambos timers un margen amplio:
+backup local a las 02:17 UTC, upload a las 03:30 UTC. El upload es idempotente
+por clave (derivada del base único), así que re-subir un set ya publicado no
+corrompe nada; el `.manifest` va último y su presencia es el commit lógico del
+set.
+
+**Detección del "backup correcto".** `offhost-upload.sh` no descubre el último
+backup por sí mismo (requiere `--backup FILE`). El wrapper selecciona el
+`.dump` más reciente de `$BACKUP_DIR` que tenga sus dos hermanos (`.roles.sql`
+y `.manifest`). Si no hay ninguno, termina `0` sin publicar (no es un fallo).
+
+Wrapper de ejemplo (operador, en el VPS, no en el repositorio):
+
+```bash
+#!/usr/bin/env bash
+# /opt/privaris/scripts/ops/offhost-latest.sh
+set -Eeuo pipefail
+source /opt/privaris/.env
+BACKUP_DIR="${BACKUP_DIR:?BACKUP_DIR is required}"
+latest="$(ls -1t "$BACKUP_DIR"/m24-postgres-*.dump 2>/dev/null | head -n1 || true)"
+[[ -n "$latest" ]] || { echo "offhost-latest: no backup to upload"; exit 0; }
+base="${latest%.dump}"
+[[ -f "$base.roles.sql" && -f "$base.manifest" ]] || { echo "offhost-latest: set incompleto"; exit 0; }
+/opt/privaris/scripts/ops/offhost-upload.sh --backup "$latest"
+```
+
+**Salida y `76`.** Un `76` significa "backup local correcto, subida fallida":
+el host está sano, pero no hay copia externa. El uploader ya emite la alerta
+`partial_upload_failed` y **no borra** la copia local. El wrapper no convierte
+el `76` en `0`: systemd lo marca como fallo y el siguiente run reintenta. No
+hay borrado compensatorio: un set sin `.manifest` en el bucket es inutilizable
+por diseño.
+
+**Frecuencia / retries.** El upload hereda `OFFHOST_UPLOAD_RETRIES=3` y
+`OFFHOST_UPLOAD_RETRY_DELAY_SECONDS=5` por objeto. El propio `.timer` reintenta
+al día siguiente; no configures reintentos agresivos que pisen al backup en
+curso.
+
+Unidades systemd de ejemplo (operador, en el VPS):
+
+```ini
+# /etc/systemd/system/offhost-upload.service
+[Unit]
+Description=Off-host upload of the latest PostgreSQL backup (M26.0)
+After=backup-schedule.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/privaris
+EnvironmentFile=/opt/privaris/.env
+ExecStart=/opt/privaris/scripts/ops/offhost-latest.sh
+TimeoutStartSec=7200
+```
+
+```ini
+# /etc/systemd/system/offhost-upload.timer
+[Unit]
+Description=Off-host upload (M26.0)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target
+```
+
+**Recuperación operacional.** Si el upload falla con `76`, diagnostica red/B2
+(`aws s3api head-object --endpoint-url "$B2_S3_ENDPOINT" --bucket "$BACKUP_BUCKET"
+--key "backups/prod/<base>.manifest"`), corrige y relanza a mano
+`offhost-latest.sh` (o `pnpm run ops:offhost-upload -- --backup <base>.dump`).
+El set local sigue íntegro y el retry es idempotente.
+
 ## 13. Pérdida de `SOURCE_ENCRYPTION_KEY`
 
 ### Qué clave es

@@ -163,6 +163,13 @@ off-host a la disponibilidad de un SaaS contradice el propósito de D1. El
 transporte es `aws s3api put-object` con `--endpoint-url`, y es inyectable vía
 `OFFHOST_S3_CMD` para poder probar el contrato sin red ni credenciales.
 
+**Automatizar la subida off-host (segundo timer).** El timer programado
+(`backup-schedule.timer`) solo ejecuta el backup **local**. Para publicar
+off-host sin intervención manual, añade un segundo timer que ejecute
+`offhost-upload.sh` sobre el set más reciente (ver `docs/operations-runbook.md`
+§12, "Automatizar la subida off-host"). El upload es idempotente por clave, el
+`.manifest` va último y un `76` deja intacta la copia local para reintentar.
+
 **Bundle de restauración (M26.0).** `pnpm run ops:build-bundle` empaqueta todo lo
 que `postgres-restore.sh` resuelve del repositorio (script, `common.sh`,
 `verify-source-key.cjs`, `restore-roles.sql`, compose, migraciones) en un tarball
@@ -387,6 +394,66 @@ docker compose down -v         # detener + borrar datos (¡destructivo!)
 > aislado. En otro host, ejecuta los mismos comandos antes de declarar disponible
 > el servicio.
 
+## TLS y reverse proxy (producción)
+
+Para un único VPS se recomienda **Caddy** como reverse proxy de borde: termina
+TLS con certificados automáticos (Let's Encrypt) y renueva solo, sin pasos
+manuales. Topología:
+
+```text
+Internet
+  │ :443 (HTTPS)
+  ▼
+Caddy (terminación TLS)
+  ├── /        → web (nginx) :8080   (SPA estática)
+  └── /api/*   → api :5000           (un solo salto hasta la API)
+```
+
+- **Puertos públicos:** solo `80` (redirección ACME) y `443`. Los puertos
+  `5000` (api) y `8080` (web) de Compose deben quedar **internos**: re-mapear a
+  `127.0.0.1:...` en `docker-compose.yml` o bloquearlos con el firewall del VPS.
+  Nunca deben ser alcanzables desde Internet directamente.
+- **Dónde termina TLS:** en Caddy (único punto público).
+- **Certificado:** automático vía Let's Encrypt; Caddy lo renueva solo. No usar
+  un certificado manual que caduque.
+- **Enrutado:** `/` y el resto del SPA → `web:8080`; `/api/*` → `api:5000`
+  **directo**. El `location /api/` del nginx de `web` queda sin uso (la API se
+  alcanza en un único salto).
+- **Cabeceras:** Caddy añade `X-Forwarded-For` (IP real del cliente),
+  `X-Forwarded-Proto: https` y `X-Forwarded-Host`. Al hablar directo con la API
+  no hay nginx intermedio que sobreescriba `X-Forwarded-Proto` a `http`.
+- **`TRUST_PROXY=1`:** la API confía en exactamente un salto (Caddy); `req.ip`
+  es la IP real del cliente y el rate limiting no agrupa a todos en la IP del
+  proxy. Si se añade un CDN/load balancer delante, subir el valor y revisar la
+  topología; nunca fijar un número arbitrario.
+- **Cookies:** `Secure` es automático (`NODE_ENV=production`), independiente de
+  `X-Forwarded-Proto`.
+- **`PASSWORD_RESET_BASE_URL`:** definirla explícita (`https://app.tudominio.com`).
+  Sin ella el enlace se deriva de la petición y un proxy mal configurado podría
+  generar enlaces `http://`.
+- **Healthchecks a través del proxy:** `GET https://app.tudominio.com/api/livez`
+  (liveness, sin BD), `/api/readyz` (readiness, fail-closed BD) y `/healthz`
+  (frontend).
+
+Caddyfile de ejemplo (vive en el VPS, no en el repositorio):
+
+```caddyfile
+app.tudominio.com {
+    encode gzip
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:5000
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:8080
+    }
+}
+```
+
+Con este reparto, `CORS_ORIGINS` queda vacío (mismo origen): frontend y API
+comparten dominio y la API no necesita CORS.
+
 ## Variables (ver `.env.example`)
 
 Obligatorias en producción: `JWT_SECRET` (>= 32 chars, fail-fast en startup),
@@ -419,7 +486,8 @@ Luego el admin inicia sesión con email + password. Idempotente.
 
 - JWT/DB/claves **nunca** entran en la imagen: solo via `environment` en
   runtime. `.env` está ignorado por git y docker.
-- `TRUST_PROXY=true` en compose (nginx delante) para `req.ip`/rate-limit.
+- `TRUST_PROXY=1` en compose: la API confía en EXACTAMENTE un salto (el reverse
+  proxy de borde que termina TLS). Véase "TLS y reverse proxy".
 - En producción tras TLS, la cookie es `Secure` automática (`NODE_ENV`).
 
 ## Riesgos conocidos
