@@ -208,7 +208,7 @@ describe("M30.0 seam de entrega: fallo del canal (C1)", () => {
     // Segundo escenario de C1, con el tamaño de payload REAL (~109 B): un
     // comando que ignora stdin. Antes del fix, este es el camino que podía
     // dejar el stream en error; con el listener, el `close` decide el resultado.
-    const { deliverResetLink } = await loadSeamWith("true");
+    const { deliverResetLink } = await loadSeamWith("exit 1");
 
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
@@ -220,8 +220,11 @@ describe("M30.0 seam de entrega: fallo del canal (C1)", () => {
         expiresAt: new Date(Date.now() + 60_000),
       });
 
-      // Bajo shell: true, 	rue no es un builtin fiable: sh lo reporta como 1.
-      // El contrato verificado aquí es que el fallo se contiene, sin lanzar.
+      // `exit 1` falla de forma EXPLICITA e identica en cualquier shell:
+      // cmd.exe en Windows y /bin/sh en CI. Usar `true` NO es portable: es un
+      // builtin POSIX que sale con 0 en Ubuntu y con 1 en Windows, asi que el
+      // exit code (y por tanto `delivered`) dependia del SO del runner.
+      // El contrato verificado aqui es que el fallo se contiene, sin lanzar.
       expect(delivered).toBe(false);
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(unhandled).toEqual([]);
