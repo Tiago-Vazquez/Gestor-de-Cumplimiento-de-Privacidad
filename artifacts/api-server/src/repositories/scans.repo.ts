@@ -197,6 +197,20 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
       throw new Error(`Source ${input.sourceId} not found while finalizing scan`);
     }
 
+    // M35.0 — guard de estado atómico: bloquea la fila del scan (FOR UPDATE) y
+    // exige que siga `running`. Una finalización tardía (el scan ya es
+    // failed/completed, p. ej. por el reaper timeout) aborta la transacción SIN
+    // aplicar findings ni métricas: la condición es atómica frente al reaper y
+    // a `failScan`, que también corren sobre el pool background.
+    const [scanRow] = await tx
+      .select({ status: scansTable.status })
+      .from(scansTable)
+      .where(eq(scansTable.id, input.scanId))
+      .for("update");
+    if (!scanRow || scanRow.status !== "running") {
+      return;
+    }
+
     const fingerprints = [
       ...new Set(
         input.findings.map((finding) =>

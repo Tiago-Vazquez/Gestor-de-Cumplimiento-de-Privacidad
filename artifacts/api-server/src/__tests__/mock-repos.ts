@@ -612,6 +612,9 @@ export function createMockRepos() {
       }) {
         const scan = state.scans.find((item) => item.id === input.scanId);
         if (!scan) return null;
+        // M35.0 — réplica del guard del repo real: una finalización tardía de
+        // un scan terminal (failed/completed) NO aplica findings ni métricas.
+        if (scan.status !== "running") return { ...scan };
         const source = state.sources.find((item) => item.id === input.sourceId);
 
         // 1. Insertar findings (con scan_id).
