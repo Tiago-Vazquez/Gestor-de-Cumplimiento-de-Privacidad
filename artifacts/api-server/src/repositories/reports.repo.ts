@@ -69,13 +69,16 @@ export async function create({
       .from(findingsTable)
       .where(activeFindingsWhere(tenantId))
       .groupBy(findingsTable.severity);
-    const openFindings = severityRows.reduce((sum, row) => sum + row.total, 0);
     const findingsBySeverity: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
     for (const row of severityRows) {
       if (row.severity in findingsBySeverity) {
         findingsBySeverity[row.severity as keyof SeverityCounts] = row.total;
       }
     }
+    // ADR-004 (M34.0): `openFindings` (persistido en `findings`) deriva SOLO de
+    // las 4 severidades válidas, para no divergir del `complianceScore`.
+    const openFindings =
+      findingsBySeverity.critical + findingsBySeverity.high + findingsBySeverity.medium + findingsBySeverity.low;
 
     const [report] = await tx
       .insert(reportsTable)

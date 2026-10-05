@@ -42,7 +42,9 @@ export async function getDashboardData(tenantId: string): Promise<DashboardData>
         countsBySeverity[row.severity as keyof typeof countsBySeverity] = row.total;
       }
     }
-    const openFindings = severityRows.reduce((sum, row) => sum + row.total, 0);
+    // ADR-004 (M34.0): `openFindings` deriva SOLO de las 4 severidades válidas.
+    const openFindings =
+      countsBySeverity.critical + countsBySeverity.high + countsBySeverity.medium + countsBySeverity.low;
 
     const [sourcesRow] = await tx
       .select({

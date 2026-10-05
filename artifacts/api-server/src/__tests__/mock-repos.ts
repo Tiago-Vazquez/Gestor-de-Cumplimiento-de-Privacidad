@@ -961,13 +961,14 @@ export function createMockRepos() {
         const active = state.findings.filter(
           (finding) => isActiveFinding(finding) && tenantVisible(finding.tenantId, tenantId),
         );
-        const openFindings = active.length;
         const severityCounts: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
         for (const finding of active) {
           if (finding.severity in severityCounts) {
             severityCounts[finding.severity as keyof SeverityCounts] += 1;
           }
         }
+        const openFindings =
+          severityCounts.critical + severityCounts.high + severityCounts.medium + severityCounts.low;
         const report: MockRow<Report> = {
           id: nextId("r"),
           name,
@@ -1015,7 +1016,8 @@ export function createMockRepos() {
         });
         return {
           countsBySeverity,
-          openFindings: open.length,
+          openFindings:
+            countsBySeverity.critical + countsBySeverity.high + countsBySeverity.medium + countsBySeverity.low,
           protectedRecords: sources.reduce((sum, source) => sum + source.records, 0),
           monitoredSources: sources.length,
           lastScanAt,
@@ -1055,7 +1057,8 @@ export function createMockRepos() {
             bySource.set(finding.sourceId, entry);
           }
         }
-        const openFindings = active.length;
+        const openFindings =
+          findingsBySeverity.critical + findingsBySeverity.high + findingsBySeverity.medium + findingsBySeverity.low;
         return {
           complianceScore: computeComplianceScore(findingsBySeverity),
           openFindings,

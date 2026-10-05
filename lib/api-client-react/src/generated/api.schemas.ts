@@ -170,6 +170,11 @@ export type DashboardFindingsBySeverity = {
 };
 
 export interface Dashboard {
+  /**
+     * Weighted compliance score in the conceptual range [0, 100]. It is a score, not a legal compliance percentage or certification.
+     * @minimum 0
+     * @maximum 100
+     */
   complianceScore: number;
   openFindings: number;
   criticalFindings: number;

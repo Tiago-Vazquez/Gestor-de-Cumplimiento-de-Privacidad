@@ -75,6 +75,11 @@ Consecuencia de diseño: `computeComplianceScore` trabaja con los cuatro conteos
 validos y **no necesita decidir que hacer** ante una severidad desconocida, ni
 validarla. Esa responsabilidad queda en la capa de entrada.
 
+Implementado (M34.0): la ingesta rechaza severidades fuera de
+`critical|high|medium|low` y `openFindings` deriva EXCLUSIVAMENTE de esas cuatro
+claves, de modo que `openFindings === critical + high + medium + low` coincide
+siempre con la base del score.
+
 ### Contrato
 
 - El contrato API `complianceScore: number` **permanece sin cambios**.

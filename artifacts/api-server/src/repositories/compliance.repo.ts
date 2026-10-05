@@ -89,14 +89,20 @@ export function summarizeComplianceAggregates(input: {
   findingsByDataType: Record<string, number>;
   findingsBySource: ComplianceSummaryData["findingsBySource"];
 } {
-  const openFindings = input.severityRows.reduce((sum, row) => sum + row.total, 0);
-
   const findingsBySeverity: SeverityCounts = { critical: 0, high: 0, medium: 0, low: 0 };
   for (const row of input.severityRows) {
     if (row.severity in findingsBySeverity) {
       findingsBySeverity[row.severity as keyof SeverityCounts] = row.total;
     }
   }
+
+  // ADR-004 (M34.0): `openFindings` deriva SOLO de las 4 severidades válidas,
+  // para no divergir de la base que usa `computeComplianceScore`.
+  const openFindings =
+    findingsBySeverity.critical +
+    findingsBySeverity.high +
+    findingsBySeverity.medium +
+    findingsBySeverity.low;
 
   const findingsByDataType: Record<string, number> = {};
   for (const row of input.dataTypeRows) {

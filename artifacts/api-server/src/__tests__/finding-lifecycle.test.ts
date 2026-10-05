@@ -139,3 +139,31 @@ describe("planFindingLifecycle", () => {
     expect(r.toUpdate[0].nextStatus).toBe("in_review");
   });
 });
+
+describe("severity domain (M34.0)", () => {
+  it("acepta severidades válidas (critical/high/medium/low)", () => {
+    for (const severity of ["critical", "high", "medium", "low"]) {
+      const r = plan({ detections: [detection({ severity })] });
+      expect(r.toInsert).toHaveLength(1);
+      expect(r.toInsert[0].severity).toBe(severity);
+    }
+  });
+
+  it("rechaza una severidad desconocida: no se persiste", () => {
+    const r = plan({ detections: [detection({ severity: "severe" })] });
+    expect(r.toInsert).toHaveLength(0);
+    expect(r.toUpdate).toHaveLength(0);
+    expect(r.createdCount).toBe(0);
+  });
+
+  it("una severidad desconocida entre válidas no bloquea el resto", () => {
+    const r = plan({
+      detections: [
+        detection(),
+        detection({ severity: "info", location: "users.phone", dataType: "phone", title: "Phone" }),
+      ],
+    });
+    expect(r.toInsert).toHaveLength(1);
+    expect(r.toInsert[0].severity).toBe("high");
+  });
+});

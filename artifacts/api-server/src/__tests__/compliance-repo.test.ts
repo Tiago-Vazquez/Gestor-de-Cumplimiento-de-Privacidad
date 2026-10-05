@@ -33,9 +33,7 @@ describe("summarizeComplianceAggregates", () => {
     expect(result.findingsBySeverity).toEqual({ critical: 2, high: 1, medium: 0, low: 0 });
   });
 
-  it("una severidad fuera de dominio cuenta en openFindings sin alterar las 4 claves", () => {
-    // El WHERE ya es el canónico: la suma debe ser exacta aunque la fila no
-    // quepa en ninguna de las 4 claves del contrato.
+  it("una severidad fuera de dominio NO cuenta en openFindings ni en el score", () => {
     const result = summarizeComplianceAggregates({
       severityRows: [
         { severity: "critical", total: 1 },
@@ -44,8 +42,15 @@ describe("summarizeComplianceAggregates", () => {
       dataTypeRows: [],
       sourceRows: [],
     });
-    expect(result.openFindings).toBe(6);
+    // M34.0: openFindings deriva SOLO de las 4 severidades válidas.
+    expect(result.openFindings).toBe(1);
     expect(result.findingsBySeverity).toEqual({ critical: 1, high: 0, medium: 0, low: 0 });
+    expect(result.openFindings).toBe(
+      result.findingsBySeverity.critical +
+        result.findingsBySeverity.high +
+        result.findingsBySeverity.medium +
+        result.findingsBySeverity.low,
+    );
   });
 
   it("sin filas devuelve todo en cero y colecciones vacías", () => {

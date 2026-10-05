@@ -1326,7 +1326,13 @@ components:
       type: object
       required: [complianceScore, openFindings, criticalFindings, protectedRecords, monitoredSources, lastScanAt, scanStatus, findingsBySeverity]
       properties:
-        complianceScore: { type: number }
+        complianceScore:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: >-
+            Weighted compliance score in the conceptual range [0, 100].
+            It is a score, not a legal compliance percentage or certification.
         openFindings: { type: number }
         criticalFindings: { type: number }
         protectedRecords: { type: number }

@@ -1,3 +1,6 @@
+import { FindingSeverity } from "@workspace/api-zod";
+
+
 /**
  * FASE 7.2.1 (M1) — Finding lifecycle.
  *
@@ -108,6 +111,9 @@ export interface PlanFindingLifecycleInput {
   reconcileAbsence: boolean;
 }
 
+/** Dominio válido de severidad (ADR-004): `critical | high | medium | low`. */
+const KNOWN_SEVERITIES: ReadonlySet<string> = new Set(Object.values(FindingSeverity));
+
 export function planFindingLifecycle(input: PlanFindingLifecycleInput): FindingLifecyclePlan {
   const toInsert: FindingInsert[] = [];
   const toUpdate: FindingUpdate[] = [];
@@ -115,6 +121,10 @@ export function planFindingLifecycle(input: PlanFindingLifecycleInput): FindingL
   const detectedFingerprints = new Set<string>();
 
   for (const detection of input.detections) {
+    // ADR-004 (M34.0): una severidad fuera del dominio se RECHAZA en la ingesta
+    // y no llega a persistirse como finding. No se mapea ni se silencia.
+    if (!KNOWN_SEVERITIES.has(detection.severity)) continue;
+
     const fingerprint = computeFingerprint({
       sourceId: input.sourceId,
       location: detection.location,

@@ -341,8 +341,13 @@ export const ListAuditEventsPlatformResponse = zod.array(ListAuditEventsPlatform
 /**
  * @summary Get compliance dashboard summary
  */
+export const getDashboardResponseComplianceScoreMin = 0;
+export const getDashboardResponseComplianceScoreMax = 100;
+
+
+
 export const GetDashboardResponse = zod.object({
-  "complianceScore": zod.number(),
+  "complianceScore": zod.number().min(getDashboardResponseComplianceScoreMin).max(getDashboardResponseComplianceScoreMax).describe('Weighted compliance score in the conceptual range [0, 100]. It is a score, not a legal compliance percentage or certification.'),
   "openFindings": zod.number(),
   "criticalFindings": zod.number(),
   "protectedRecords": zod.number(),

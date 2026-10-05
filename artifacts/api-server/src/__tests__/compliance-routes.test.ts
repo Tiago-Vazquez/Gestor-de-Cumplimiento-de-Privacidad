@@ -112,6 +112,57 @@ describe("Compliance routes", () => {
     });
   });
 
+
+  describe("severity domain integrity (M34.0)", () => {
+    function unknownSeverityFinding(): Finding {
+      const now = new Date();
+      return {
+        id: "f-unknown",
+        tenantId: "org-bootstrap",
+        title: "Severidad fuera de dominio",
+        dataType: "email",
+        sourceId: "src-001",
+        sourceName: "Customer PostgreSQL",
+        location: "public.customers.unknown",
+        severity: "severe",
+        status: "open",
+        records: 1,
+        detectedAt: now,
+        regulation: "GDPR Art. 32",
+        recommendation: "Ignorar: severidad fuera de dominio.",
+        sample: "x***@demo.com",
+        scanId: null,
+        lastSeenScanId: null,
+        fingerprint: "fp-unknown",
+        firstSeenAt: null,
+        lastSeenAt: null,
+        superseded: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+
+    it("GET /api/compliance: una severidad desconocida no infla openFindings", async () => {
+      state().findings.push(unknownSeverityFinding());
+      const res = await request(server).get("/api/compliance");
+      expect(res.status).toBe(200);
+      expect(res.body.openFindings).toBe(4); // el desconocido NO cuenta
+      expect(res.body.findingsBySeverity).toEqual({ critical: 2, high: 1, medium: 1, low: 0 });
+    });
+
+    it("GET /api/dashboard: una severidad desconocida no infla openFindings", async () => {
+      const res = await request(server).get("/api/dashboard");
+      expect(res.status).toBe(200);
+      expect(res.body.openFindings).toBe(4);
+    });
+
+    it("POST /api/reports: el reporte excluye la severidad desconocida de findings", async () => {
+      const res = await request(server).post("/api/reports").send({ name: "M34", period: "last_30d" });
+      expect(res.status).toBe(201);
+      expect(res.body.findings).toBe(4); // el desconocido NO cuenta
+    });
+  });
+
   describe("GET /api/compliance/trend", () => {
     it("devuelve exactamente `days` puntos, oldest-first, hoy incluido", async () => {
       const res = await request(server).get("/api/compliance/trend?days=7");
