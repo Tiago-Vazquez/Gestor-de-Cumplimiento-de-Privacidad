@@ -425,7 +425,15 @@ export async function failStaleRunningScans({
       );
     const recovered: Scan[] = [];
     for (const scan of stale) {
-      const [updated] = await tx.update(scansTable).set({ status: "failed", completedAt }).where(eq(scansTable.id, scan.id)).returning();
+      const [updated] = await tx
+        .update(scansTable)
+        .set({ status: "failed", completedAt })
+        .where(and(eq(scansTable.id, scan.id), eq(scansTable.status, "running")))
+        .returning();
+      // M35.1 — guard de estado: si el scan dejó de ser `running` (p. ej. lo
+      // finalizó el scanner en paralelo), el UPDATE no afecta filas y NO se
+      // registra actividad ni se incluye en `recovered` (0 efectos).
+      if (!updated) continue;
       const [source] = await tx.select().from(sourcesTable).where(eq(sourcesTable.id, scan.sourceId));
       if (source) {
         await tx.insert(activityTable).values({
