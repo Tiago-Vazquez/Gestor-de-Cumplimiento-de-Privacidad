@@ -920,6 +920,11 @@ export const ListReportsQueryParams = zod.object({
   "offset": zod.coerce.number().int().min(listReportsQueryOffsetMin).default(listReportsQueryOffsetDefault)
 })
 
+export const listReportsResponseComplianceScoreMin = 0;
+export const listReportsResponseComplianceScoreMax = 100;
+
+
+
 export const ListReportsResponseItem = zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -927,7 +932,7 @@ export const ListReportsResponseItem = zod.object({
   "status": zod.enum(['generating', 'ready']),
   "createdAt": zod.string(),
   "findings": zod.number(),
-  "complianceScore": zod.number(),
+  "complianceScore": zod.number().min(listReportsResponseComplianceScoreMin).max(listReportsResponseComplianceScoreMax).describe('Weighted compliance score in the conceptual range [0, 100]. It is a score, not a legal compliance percentage or certification.'),
   "format": zod.enum(['pdf', 'csv']).optional()
 })
 export const ListReportsResponse = zod.array(ListReportsResponseItem)
@@ -941,6 +946,11 @@ export const CreateReportBody = zod.object({
   "period": zod.enum(['last_24h', 'last_7d', 'last_30d', 'quarter'])
 })
 
+export const createReportResponseComplianceScoreMin = 0;
+export const createReportResponseComplianceScoreMax = 100;
+
+
+
 export const CreateReportResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -948,7 +958,7 @@ export const CreateReportResponse = zod.object({
   "status": zod.enum(['generating', 'ready']),
   "createdAt": zod.string(),
   "findings": zod.number(),
-  "complianceScore": zod.number(),
+  "complianceScore": zod.number().min(createReportResponseComplianceScoreMin).max(createReportResponseComplianceScoreMax).describe('Weighted compliance score in the conceptual range [0, 100]. It is a score, not a legal compliance percentage or certification.'),
   "format": zod.enum(['pdf', 'csv']).optional()
 })
 
@@ -960,6 +970,11 @@ export const GetReportParams = zod.object({
   "id": zod.coerce.string()
 })
 
+export const getReportResponseComplianceScoreMin = 0;
+export const getReportResponseComplianceScoreMax = 100;
+
+
+
 export const GetReportResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -967,7 +982,7 @@ export const GetReportResponse = zod.object({
   "status": zod.enum(['generating', 'ready']),
   "createdAt": zod.string(),
   "findings": zod.number(),
-  "complianceScore": zod.number(),
+  "complianceScore": zod.number().min(getReportResponseComplianceScoreMin).max(getReportResponseComplianceScoreMax).describe('Weighted compliance score in the conceptual range [0, 100]. It is a score, not a legal compliance percentage or certification.'),
   "format": zod.enum(['pdf', 'csv']).optional()
 })
 
@@ -979,6 +994,11 @@ export const DownloadReportParams = zod.object({
   "id": zod.coerce.string()
 })
 
+export const downloadReportResponseComplianceScoreMin = 0;
+export const downloadReportResponseComplianceScoreMax = 100;
+
+
+
 export const DownloadReportResponse = zod.object({
   "id": zod.string(),
   "name": zod.string(),
@@ -986,7 +1006,7 @@ export const DownloadReportResponse = zod.object({
   "status": zod.enum(['generating', 'ready']),
   "createdAt": zod.string(),
   "findings": zod.number(),
-  "complianceScore": zod.number(),
+  "complianceScore": zod.number().min(downloadReportResponseComplianceScoreMin).max(downloadReportResponseComplianceScoreMax).describe('Weighted compliance score in the conceptual range [0, 100]. It is a score, not a legal compliance percentage or certification.'),
   "format": zod.enum(['pdf', 'csv']).optional()
 })
 

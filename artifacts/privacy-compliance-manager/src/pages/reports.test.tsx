@@ -55,7 +55,7 @@ const mockReports = [
     status: 'ready',
     createdAt: '2026-09-01T10:00:00.000Z',
     findings: 42,
-    complianceScore: 87.5,
+    complianceScore: 87,
     format: 'pdf',
   },
   {
@@ -65,7 +65,7 @@ const mockReports = [
     status: 'ready',
     createdAt: '2026-06-01T10:00:00.000Z',
     findings: 10,
-    complianceScore: 92.1,
+    complianceScore: 92,
     format: 'pdf',
   },
 ];
@@ -120,7 +120,7 @@ describe('ReportsPage', () => {
     expect(screen.getByText('Auditoría Q2')).toBeInTheDocument();
     expect(screen.getByText('Auditoría Q1')).toBeInTheDocument();
     expect(screen.getByTestId('row-report-r-001')).toBeInTheDocument();
-    expect(screen.getByText('87.5%')).toBeInTheDocument();
+    expect(screen.getByText('87 / 100')).toBeInTheDocument();
   });
 
   it('calls downloadReport(id) with the report id when the download button is clicked', async () => {
