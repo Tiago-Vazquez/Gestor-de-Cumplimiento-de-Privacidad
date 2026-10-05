@@ -510,10 +510,6 @@ export function createMockRepos() {
           .slice(pagination.offset, pagination.offset + pagination.limit)
           .map((rule) => ({ ...rule }));
       },
-      // FASE 7.0.1: reglas habilitadas (interruptor del catálogo del scanner).
-      async listActive() {
-        return state.rules.filter((rule) => rule.enabled).map((rule) => ({ ...rule }));
-      },
       /** FASE 7.0.5 (espejo del repo real): solo `enabled` es gobernable. */
       async setEnabled({ id, enabled, at }: { id: string; enabled: boolean; at: Date }) {
         const rule = state.rules.find((item) => item.id === id);

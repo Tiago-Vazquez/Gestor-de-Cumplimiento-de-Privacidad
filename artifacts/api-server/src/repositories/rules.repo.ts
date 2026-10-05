@@ -16,18 +16,6 @@ export function list(pagination?: Pagination): Promise<Rule[]> {
 }
 
 /**
- * FASE 7.0.1: reglas habilitadas (`enabled = true`), usadas por el scanner
- * como interruptor del catálogo de detección. Orden estable por creación.
- */
-export function listActive(): Promise<Rule[]> {
-  return db
-    .select()
-    .from(rulesTable)
-    .where(eq(rulesTable.enabled, true))
-    .orderBy(asc(rulesTable.createdAt), asc(rulesTable.id));
-}
-
-/**
  * FASE 7.0.5: actualiza únicamente el campo `enabled` de una regla. Devuelve
  * la regla actualizada o null si no existe. Solo este campo es gobernable
  * desde la API; el resto (patrón, severidad, regulación) es built-in.
