@@ -139,11 +139,12 @@ function fakeConnector(
   });
 }
 
-/** Sustituye las reglas del estado (tests de gobierno enabled/disabled, HIGH #1). */
-function setRules(rules: { name: string; enabled: boolean }[]): void {
+/** Sustituye las reglas del estado (tests de gobierno opt-out por `key`, M37.0). */
+function setRules(rules: { key: string; enabled: boolean }[]): void {
   state().rules = rules.map((rule, index) => ({
     id: `rule-702-${index + 1}`,
-    name: rule.name,
+    key: rule.key,
+    name: rule.key,
     category: "gobierno",
     regulation: "TEST",
     enabled: rule.enabled,
@@ -304,14 +305,7 @@ describe("runScan (unit, conector inyectado)", () => {
   });
 });
 
-describe("resolveActiveRules", () => {
-  it("sin coincidencia de nombres con el seed → fallback al catálogo builtin", async () => {
-    const rules = await resolveActiveRules();
-    expect(rules).toEqual(BUILT_IN_RULES);
-  });
-});
-
-describe("resolveActiveRules — gobierno enabled/disabled (HIGH #1, 7.0.2)", () => {
+describe("resolveActiveRules — opt-out por `key` (M37.0)", () => {
   let originalRules: MockState["rules"];
 
   beforeAll(() => {
@@ -322,47 +316,59 @@ describe("resolveActiveRules — gobierno enabled/disabled (HIGH #1, 7.0.2)", ()
     state().rules = originalRules;
   });
 
-  it("A: sin reglas en BD → catálogo builtin completo", async () => {
+  it("sin filas en BD → catálogo builtin completo", async () => {
     setRules([]);
     const rules = await resolveActiveRules();
     expect(rules).toEqual(BUILT_IN_RULES);
   });
 
-  it("B: builtin coincidente enabled=true → se ejecuta", async () => {
-    setRules([{ name: "email", enabled: true }]);
+  it("1. key=email enabled=true → email activa (demás, por defecto, también)", async () => {
+    setRules([{ key: "email", enabled: true }]);
     const rules = await resolveActiveRules();
-    expect(rules).toHaveLength(1);
-    expect(rules[0]?.name).toBe("email");
+    expect(rules.some((rule) => rule.key === "email")).toBe(true);
+    expect(rules).toHaveLength(BUILT_IN_RULES.length);
   });
 
-  it("C: builtin coincidente enabled=false → NO se ejecuta", async () => {
-    setRules([{ name: "email", enabled: false }]);
+  it("2. key=email enabled=false → email inactiva", async () => {
+    setRules([{ key: "email", enabled: false }]);
     const rules = await resolveActiveRules();
-    expect(rules.some((rule) => rule.name === "email")).toBe(false);
-    // Las demás builtin siguen disponibles vía fallback (no están deshabilitadas).
-    expect(rules).toHaveLength(3);
+    expect(rules.some((rule) => rule.key === "email")).toBe(false);
+    expect(rules).toHaveLength(BUILT_IN_RULES.length - 1);
   });
 
-  it("D: todas las builtin coincidentes disabled → no se ejecuta ninguna", async () => {
-    setRules(BUILT_IN_RULES.map((rule) => ({ name: rule.name, enabled: false })));
+  it("3. ausencia de fila para email → email activa (default)", async () => {
+    setRules([{ key: "phone", enabled: true }]);
     const rules = await resolveActiveRules();
-    expect(rules).toEqual([]);
+    expect(rules.some((rule) => rule.key === "email")).toBe(true);
   });
 
-  it("E: regla desconocida en BD → no altera el catálogo", async () => {
-    setRules([{ name: "datos de salud", enabled: true }]);
+  it("4. builtin sin fila (nueva) → activa por defecto", async () => {
+    setRules([{ key: "email", enabled: true }]);
+    const rules = await resolveActiveRules();
+    expect(rules.some((rule) => rule.key === "credit_card")).toBe(true);
+  });
+
+  it("5. key desconocida en BD → ignorada (no altera el catálogo)", async () => {
+    setRules([{ key: "health", enabled: false }]);
     const rules = await resolveActiveRules();
     expect(rules).toEqual(BUILT_IN_RULES);
   });
 
-  it("F: una conocida disabled + una conocida enabled → solo se ejecuta la enabled", async () => {
+  it("6. todas las filas disabled → ninguna builtin activa", async () => {
+    setRules(BUILT_IN_RULES.map((rule) => ({ key: rule.key, enabled: false })));
+    const rules = await resolveActiveRules();
+    expect(rules).toEqual([]);
+  });
+
+  it("7. una builtin deshabilitada NO reaparece vía fallback", async () => {
     setRules([
-      { name: "email", enabled: false },
-      { name: "phone", enabled: true },
+      { key: "email", enabled: false },
+      { key: "phone", enabled: true },
     ]);
     const rules = await resolveActiveRules();
-    expect(rules).toHaveLength(1);
-    expect(rules[0]?.name).toBe("phone");
+    expect(rules.some((rule) => rule.key === "email")).toBe(false);
+    expect(rules.some((rule) => rule.key === "phone")).toBe(true);
+    expect(rules).toHaveLength(BUILT_IN_RULES.length - 1);
   });
 });
 
@@ -514,7 +520,7 @@ describe("Integración HTTP: POST /api/scans dispara el scanner real", () => {
 });
 
 describe("BUILT_IN_RULES.credit_card — patrón lineal (FASE 7.0.3)", () => {
-  const pattern = BUILT_IN_RULES.find((rule) => rule.name === "credit_card")!.pattern;
+  const pattern = BUILT_IN_RULES.find((rule) => rule.key === "credit_card")!.pattern;
 
   it("detecta formatos PAN estándar (paridad con el patrón anterior)", () => {
     expect(pattern.test("4111 1111 1111 1111")).toBe(true);

@@ -1627,9 +1627,10 @@ components:
           description: Whether this source has connection configuration and can be scanned
     Rule:
       type: object
-      required: [id, name, category, regulation, enabled, detections, lastTriggered]
+      required: [id, key, name, category, regulation, enabled, detections, lastTriggered]
       properties:
         id: { type: string }
+        key: { type: string, readOnly: true }
         name: { type: string }
         category: { type: string }
         regulation: { type: string }

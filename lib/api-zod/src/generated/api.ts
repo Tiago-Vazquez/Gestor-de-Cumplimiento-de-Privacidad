@@ -784,6 +784,7 @@ export const ListRulesQueryParams = zod.object({
 
 export const ListRulesResponseItem = zod.object({
   "id": zod.string(),
+  "key": zod.string(),
   "name": zod.string(),
   "category": zod.string(),
   "regulation": zod.string(),
@@ -900,6 +901,7 @@ export const UpdateRuleBody = zod.object({
 
 export const UpdateRuleResponse = zod.object({
   "id": zod.string(),
+  "key": zod.string(),
   "name": zod.string(),
   "category": zod.string(),
   "regulation": zod.string(),

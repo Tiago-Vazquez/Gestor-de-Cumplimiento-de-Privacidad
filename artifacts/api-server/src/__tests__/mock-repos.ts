@@ -311,11 +311,11 @@ export function createMockRepos() {
       { id: "src-004", name: SOURCE_NAMES["src-004"], kind: "postgresql", environment: "production", status: "healthy", lastScanAt: minutesAgo(186), tables: 17, records: 61_550, createdAt: minutesAgo(500), updatedAt: minutesAgo(186), findingsCount: 1, connectionConfig: null },
     ],
     rules: [
-      { id: "rule-001", name: "Email personal", category: "Identidad", regulation: "GDPR", enabled: true, detections: 12_843, lastTriggered: minutesAgo(12), createdAt: minutesAgo(500), updatedAt: minutesAgo(12) },
-      { id: "rule-002", name: "Documento nacional", category: "Identidad", regulation: "LGPD", enabled: true, detections: 4_521, lastTriggered: minutesAgo(38), createdAt: minutesAgo(500), updatedAt: minutesAgo(38) },
-      { id: "rule-003", name: "Tarjeta de crédito", category: "Finanzas", regulation: "PCI DSS", enabled: true, detections: 91, lastTriggered: minutesAgo(186), createdAt: minutesAgo(500), updatedAt: minutesAgo(186) },
-      { id: "rule-004", name: "Teléfono", category: "Contacto", regulation: "CCPA", enabled: true, detections: 2_187, lastTriggered: minutesAgo(74), createdAt: minutesAgo(500), updatedAt: minutesAgo(74) },
-      { id: "rule-005", name: "Datos de salud", category: "Salud", regulation: "HIPAA", enabled: false, detections: 0, lastTriggered: null, createdAt: minutesAgo(500), updatedAt: minutesAgo(500) },
+      { id: "rule-001", key: "email", name: "Email personal", category: "Identidad", regulation: "GDPR", enabled: true, detections: 12_843, lastTriggered: minutesAgo(12), createdAt: minutesAgo(500), updatedAt: minutesAgo(12) },
+      { id: "rule-002", key: "national_id", name: "Documento nacional", category: "Identidad", regulation: "LGPD", enabled: true, detections: 4_521, lastTriggered: minutesAgo(38), createdAt: minutesAgo(500), updatedAt: minutesAgo(38) },
+      { id: "rule-003", key: "credit_card", name: "Tarjeta de crédito", category: "Finanzas", regulation: "PCI DSS", enabled: true, detections: 91, lastTriggered: minutesAgo(186), createdAt: minutesAgo(500), updatedAt: minutesAgo(186) },
+      { id: "rule-004", key: "phone", name: "Teléfono", category: "Contacto", regulation: "CCPA", enabled: true, detections: 2_187, lastTriggered: minutesAgo(74), createdAt: minutesAgo(500), updatedAt: minutesAgo(74) },
+      { id: "rule-005", key: "health", name: "Datos de salud", category: "Salud", regulation: "HIPAA", enabled: false, detections: 0, lastTriggered: null, createdAt: minutesAgo(500), updatedAt: minutesAgo(500) },
     ],
     scans: [],
     activity: [
@@ -653,12 +653,10 @@ export function createMockRepos() {
           source.records = input.recordsRead;
         }
 
-        // 3. Acumular detecciones por regla (vinculación por lower(name)).
-        for (const [ruleNameLower, delta] of input.ruleDeltas) {
+        // 3. Acumular detecciones por regla (vinculación por `key`, M37.0).
+        for (const [ruleKey, delta] of input.ruleDeltas) {
           if (delta <= 0) continue;
-          const rule = state.rules.find(
-            (r) => r.name.toLowerCase() === ruleNameLower,
-          );
+          const rule = state.rules.find((r) => r.key === ruleKey);
           if (rule) {
             rule.detections += delta;
             rule.lastTriggered = input.completedAt;

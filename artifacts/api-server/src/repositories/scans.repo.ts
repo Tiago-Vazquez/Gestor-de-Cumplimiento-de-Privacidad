@@ -332,12 +332,12 @@ export async function finalizeScan(input: FinalizeScanInput): Promise<void> {
       updatedAt: input.completedAt,
     }).where(eq(sourcesTable.id, input.sourceId));
 
-    for (const [ruleName, delta] of input.ruleDeltas) {
+    for (const [ruleKey, delta] of input.ruleDeltas) {
       await tx.update(rulesTable).set({
         detections: sql`${rulesTable.detections} + ${delta}`,
         lastTriggered: input.completedAt,
         updatedAt: input.completedAt,
-      }).where(sql`lower(${rulesTable.name}) = ${ruleName.toLowerCase()}`);
+      }).where(eq(rulesTable.key, ruleKey));
     }
 
     await tx.update(scansTable).set({

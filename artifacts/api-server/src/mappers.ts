@@ -71,6 +71,7 @@ export function mapFinding(finding: Finding) {
 export function mapRule(rule: Rule) {
   return {
     id: rule.id,
+    key: rule.key,
     name: rule.name,
     category: rule.category,
     regulation: rule.regulation,

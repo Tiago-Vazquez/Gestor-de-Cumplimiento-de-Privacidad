@@ -566,6 +566,7 @@ export interface SourceDetail {
 
 export interface Rule {
   id: string;
+  readonly key: string;
   name: string;
   category: string;
   regulation: string;

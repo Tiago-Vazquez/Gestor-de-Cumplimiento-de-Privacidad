@@ -112,13 +112,15 @@ async function main() {
   }
 
   // 5. Reglas de compliance. OJO: `rules` NO tiene tenant_id (catalogo global).
-  for (const [id, name, category, regulation] of [
-    ['demo-rule-1', 'Emails en columnas de texto', 'pii', 'GDPR'],
-    ['demo-rule-2', 'Telefonos en texto libre', 'pii', 'GDPR'],
+  // M37.0: `key` es la identidad tecnica (coincide con BUILT_IN_RULES); `name`
+  // es solo el display.
+  for (const [id, key, name, category, regulation] of [
+    ['demo-rule-1', 'email', 'Emails en columnas de texto', 'pii', 'GDPR'],
+    ['demo-rule-2', 'phone', 'Telefonos en texto libre', 'pii', 'GDPR'],
   ]) {
-    await q('rules', `INSERT INTO rules (id, name, category, regulation, enabled, detections, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,true,0, now(), now()) ON CONFLICT (id) DO NOTHING`,
-      [id, name, category, regulation]);
+    await q('rules', `INSERT INTO rules (id, key, name, category, regulation, enabled, detections, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,true,0, now(), now()) ON CONFLICT (id) DO NOTHING`,
+      [id, key, name, category, regulation]);
   }
 
   // 6. Actividad reciente para que el dashboard no arranque vacio.

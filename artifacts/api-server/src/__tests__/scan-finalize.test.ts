@@ -72,7 +72,7 @@ function finalize(scanId: string): Promise<void> {
     findings: [detection],
     scannedTables: 7,
     recordsRead: 999,
-    ruleDeltas: new Map([[rule.name.toLowerCase(), 5]]),
+    ruleDeltas: new Map([[rule.key, 5]]),
     reconcileAbsence: false,
   });
 }

@@ -14,9 +14,8 @@ import type { SourceConnector, TableRef } from "../connectors/types";
  * Decisiones de diseño:
  * - El catálogo EJECUTABLE es built-in (patrones, severidad, regulación...):
  *   el schema `rules` no almacena patrones, así que actúa como interruptor por
- *   nombre cuando el seed coincide (case-insensitive); si no coincide o no hay
- *   reglas activas, se usa el catálogo por defecto. Documentado para que un
- *   futuro seed de reglas ejecutables (con columna de patrón) lo reemplace.
+ *   `key` (identidad técnica estable) — modelo opt-out: toda builtin corre por
+ *   defecto salvo que exista una fila con su `key` y `enabled=false`.
  * - Lifecycle: running → completed | failed, gestionado vía repos.scans.
  * - El conector se cierra SIEMPRE en `finally` (las credenciales nunca hacen
  *   leak: no se loguean host/port/user/password).
@@ -25,7 +24,7 @@ import type { SourceConnector, TableRef } from "../connectors/types";
  */
 
 export interface DetectionRule {
-  name: string;
+  key: string;
   category: string;
   regulation: string;
   dataType: string;
@@ -37,7 +36,7 @@ export interface DetectionRule {
 /** Catálogo por defecto (MVP): PII y datos financieros básicos. */
 export const BUILT_IN_RULES: DetectionRule[] = [
   {
-    name: "email",
+    key: "email",
     category: "pii",
     regulation: "GDPR Art. 32",
     dataType: "email",
@@ -46,7 +45,7 @@ export const BUILT_IN_RULES: DetectionRule[] = [
     pattern: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
   },
   {
-    name: "phone",
+    key: "phone",
     category: "pii",
     regulation: "LGPD Art. 46",
     dataType: "phone",
@@ -55,7 +54,7 @@ export const BUILT_IN_RULES: DetectionRule[] = [
     pattern: /\+?[\d][\d\s().-]{6,}\d/,
   },
   {
-    name: "national_id",
+    key: "national_id",
     category: "pii",
     regulation: "LGPD Art. 46",
     dataType: "national_id",
@@ -64,7 +63,7 @@ export const BUILT_IN_RULES: DetectionRule[] = [
     pattern: /\b\d{2}\.?\d{3}\.?\d{3}-?[\dA-Z]\b/,
   },
   {
-    name: "credit_card",
+    key: "credit_card",
     category: "financial",
     regulation: "PCI DSS 3.4",
     dataType: "credit_card",
@@ -132,37 +131,25 @@ interface MatchAgg {
 }
 
 /**
- * Resuelve las reglas ejecutables (HIGH #1, 7.0.2): consulta TODAS las reglas
- * de BD (no solo las activas) para distinguir ausencia de configuración,
- * habilitación explícita y deshabilitación explícita.
+ * Resuelve las reglas ejecutables (M37.0): modelo opt-out por `key`.
  *
- * - Sin reglas configuradas → catálogo builtin completo.
- * - Regla conocida enabled → se ejecuta.
- * - Regla conocida disabled → JAMÁS se ejecuta (ni siquiera vía fallback).
- * - Regla desconocida → inerte (no altera el catálogo).
- * - Si ninguna builtin coincide con la configuración, el fallback usa el
- *   catálogo por defecto EXCLUYENDO las explícitamente deshabilitadas.
+ * - Toda builtin corre por defecto.
+ * - Una fila con `key=X` y `enabled=false` deshabilita X.
+ * - Una fila con `key=X` y `enabled=true` deja X activa.
+ * - La ausencia de fila para una builtin deja X activa.
+ * - Una `key` desconocida se ignora (no activa ni desactiva nada).
+ * - No existe fallback: una regla explícitamente deshabilitada NUNCA se
+ *   reactiva por ausencia de configuración.
  */
 export async function resolveActiveRules(): Promise<DetectionRule[]> {
-  const all = await repos.rules.list();
-  if (all.length === 0) return BUILT_IN_RULES;
+  const rows = await repos.rules.list();
+  if (rows.length === 0) return BUILT_IN_RULES;
 
   const disabled = new Set(
-    all.filter((rule) => !rule.enabled).map((rule) => rule.name.toLowerCase()),
-  );
-  const enabled = new Set(
-    all.filter((rule) => rule.enabled).map((rule) => rule.name.toLowerCase()),
+    rows.filter((row) => !row.enabled).map((row) => row.key),
   );
 
-  const matched = BUILT_IN_RULES.filter((rule) => {
-    const key = rule.name.toLowerCase();
-    return enabled.has(key) && !disabled.has(key);
-  });
-  if (matched.length > 0) return matched;
-
-  // Fallback (seed sin coincidencias con el catálogo, p. ej. nombres display
-  // en español): catálogo por defecto menos las explícitamente deshabilitadas.
-  return BUILT_IN_RULES.filter((rule) => !disabled.has(rule.name.toLowerCase()));
+  return BUILT_IN_RULES.filter((rule) => !disabled.has(rule.key));
 }
 
 function detectRows(
@@ -181,7 +168,7 @@ function detectRows(
       const capped = value.length > MAX_FIELD_LENGTH ? value.slice(0, MAX_FIELD_LENGTH) : value;
       for (const rule of rules) {
         if (rule.pattern.test(capped)) {
-          const key = `${table}.${column}|${rule.name}`;
+          const key = `${table}.${column}|${rule.key}`;
           const existing = agg.get(key);
           if (existing) {
             existing.count += 1;
@@ -444,10 +431,10 @@ async function runScanInner(input: RunScanInput): Promise<void> {
 
   // FASE 7.0.5: los deltas de detección por regla se calculan de la misma
   // agregación de matches (cero re-matching, cero doble conteo). La vinculación
-  // con `rules` es por `lower(name)` — la misma clave de gobernanza de 7.0.2.
+  // con `rules` es por `key` — la identidad técnica estable (M37.0).
   const ruleDeltas = new Map<string, number>();
   for (const match of matches.values()) {
-    const key = match.rule.name.toLowerCase();
+    const key = match.rule.key;
     ruleDeltas.set(key, (ruleDeltas.get(key) ?? 0) + match.count);
   }
 

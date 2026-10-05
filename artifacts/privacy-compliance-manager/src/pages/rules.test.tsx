@@ -46,8 +46,8 @@ const serverError = (status: number, statusText: string, message: string, method
   new ApiError(new Response(null, { status, statusText }), { message }, { method, url: '/api/rules' });
 
 const buildRulesFixture = (): Rule[] => [
-  { id: 'rule-1', name: 'Detección de correos', category: 'PII', regulation: 'GDPR', enabled: true, detections: 1284, lastTriggered: '2026-11-09T09:30:00.000Z' },
-  { id: 'rule-2', name: 'Tarjetas de crédito', category: 'Financiero', regulation: 'PCI DSS', enabled: false, detections: 0, lastTriggered: '2026-10-02T14:00:00.000Z' },
+  { id: 'rule-1', key: 'email', name: 'Detección de correos', category: 'PII', regulation: 'GDPR', enabled: true, detections: 1284, lastTriggered: '2026-11-09T09:30:00.000Z' },
+  { id: 'rule-2', key: 'credit_card', name: 'Tarjetas de crédito', category: 'Financiero', regulation: 'PCI DSS', enabled: false, detections: 0, lastTriggered: '2026-10-02T14:00:00.000Z' },
 ];
 
 let rulesFixtureState: Rule[];
