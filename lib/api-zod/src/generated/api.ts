@@ -363,7 +363,7 @@ export const GetDashboardResponse = zod.object({
  * @summary Get compliance metrics snapshot
  */
 export const GetComplianceResponse = zod.object({
-  "complianceScore": zod.number().describe('Score computed exclusively by computeComplianceScore (single source of policy; currently 100 with zero open findings, 0 otherwise). Always present, 0..100.'),
+  "complianceScore": zod.number().describe('Compliance score computed exclusively by computeComplianceScore (single source of policy; ADR-004). Weighted by severity: low=1, medium=3, high=7, critical=15, as max(0, 100 - penalty). Always present; an integer in the conceptual range [0, 100].'),
   "openFindings": zod.number().describe('Count of canonical active findings (status <> \'resolved\' AND superseded = false).'),
   "findingsBySeverity": zod.object({
   "critical": zod.number(),

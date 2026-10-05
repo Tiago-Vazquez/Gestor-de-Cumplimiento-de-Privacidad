@@ -505,7 +505,7 @@ export type ComplianceSummaryFindingsBySourceItem = {
 };
 
 export interface ComplianceSummary {
-  /** Score computed exclusively by computeComplianceScore (single source of policy; currently 100 with zero open findings, 0 otherwise). Always present, 0..100. */
+  /** Compliance score computed exclusively by computeComplianceScore (single source of policy; ADR-004). Weighted by severity: low=1, medium=3, high=7, critical=15, as max(0, 100 - penalty). Always present; an integer in the conceptual range [0, 100]. */
   complianceScore: number;
   /** Count of canonical active findings (status <> 'resolved' AND superseded = false). */
   openFindings: number;

@@ -44,7 +44,7 @@ Consola de cumplimiento que monitorea fuentes de datos, detecta información sen
 - Persistencia real en PostgreSQL: los handlers llaman a repositorios (`repos`) y las mutaciones multi-tabla usan transacciones; los arrays demo en memoria fueron eliminados y NO existe seed automático — la BD arranca sin datos y todo dato se crea por la API o por el negocio.
 - Migraciones: flujo `db:generate` → revisión del SQL → commit → `db:migrate` (idempotente, también en post-merge). No se usa `drizzle-kit push` contra entornos con datos por ser potencialmente destructivo.
 - Estado de la migración: `0000_fancy_xorn` (CREATE-only, 6 tablas) aplicada en la BD local `privacy_compliance`; tablas con 0 filas.
-- `complianceScore` aislado en `repositories/compliance-score.ts`: 100 sin hallazgos abiertos, 0 con alguno; la política definitiva queda pendiente de aprobación de producto.
+- `complianceScore` aislado en `repositories/compliance-score.ts`: política ponderada por severidad aprobada (`low`=1, `medium`=3, `high`=7, `critical`=15), `max(0, 100 - penalización)`.
 
 ## Product
 

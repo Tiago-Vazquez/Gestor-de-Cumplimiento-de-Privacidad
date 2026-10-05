@@ -113,8 +113,10 @@ numero no es una certificacion.
 
 ## Tests de aceptacion
 
-Estos casos gobiernan la implementacion. **Todavia no estan implementados**: la
-formula vigente sigue siendo la provisional `100 / 0`.
+Estos casos gobiernan la implementacion y **ya estan implementados**: la politica
+ponderada por severidad quedo aprobada definitivamente (la provisional `100 / 0`
+esta descartada). Los tests de aceptacion correspondientes viven en
+`artifacts/api-server/src/__tests__/compliance-score-policy.test.ts`.
 
 | # | Entrada | Resultado esperado |
 | --- | --- | --- |

@@ -41,7 +41,7 @@ function renderCompliance(queryClient: QueryClient) {
 }
 
 const mockComplianceData = {
-  complianceScore: 87.5,
+  complianceScore: 87,
   openFindings: 42,
   findingsBySeverity: { critical: 3, high: 8, medium: 15, low: 16 },
   findingsByDataType: { email: 20, credit_card: 12, phone: 10 },
@@ -126,7 +126,7 @@ describe('CompliancePage', () => {
     const queryClient = createQueryClient();
     renderCompliance(queryClient);
 
-    expect(screen.getByText('87.5%')).toBeInTheDocument();
+    expect(screen.getByText('87.0%')).toBeInTheDocument();
     expect(screen.getByText('42')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByText('8')).toBeInTheDocument();

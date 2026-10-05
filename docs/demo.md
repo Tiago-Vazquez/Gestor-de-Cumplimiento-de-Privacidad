@@ -54,9 +54,9 @@ continuacion esta acotado a esa organizacion por RLS.**
 Metricas agregadas: fuentes monitorizadas, hallazgos por severidad, cobertura de
 escaneo, y la tarjeta "Puntuacion".
 
-> **Importante para la demo**: la puntuacion de cumplimiento usa una politica
-> **provisional** (100 con cero hallazgos abiertos, 0 en cuanto hay uno). No es un
-> porcentaje legal de cumplimiento. Ver `docs/adr/ADR-004`.
+> **Importante para la demo**: la puntuacion de cumplimiento usa la politica
+> **ponderada por severidad** de `ADR-004` (`low`=1, `medium`=3, `high`=7,
+> `critical`=15). No es un porcentaje legal de cumplimiento. Ver `docs/adr/ADR-004`.
 
 ## 5. Fuentes (`/sources`)
 
@@ -90,7 +90,8 @@ al responder, el job ya esta `ready` o `failed`; despues se descarga el dataset.
 
 ## 10. Reportes y compliance (`/reports`, `/compliance`)
 
-Informes periodicos y resumen de cumplimiento. Misma puntuacion provisional.
+Informes periodicos y resumen de cumplimiento, con la misma puntuacion ponderada
+por severidad (ADR-004).
 
 ## 11. Usuarios (`/users`)
 
