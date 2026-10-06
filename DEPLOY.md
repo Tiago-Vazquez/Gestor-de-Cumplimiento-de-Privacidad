@@ -13,7 +13,7 @@ ni los volúmenes de fuentes externas.
 
 - **Frecuencia:** una ejecución diaria como mínimo; puede incrementarse según el
   SLA del cliente.
-- **Retención:** 14 días por defecto (`BACKUP_RETENTION_DAYS=14`). La retención
+- **Retención:** 3 días por defecto (`BACKUP_RETENTION_DAYS=3`). La retención
   se aplica solo a los tres artefactos `m24-postgres-*` del directorio elegido.
 - **Ubicación:** un volumen/almacenamiento externo al repositorio y al host Docker.
   El script rechaza directorios dentro del repo, salvo que se use
@@ -40,7 +40,7 @@ restore automatizada en CI.
 ```bash
 # BACKUP_DIR debe estar fuera del repositorio.
 BACKUP_DIR=/secure/backups/privacy/postgres \\
-BACKUP_RETENTION_DAYS=14 \\
+BACKUP_RETENTION_DAYS=3 \\
   pnpm run ops:backup
 ```
 
@@ -364,7 +364,7 @@ docker compose logs -f api web
 
 1. `db` (postgres:16-alpine, volumen `pgdata`, healthcheck `pg_isready`).
 2. `migrate` (job one-shot con la imagen del API): `db:migrate && db:provision-roles`
-   (migra `0000..0019` y provisiona las contraseñas de `app_role`/`bg_role` desde
+   (migra `0000..0021` y provisiona las contraseñas de `app_role`/`bg_role` desde
    `APP_ROLE_PASSWORD`/`BG_ROLE_PASSWORD`; la migración `0019` las deja en NULL).
    **Las migraciones NO corren dentro de las réplicas del API** para evitar
    carreras; el API solo arranca cuando el job termina
