@@ -343,6 +343,10 @@ en ningún momento.
 La respuesta a incidentes y los pasos de operación están en
 [`docs/operations-runbook.md`](docs/operations-runbook.md).
 
+La checklist maestra de despliegue a producción (infraestructura, secretos,
+TLS, primer deployment, validación funcional, backup/DR y criterios GO/NO-GO)
+está en [`docs/deployment-checklist.md`](docs/deployment-checklist.md).
+
 Objetivo: levantar localmente PostgreSQL + API + frontend con un solo comando,
 sin cambiar lógica de negocio. El scheduler corre dentro del proceso del API
 exactamente como en desarrollo (`startScanScheduler()` en `src/index.ts`).
