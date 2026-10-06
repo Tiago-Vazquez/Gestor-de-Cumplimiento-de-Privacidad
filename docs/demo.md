@@ -20,14 +20,34 @@ PROVISION_ADMIN_PASSWORD='<>=32 caracteres>' \
 pnpm --filter @workspace/db run db:provision-admin
 ```
 
-Datos de demostracion (sinteticos, opt-in):
+Datos de demostracion (sinteticos, opt-in). Crea un dataset empresarial con 5
+organizaciones, fuentes, escaneos, hallazgos, informes y usuarios:
 
 ```bash
-DEMO_SEED_CONFIRM=demo pnpm run demo:seed
+DEMO_SEED_CONFIRM=demo \
+DEMO_USER_PASSWORD='demo-password-123456' \
+pnpm run demo:seed
 ```
 
-> El seed **aborta** salvo que seDEN: `NODE_ENV=production`, la base no sea local
-> y falte `DEMO_SEED_CONFIRM=demo`. Ver `scripts/demo/seed-demo-data.mjs`.
+- `DEMO_SEED_CONFIRM=demo` es OBLIGATORIO (confirmacion explicita).
+- `DEMO_USER_PASSWORD` (opcional): crea los usuarios demo con esa contrasena
+  (sintetica; si se omite, no se crean usuarios).
+- `DEMO_INCLUDE_RUNNING_SCAN=true` (opcional): anade un scan `running` para
+  mostrar el estado "escaneando" del dashboard.
+
+El seed **aborta** (antes de tocar la base) si `NODE_ENV=production`, si la URL
+no es local (localhost/127.0.0.1) o si falta `DEMO_SEED_CONFIRM=demo`. Es
+**idempotente** (IDs deterministas + `ON CONFLICT DO NOTHING`) y **no borra**
+nada. Escribe en la MISMA base local de la aplicacion (no en una BD demo
+separada). Ver `scripts/demo/seed-demo-data.mjs`.
+
+Smoke test automatizado (valida las invariantes; requiere PostgreSQL local ya
+migrado):
+
+```bash
+SMOKE_DATABASE_URL='postgresql://privacy:...@localhost:5432/privacy' \
+node scripts/ci/demo-seed-smoke.mjs
+```
 
 ## 1. Iniciar la aplicacion
 
@@ -45,9 +65,12 @@ rate limiter: 5 intentos por email cada 15 minutos.
 
 ## 3. Organizacion
 
-La sesion queda fijada a una organizacion (`org-context`). Si su usuario
-pertenece a varias, elija en el selector de la cabecera. **Todo lo que ve a
-continuacion esta acotado a esa organizacion por RLS.**
+La sesion queda fijada a una organizacion (`org-context`). El dataset demo crea
+5 organizaciones; el usuario **presentador** (`demo-presenter@demo.example.invalid`)
+pertenece a las 5 y puede recorrerlas con el selector de la cabecera. Los
+usuarios operativos (`*-ops@` y `*-auditor@`) pertenecen a UNA sola y demuestran
+el aislamiento. **Todo lo que ve a continuacion esta acotado a la organizacion
+activa por RLS.**
 
 ## 4. Dashboard (`/`)
 
@@ -120,13 +143,17 @@ para mostrar la trazabilidad.
 ## Reiniciar la demo
 
 El seed es idempotente: volver a ejecutarlo repone los datos sinteticos sin
-duplicar. Para empezar de cero, recree el volumen de PostgreSQL y vuelva a
-aplicar migraciones y seed.
+duplicar (verificable con `node scripts/ci/demo-seed-smoke.mjs`). Para empezar
+de cero, recree el volumen de PostgreSQL y vuelva a aplicar migraciones y seed.
 
 ## Limitaciones que conviene decir en voz alta
 
 - La puntuacion de cumplimiento usa una **politica aprobada** (`ADR-004`),
   ponderada por severidad. Mide hallazgos abiertos, no es una certificacion.
+- Los **informes** no filtran por `period` todavia: el `content` (y por tanto el
+  PDF) refleja los hallazgos abiertos actuales al generar el informe, sin importar
+  el periodo seleccionado (`period` es una etiqueta). Los PDF se descargan desde
+  `/reports` con el boton "Descargar PDF" y se generan con el endpoint real de Fase 1.
 - No hay MFA ni recuperacion de contrasena.
 - El backup tiene **disparador programado y mecanismo de alertas implementados**,
   pero **no estan desplegados**: la cadencia (`backup-schedule.timer`) es una
