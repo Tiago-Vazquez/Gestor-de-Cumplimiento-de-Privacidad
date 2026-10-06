@@ -326,8 +326,8 @@ export function createMockRepos() {
       { id: "a-005", type: "system", title: "Regla actualizada", description: "Se activó la detección de documentos nacionales", createdAt: minutesAgo(145), severity: null },
     ],
     reports: [
-      { id: "r-001", name: "Auditoría mensual", period: "last_30d", status: "ready", createdAt: minutesAgo(86), findings: 12, complianceScore: 90, format: "pdf" },
-      { id: "r-002", name: "Revisión trimestral", period: "quarter", status: "ready", createdAt: minutesAgo(1820), findings: 40, complianceScore: 88, format: "pdf" },
+      { id: "r-001", name: "Auditoría mensual", period: "last_30d", status: "ready", createdAt: minutesAgo(86), findings: 12, complianceScore: 90, format: "pdf", content: null },
+      { id: "r-002", name: "Revisión trimestral", period: "quarter", status: "ready", createdAt: minutesAgo(1820), findings: 40, complianceScore: 88, format: "pdf", content: null },
     ],
     auditEvents: [],
   };
@@ -975,6 +975,7 @@ export function createMockRepos() {
           findings: openFindings,
           complianceScore: computeComplianceScore(severityCounts),
           format: "pdf",
+          content: null,
           tenantId: tenantId ?? null,
         };
         state.reports.unshift(report);

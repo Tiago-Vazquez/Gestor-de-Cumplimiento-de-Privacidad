@@ -171,7 +171,7 @@ describe("Privacy routes", () => {
   });
 
   describe("GET /api/reports/:id/download", () => {
-    it("returns 200 with Content-Disposition attachment header", async () => {
+    it("returns 200 with a PDF attachment", async () => {
       const createRes = await request(server)
         .post("/api/reports")
         .send({ name: "Download Me", period: "last_30d" });
@@ -179,9 +179,9 @@ describe("Privacy routes", () => {
 
       const res = await request(server).get(`/api/reports/${id}/download`);
       expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({ id, name: "Download Me" });
+      expect(res.headers["content-type"]).toContain("application/pdf");
       expect(res.headers["content-disposition"]).toContain("attachment");
-      expect(res.headers["content-disposition"]).toContain(`report-${id}.json`);
+      expect(res.headers["content-disposition"]).toContain(`report-${id}.pdf`);
     });
 
     it("returns 404 for a non-existent report", async () => {

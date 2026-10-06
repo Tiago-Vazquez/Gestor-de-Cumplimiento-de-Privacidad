@@ -995,27 +995,13 @@ export const GetReportResponse = zod.object({
 
 
 /**
- * @summary Download an audit report as JSON attachment
+ * @summary Download an audit report as PDF attachment
  */
 export const DownloadReportParams = zod.object({
   "id": zod.coerce.string()
 })
 
-export const downloadReportResponseComplianceScoreMin = 0;
-export const downloadReportResponseComplianceScoreMax = 100;
-
-
-
-export const DownloadReportResponse = zod.object({
-  "id": zod.string(),
-  "name": zod.string(),
-  "period": zod.string(),
-  "status": zod.enum(['generating', 'ready']),
-  "createdAt": zod.string(),
-  "findings": zod.number(),
-  "complianceScore": zod.number().min(downloadReportResponseComplianceScoreMin).max(downloadReportResponseComplianceScoreMax).describe('Weighted compliance score in the conceptual range [0, 100]. It is a score, not a legal compliance percentage or certification.'),
-  "format": zod.enum(['pdf', 'csv']).optional()
-})
+export const DownloadReportResponse = zod.unknown()
 
 
 /**

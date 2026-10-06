@@ -1047,7 +1047,7 @@ paths:
     get:
       operationId: downloadReport
       tags: [reports]
-      summary: Download an audit report as JSON attachment
+      summary: Download an audit report as PDF attachment
       parameters:
         - name: id
           in: path
@@ -1055,15 +1055,16 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Report JSON payload delivered as a downloadable attachment
+          description: Report PDF delivered as a downloadable attachment
           headers:
             Content-Disposition:
               description: Instructs the browser to download the response as a file
-              schema: { type: string, example: 'attachment; filename="report-r001.json"' }
+              schema: { type: string, example: 'attachment; filename="report-r001.pdf"' }
           content:
-            application/json:
+            application/pdf:
               schema:
-                $ref: "#/components/schemas/Report"
+                type: string
+                format: binary
         "404":
           description: Report not found
 

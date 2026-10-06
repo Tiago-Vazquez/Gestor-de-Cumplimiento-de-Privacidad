@@ -16,7 +16,7 @@ const periodLabel: Record<string, string> = { last_24h: 'Últimas 24 horas', las
 const date = (value: string) => new Intl.DateTimeFormat('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value));
 
 function ReportCard({ report, onDownload }: { report: Report; onDownload: (id: string) => void }) {
-  return <div className="group flex flex-col gap-4 border-b border-border/70 p-5 last:border-0 sm:flex-row sm:items-center" data-testid={`row-report-${report.id}`}><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e9eef5] text-[#45617d]"><FileText size={19} /></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-bold">{report.name}</p><StatusBadge value={report.status} kind="status" /></div><div className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground"><span>{periodLabel[report.period] ?? report.period}</span><span>·</span><span>{date(report.createdAt)}</span>{report.format && <><span>·</span><span className="font-mono uppercase">{report.format}</span></>}</div></div><div className="flex items-center gap-7 text-xs"><div><p className="label-caps">Hallazgos</p><p className="mt-1 font-mono font-bold">{report.findings}</p></div><div><p className="label-caps">Score</p><p className="mt-1 font-mono font-bold text-primary">{report.complianceScore} / 100</p></div>{report.status === 'ready' && <button onClick={() => onDownload(report.id)} className="rounded-lg border border-border p-2 text-muted-foreground hover:border-primary hover:text-primary" aria-label={`Descargar ${report.name}`} data-testid={`button-download-report-${report.id}`}><Download size={15} /></button>}</div></div>;
+  return <div className="group flex flex-col gap-4 border-b border-border/70 p-5 last:border-0 sm:flex-row sm:items-center" data-testid={`row-report-${report.id}`}><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e9eef5] text-[#45617d]"><FileText size={19} /></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-bold">{report.name}</p><StatusBadge value={report.status} kind="status" /></div><div className="mt-1 flex flex-wrap gap-x-2 text-xs text-muted-foreground"><span>{periodLabel[report.period] ?? report.period}</span><span>·</span><span>{date(report.createdAt)}</span>{report.format && <><span>·</span><span className="font-mono uppercase">{report.format}</span></>}</div></div><div className="flex items-center gap-7 text-xs"><div><p className="label-caps">Hallazgos</p><p className="mt-1 font-mono font-bold">{report.findings}</p></div><div><p className="label-caps">Score</p><p className="mt-1 font-mono font-bold text-primary">{report.complianceScore} / 100</p></div>{report.status === 'ready' && <button onClick={() => onDownload(report.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-bold text-muted-foreground hover:border-primary hover:text-primary" aria-label={`Descargar ${report.name} en PDF`} data-testid={`button-download-report-${report.id}`}><Download size={15} /> PDF</button>}</div></div>;
 }
 
 export default function ReportsPage() {
@@ -36,13 +36,12 @@ export default function ReportsPage() {
     createReport.mutate({ data: { name: name.trim(), period } }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListReportsQueryKey() }); setName(''); setFormOpen(false); } , onError: () => setError('No se pudo crear el informe. Reintenta.') });
   };
   const handleDownload = async (id: string) => {
-    const data = await downloadReport(id);
-    if (!data) return;
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const blob = await downloadReport(id);
+    if (!blob) return;
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `report-${data.id}.json`;
+    link.download = `report-${id}.pdf`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

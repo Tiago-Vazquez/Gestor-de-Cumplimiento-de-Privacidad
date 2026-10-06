@@ -17,7 +17,6 @@ import {
   DownloadMaskingJobParams,
   DownloadMaskingJobResponse,
   DownloadReportParams,
-  DownloadReportResponse,
   GetScanParams,
   GetScanResponse,
   ListFindingsQueryParams,
@@ -59,6 +58,7 @@ import { repos } from "../repositories";
 import { requireRole, requirePlatformAdmin } from "../auth/middleware";
 import { resolvedOrgContext } from "../auth/org-context";
 import { runScan } from "../services/scanner";
+import { generateReportPdf } from "../services/report-pdf";
 import { recordAuditEvent } from "../lib/audit";
 
 const router: IRouter = Router();
@@ -323,8 +323,12 @@ router.get("/reports/:id/download", async (req, res) => {
     result: "success",
   });
 
-  res.attachment(`report-${report.id}.json`);
-  res.json(DownloadReportResponse.parse(mapReport(report)));
+  // FASE 8 (PDF profesional): el download devuelve el PDF renderizado desde el
+  // snapshot `content` (inmutable), en lugar del JSON de metadata.
+  const pdf = await generateReportPdf(report, report.content);
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="report-${report.id}.pdf"`);
+  res.send(Buffer.from(pdf));
 });
 
 router.post("/masking/preview", requireRole("admin"), async (req, res) => {

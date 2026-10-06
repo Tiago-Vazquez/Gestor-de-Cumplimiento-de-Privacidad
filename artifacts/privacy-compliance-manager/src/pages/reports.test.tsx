@@ -73,7 +73,7 @@ const mockReports = [
 describe('ReportsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDownloadReport.mockResolvedValue(mockReports[0] as never);
+    mockDownloadReport.mockResolvedValue(new Blob(['%PDF-1.4'], { type: 'application/pdf' }) as never);
     mockUseCreateReport.mockReturnValue({
       mutate: vi.fn(),
       isPending: false,

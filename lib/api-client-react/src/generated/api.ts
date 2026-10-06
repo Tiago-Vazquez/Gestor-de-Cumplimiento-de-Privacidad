@@ -3092,11 +3092,11 @@ export const getDownloadReportUrl = (id: string,) => {
 }
 
 /**
- * @summary Download an audit report as JSON attachment
+ * @summary Download an audit report as PDF attachment
  */
-export const downloadReport = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<Report> => {
+export const downloadReport = async (id: string, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
 
-  return customFetch<Report>(getDownloadReportUrl(id),
+  return customFetch<Blob>(getDownloadReportUrl(id),
   {
     ...options,
     method: 'GET'
@@ -3139,7 +3139,7 @@ export type DownloadReportQueryError = ErrorType<void>
 
 
 /**
- * @summary Download an audit report as JSON attachment
+ * @summary Download an audit report as PDF attachment
  */
 
 export function useDownloadReport<TData = Awaited<ReturnType<typeof downloadReport>>, TError = ErrorType<void>>(

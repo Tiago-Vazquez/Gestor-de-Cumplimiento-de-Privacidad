@@ -1,5 +1,14 @@
-import { count, desc, eq, and } from "drizzle-orm";
-import { activityTable, db, findingsTable, reportsTable, type Report } from "@workspace/db";
+import { and, asc, count, desc, eq, sql } from "drizzle-orm";
+import {
+  activityTable,
+  db,
+  findingsTable,
+  organizationsTable,
+  reportsTable,
+  type Report,
+  type ReportContent,
+  type ReportContentRisk,
+} from "@workspace/db";
 import type { Pagination } from "../lib/pagination";
 import { activeFindingsWhere } from "./findings.repo";
 import { computeComplianceScore, type SeverityCounts } from "./compliance-score";
@@ -37,6 +46,29 @@ export async function getById(id: string, tenantId: string): Promise<Report | nu
       );
     return report ?? null;
   });
+}
+
+/** Versión del snapshot `content` (independiente del versionado del producto). */
+const REPORT_CONTENT_VERSION = "1.0";
+
+/** Resumen ejecutivo determinista, derivado de los agregados ya calculados. */
+function buildExecutiveSummary(
+  organizationName: string,
+  score: number,
+  total: number,
+  sev: SeverityCounts,
+): string {
+  const buckets = [
+    `${sev.critical} crítico${sev.critical === 1 ? "" : "s"}`,
+    `${sev.high} alto${sev.high === 1 ? "" : "s"}`,
+    `${sev.medium} medio${sev.medium === 1 ? "" : "s"}`,
+    `${sev.low} bajo${sev.low === 1 ? "" : "s"}`,
+  ];
+  return (
+    `Informe de cumplimiento de ${organizationName}. ` +
+    `El compliance score es ${score} / 100 sobre ${total} hallazgo${total === 1 ? "" : "s"} activo${total === 1 ? "" : "s"} ` +
+    `(${buckets.join(", ")}).`
+  );
 }
 
 /**
@@ -79,6 +111,57 @@ export async function create({
     // las 4 severidades válidas, para no divergir del `complianceScore`.
     const openFindings =
       findingsBySeverity.critical + findingsBySeverity.high + findingsBySeverity.medium + findingsBySeverity.low;
+    const complianceScore = computeComplianceScore(findingsBySeverity);
+
+    // FASE 8 (PDF): desglose por tipo de dato (mismo WHERE canónico).
+    const dataTypeRows = await tx
+      .select({ dataType: findingsTable.dataType, total: count() })
+      .from(findingsTable)
+      .where(activeFindingsWhere(tenantId))
+      .groupBy(findingsTable.dataType);
+    const findingsByDataType = dataTypeRows
+      .map((row) => ({ label: row.dataType, count: row.total }))
+      .sort((a, b) => b.count - a.count || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
+
+    // FASE 8 (PDF): top riesgos + recomendaciones, de los mismos hallazgos activos.
+    const severityRankSql =
+      sql`case ${findingsTable.severity} when 'critical' then 4 when 'high' then 3 when 'medium' then 2 when 'low' then 1 else 0 end`;
+    const topRows = await tx
+      .select({
+        title: findingsTable.title,
+        severity: findingsTable.severity,
+        dataType: findingsTable.dataType,
+        source: findingsTable.sourceName,
+        records: findingsTable.records,
+        regulation: findingsTable.regulation,
+        recommendation: findingsTable.recommendation,
+      })
+      .from(findingsTable)
+      .where(activeFindingsWhere(tenantId))
+      .orderBy(desc(severityRankSql), desc(findingsTable.records), desc(findingsTable.detectedAt), asc(findingsTable.id))
+      .limit(15);
+
+    const topRisks: ReportContentRisk[] = topRows.slice(0, 5);
+    const recommendations = Array.from(
+      new Set(topRows.map((row) => row.recommendation).filter((value) => value.length > 0)),
+    ).slice(0, 8);
+
+    const [organization] = await tx
+      .select({ name: organizationsTable.name })
+      .from(organizationsTable)
+      .where(eq(organizationsTable.id, tenantId));
+    const organizationName = organization?.name ?? "Organización";
+
+    const content: ReportContent = {
+      version: REPORT_CONTENT_VERSION,
+      generatedAt: at.toISOString(),
+      organizationName,
+      executiveSummary: buildExecutiveSummary(organizationName, complianceScore, openFindings, findingsBySeverity),
+      severityCounts: findingsBySeverity,
+      findingsByDataType,
+      topRisks,
+      recommendations,
+    };
 
     const [report] = await tx
       .insert(reportsTable)
@@ -89,8 +172,9 @@ export async function create({
         status: "ready",
         createdAt: at,
         findings: openFindings,
-        complianceScore: computeComplianceScore(findingsBySeverity),
+        complianceScore,
         format: "pdf",
+        content,
         // M21.4 — el informe pertenece a la organización activa.
         tenantId,
       })
