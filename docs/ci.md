@@ -23,28 +23,27 @@ measured result, not an assumption — re-run `pnpm audit --audit-level high` ra
 than trusting this paragraph, because the advisory database changes over time.
 
 After closing `esbuild` (GHSA-g7r4-m6w7-qqqr) and `qs` (GHSA-x5fp-wj9c-mxmx,
-GHSA-4mjr-xmp4-gh2g), the only residual finding is development/test-only and does
-not weaken the required high/critical gate:
+GHSA-4mjr-xmp4-gh2g), the residual findings are development/test-only moderate and
+do not weaken the required high/critical gate:
 
 | Package | Severity | Path | Why it is accepted |
 | --- | --- | --- | --- |
-| `vitest` / `@vitest/mocker` | moderate | API/frontend test runner | Test-only, single advisory (GHSA-82fw-gwwq-j7x9): it affects the Vitest **dev server**, not `vitest run`, which is what CI executes. Fixed in `>=4.1.11`; the current pin is `3.2.7`, chosen as the minimum that clears the high/critical gate without an unnecessary major bump. |
+| `postcss-selector-parser` | moderate | frontend (Tailwind) | Build-only flat-selector parsing; no runtime path. |
+| `fast-copy` | moderate | API dev tooling (`pino-pretty`) | Dev-only log pretty-printer; not in the production bundle. |
 
-### Why Vitest 3 is required, not optional
+### Why Vitest 4 is required, not optional
 
-Vitest `<3.2.6` is subject to **GHSA-5xrq-8626-4rwp** (critical): when the Vitest UI
-server is listening, an arbitrary file can be read and executed. Pinning
-`^3.2.7` clears it.
+Vitest 3.x depends on `tinypool@^1.1.1`, and the `1.x` line has **no** patched
+release for two critical advisories (**GHSA-5gmw-xhrv-c9v3** and
+**GHSA-85c8-ppgw-ccpr**: prototype-pollution gadget in worker options leading to
+remote code execution). The fix exists only in `tinypool@2.1.2+`, which Vitest 3.x
+cannot use (its declared range is `^1.1.1`). Vitest 4.x drops `tinypool` entirely,
+so upgrading to `^4.1.11` clears both criticals without any override.
 
-The same upgrade also removes the only vulnerable Vite in the tree. Vitest 2
-resolved `vite@5.4.21` transitively through `vitest`, `vite-node` and
-`@vitest/mocker`, which is affected by three advisories
-(GHSA-4w7w-66w2-5vf9, GHSA-v6wh-96g9-6wx3, GHSA-fx2h-pf6j-xcff) and is below the
-`>=6.4.3` fix. Vitest 3 declares a Vite `^6`/`^7` range, so it resolves to the
-workspace catalog's `vite@7.3.6` and the vulnerable `5.4.21` instance disappears
-from the lockfile entirely. **No Vite override is required**, and adding one would
-be an unnecessary change. If Vitest is ever downgraded, the Vite advisories return
-with it and the gate will fail again.
+Vitest 4 keeps a Vite `^6`/`^7` range (resolving to the catalog's `vite@7.3.6`) and
+requires Node `^20 || ^22 || >=24`, which this repo (Node 22.22.2) satisfies.
+A `pnpm.overrides` forcing `tinypool@2.x` over Vitest 3 was explicitly rejected:
+it would break the worker-pool API and is unsafe.
 
 ## Docker connector integration
 
