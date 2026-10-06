@@ -40,8 +40,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-[#efb34f] ring-2 ring-sidebar" />
             </span>
             <span>
-              <span className="block font-display text-[15px] font-bold tracking-[-0.02em] text-white">Sentinel</span>
-              <span className="block font-mono text-[9px] uppercase tracking-[0.18em] text-sidebar-foreground/55">privacy control</span>
+              <span className="block font-display text-[15px] font-bold tracking-[-0.02em] text-white">Privaris</span>
+              <span className="block font-mono text-[9px] uppercase tracking-[0.18em] text-sidebar-foreground/55">privacidad y cumplimiento</span>
             </span>
           </Link>
           <button className="rounded-lg p-2 text-sidebar-foreground/60 hover:bg-sidebar-accent md:hidden" onClick={() => setMobileOpen(false)} aria-label="Cerrar menú" data-testid="button-close-menu">

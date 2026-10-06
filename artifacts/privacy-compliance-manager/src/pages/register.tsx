@@ -108,8 +108,8 @@ export default function RegisterPage() {
             <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-[#efb34f] ring-2 ring-sidebar" />
           </span>
           <div>
-            <span className="block font-display text-[17px] font-bold tracking-[-0.02em] text-foreground">Sentinel</span>
-            <span className="block font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground/60">privacy control</span>
+            <span className="block font-display text-[17px] font-bold tracking-[-0.02em] text-foreground">Privaris</span>
+            <span className="block font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground/60">privacidad y cumplimiento</span>
           </div>
         </div>
         <form
@@ -196,7 +196,7 @@ export default function RegisterPage() {
           </p>
         </form>
         <p className="mt-5 text-center font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/40">
-          Acceso administrativo · Sentinel privacy
+          Acceso administrativo · Privaris
         </p>
       </div>
     </div>

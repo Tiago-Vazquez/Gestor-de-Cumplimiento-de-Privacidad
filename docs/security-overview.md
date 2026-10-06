@@ -1,6 +1,6 @@
 # Security Overview
 
-Postura de seguridad del Gestor de Cumplimiento de Privacidad, escrita para una
+Postura de seguridad de Privaris, escrita para una
 evaluacion tecnica. **Cada afirmacion apunta a un fichero y a codigo real.**
 
 > Este documento **no** afirma certificacion, cumplimiento legal ni estandar

@@ -1,4 +1,4 @@
-@ Privacy Compliance Manager
+@ Privaris
 
 Consola de cumplimiento que monitorea fuentes de datos, detecta información sensible expuesta y prepara datos anonimizados para testing.
 

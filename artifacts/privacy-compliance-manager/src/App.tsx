@@ -15,6 +15,7 @@ import LoginPage from '@/pages/login';
 import RegisterPage from '@/pages/register';
 import ForgotPasswordPage from '@/pages/forgot-password';
 import ResetPasswordPage from '@/pages/reset-password';
+import LandingPage from '@/pages/landing';
 import DashboardPage from '@/pages/dashboard';
 import FindingsPage from '@/pages/findings';
 import SourcesPage from '@/pages/sources';
@@ -106,12 +107,13 @@ function Router() {
   if (isUnauthorized || !isAuthenticated) {
     return (
       <Switch>
+        <Route path="/" component={LandingPage} />
         <Route path="/login" component={LoginPage} />
         <Route path="/register" component={RegisterPage} />
       <Route path="/forgot-password" component={ForgotPasswordPage} />
       <Route path="/reset-password" component={ResetPasswordPage} />
         <Route>
-          <Redirect to="/login" />
+          <Redirect to="/" />
         </Route>
       </Switch>
     );

@@ -1,4 +1,4 @@
-# Gestor de Cumplimiento de Privacidad
+# Privaris
 
 Plataforma de **escaneo de privacidad sobre fuentes de datos reales**: conectores
 a PostgreSQL y MySQL que recorren el esquema y las filas, detectan datos

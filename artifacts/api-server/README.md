@@ -1,6 +1,6 @@
 # @workspace/api-server
 
-API Express 5 + PostgreSQL (Drizzle ORM) del Gestor de Cumplimiento de Privacidad.
+API Express 5 + PostgreSQL (Drizzle ORM) de Privaris.
 
 ```bash
 pnpm build        # build con esbuild
