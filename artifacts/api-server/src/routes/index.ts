@@ -7,7 +7,7 @@ import usersRouter from "./users";
 import auditRouter from "./audit";
 import organizationsRouter from "./organizations";
 import csrfRouter from "./csrf";
-import { requireAuth } from "../auth/middleware";
+import { requireAuth, requireMfaVerified } from "../auth/middleware";
 import { requireCsrf } from "../auth/csrf";
 import { attachOrgContext } from "../auth/org-context";
 import { metrics } from "../lib/metrics";
@@ -56,6 +56,18 @@ router.get("/metrics", (_req, res) => {
 // Todo lo demás bajo /api requiere autenticación JWT.
 router.use(requireAuth());
 
+// GET /api/csrf-token — expone SOLO el token CSRF de la sesión actual.
+// Montado ANTES de requireMfaVerified: una sesión pre-MFA necesita el token
+// CSRF para poder llamar a POST /auth/mfa/verify (cookie + X-CSRF-Token).
+router.use("/csrf-token", csrfRouter);
+
+// MFA (Fase 2) — gate del segundo factor: rechaza las sesiones pre-MFA
+// (`mfa_pending`) en TODA la superficie de negocio. Tras requireAuth (que
+// pobla req.mfaPending) y antes de requireCsrf / org-context / routers de
+// negocio. Las excepciones pre-MFA (mfa/verify, mfa/recovery, logout,
+// logout-all, me) viven en el router /auth, montado antes de esta cadena.
+router.use(requireMfaVerified());
+
 // M11.1 — CSRF centralizado: exige X-CSRF-Token en POST/PUT/PATCH/DELETE
 // cuando la sesión viaja por cookie de navegador. Debe ir DESPUÉS de que
 // requireAuth resolvió req.user y ANTES de los handlers mutativos.
@@ -81,9 +93,6 @@ router.use("/users", usersRouter);
 // router). Montado tras requireAuth para que req.user esté disponible y el
 // correlation id del request (M16.1) ya exista.
 router.use("/audit-events", auditRouter);
-
-// GET /api/csrf-token — expone SOLO el token CSRF de la sesión actual.
-router.use("/csrf-token", csrfRouter);
 
 // M21.2 — organizaciones, membresías e invitaciones (ADR-002). Montado tras
 // requireAuth + requireCsrf: el contexto de organización activa se resuelve

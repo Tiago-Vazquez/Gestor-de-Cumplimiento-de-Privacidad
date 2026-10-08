@@ -65,6 +65,7 @@ describe("Auth middleware (JWT)", () => {
         revokedAt: null,
         lastUsedAt: new Date(),
         activeOrgId: "org-bootstrap",
+        mfaPending: false,
       });
     }
   });

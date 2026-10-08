@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   index,
   pgTable,
@@ -42,6 +43,9 @@ export const sessionsTable = pgTable(
     activeOrgId: text("active_org_id").references(() => organizationsTable.id, {
       onDelete: "set null",
     }),
+    // MFA: sesión pre-auth (contraseña correcta pero segundo factor pendiente).
+    // requireMfaVerified la rechaza en todas las rutas de negocio.
+    mfaPending: boolean("mfa_pending").notNull().default(false),
   },
   (table) => [
     index("sessions_user_sub_idx").on(table.userSub),

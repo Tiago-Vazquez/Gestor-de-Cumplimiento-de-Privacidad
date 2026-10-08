@@ -53,6 +53,11 @@ import { logger } from "../lib/logger";
 /** Request autenticado: lleva el payload del JWT verificado en `req.user`. */
 export interface AuthedRequest extends Request {
   user?: AuthTokenPayload;
+  /**
+   * `true` si la sesión activa está en estado pre-MFA (`sessions.mfa_pending`).
+   * Poblado por `requireAuth`; consumido por `requireMfaVerified` (Fase 2 MFA).
+   */
+  mfaPending?: boolean;
 }
 
 const WWW_AUTHENTICATE = `Bearer realm="${JWT_ISSUER}"`;
@@ -130,6 +135,9 @@ export function requireAuth() {
     }
 
     (req as AuthedRequest).user = payload;
+    // Fase 2 MFA — expone el estado pre-MFA de la sesión (leído de la fila
+    // activa) para que `requireMfaVerified` rechace sesiones sin segundo factor.
+    (req as AuthedRequest).mfaPending = activeSession.mfaPending;
 
     // M11.2.3 — refrescar timestamp de última actividad. Fallo no rompe el
     // request: si no podemos actualizar, es mejor dejar al usuario continuar
@@ -183,4 +191,39 @@ export function requireRole(role: string) {
  */
 export function requirePlatformAdmin() {
   return requireRole("admin");
+}
+
+/**
+ * MFA (Fase 2) — gate del segundo factor.
+ *
+ * Se monta DESPUÉS de `requireAuth` (que ha poblado `req.mfaPending`).
+ * Rechaza las sesiones pre-MFA (`mfa_pending = true`) en toda la superficie
+ * protegida: un usuario con la contraseña correcta pero sin verificar el TOTP
+ * no puede acceder a datos de negocio, gestionar sesiones, cambiar la
+ * contraseña ni configurar MFA. Fail-closed: si `mfaPending` no está poblado
+ * (`requireAuth` no corrió), también rechaza.
+ *
+ * En dev/tests con `AUTH_DISABLED=true` se omite (la identidad simulada es
+ * admin y no hay sesión real), igual que `requireAuth`/`requireRole`.
+ */
+export function requireMfaVerified() {
+  return async function requireMfaVerifiedMiddleware(
+    req: Request,
+    _res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    if (authDisabled()) {
+      next();
+      return;
+    }
+    const authed = req as AuthedRequest;
+    if (!authed.user) {
+      throw unauthorized("Missing or invalid session");
+    }
+    // Fail-closed: `requireAuth` debe haber poblado `mfaPending` a false.
+    if (authed.mfaPending !== false) {
+      throw forbidden("MFA verification required");
+    }
+    next();
+  };
 }

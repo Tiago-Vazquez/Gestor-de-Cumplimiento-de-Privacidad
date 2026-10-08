@@ -71,6 +71,7 @@ async function workerSession(
     expiresAt: new Date(Date.now() + expiresIn * 1000),
     revokedAt: null,
     lastUsedAt: new Date(),
+    mfaPending: false,
   });
   return { jwt, jti };
 }

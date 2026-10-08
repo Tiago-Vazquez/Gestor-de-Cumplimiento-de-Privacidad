@@ -50,6 +50,13 @@ import type {
   MaskingInput,
   MaskingJob,
   MaskingPreview,
+  MfaDisableResponse,
+  MfaEnableResponse,
+  MfaRecoveryCodesResponse,
+  MfaRecoveryInput,
+  MfaSetupResponse,
+  MfaStatusResponse,
+  MfaTotpCodeInput,
   PasswordChangeInput,
   PasswordForgotAccepted,
   PasswordForgotInput,
@@ -901,6 +908,516 @@ export function useAuthMe<TData = Awaited<ReturnType<typeof authMe>>, TError = E
 
 
 
+
+export const getAuthMfaStatusUrl = () => {
+
+
+
+
+  return `/api/auth/mfa/status`
+}
+
+/**
+ * Requires a fully authenticated session. Never returns secrets, otpauth URIs, recovery codes or hashes.
+ * @summary Get MFA enrollment status for the UI
+ */
+export const authMfaStatus = async ( options?: Parameters<typeof customFetch>[1]): Promise<MfaStatusResponse> => {
+
+  return customFetch<MfaStatusResponse>(getAuthMfaStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getAuthMfaStatusQueryKey = () => {
+    return [
+    `/api/auth/mfa/status`
+    ] as const;
+    }
+
+
+export const getAuthMfaStatusQueryOptions = <TData = Awaited<ReturnType<typeof authMfaStatus>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof authMfaStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getAuthMfaStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof authMfaStatus>>> = ({ signal }) => authMfaStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof authMfaStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type AuthMfaStatusQueryResult = NonNullable<Awaited<ReturnType<typeof authMfaStatus>>>
+export type AuthMfaStatusQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get MFA enrollment status for the UI
+ */
+
+export function useAuthMfaStatus<TData = Awaited<ReturnType<typeof authMfaStatus>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof authMfaStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getAuthMfaStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getAuthMfaSetupUrl = () => {
+
+
+
+
+  return `/api/auth/mfa/setup`
+}
+
+/**
+ * Requires a fully authenticated session and disabled MFA. Returns the otpauth:// URI (contains the TOTP secret by design) for QR rendering. The URI travels only in this HTTPS response — never in logs or audit.
+ * @summary Start MFA enrollment and return the otpauth URI for QR
+ */
+export const authMfaSetup = async ( options?: Parameters<typeof customFetch>[1]): Promise<MfaSetupResponse> => {
+
+  return customFetch<MfaSetupResponse>(getAuthMfaSetupUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getAuthMfaSetupMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaSetup>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authMfaSetup>>, TError,void, TContext> => {
+
+const mutationKey = ['authMfaSetup'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authMfaSetup>>, void> = () => {
+
+
+          return  authMfaSetup(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthMfaSetupMutationResult = NonNullable<Awaited<ReturnType<typeof authMfaSetup>>>
+
+    export type AuthMfaSetupMutationError = ErrorType<void>
+
+    /**
+ * @summary Start MFA enrollment and return the otpauth URI for QR
+ */
+export const useAuthMfaSetup = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaSetup>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authMfaSetup>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getAuthMfaSetupMutationOptions(options));
+    }
+
+export const getAuthMfaEnableUrl = () => {
+
+
+
+
+  return `/api/auth/mfa/enable`
+}
+
+/**
+ * Requires a fully authenticated session and a pending enrollment. Plaintext recovery codes are delivered only in this response (once). Never logged, never audited, never persisted.
+ * @summary Confirm the first TOTP code, enable MFA and issue recovery codes
+ */
+export const authMfaEnable = async (mfaTotpCodeInput: MfaTotpCodeInput, options?: Parameters<typeof customFetch>[1]): Promise<MfaEnableResponse> => {
+
+  return customFetch<MfaEnableResponse>(getAuthMfaEnableUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mfaTotpCodeInput)
+  }
+);}
+
+
+
+
+
+export const getAuthMfaEnableMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaEnable>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authMfaEnable>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext> => {
+
+const mutationKey = ['authMfaEnable'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authMfaEnable>>, {data: BodyType<MfaTotpCodeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authMfaEnable(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthMfaEnableMutationResult = NonNullable<Awaited<ReturnType<typeof authMfaEnable>>>
+    export type AuthMfaEnableMutationBody = BodyType<MfaTotpCodeInput>
+    export type AuthMfaEnableMutationError = ErrorType<void>
+
+    /**
+ * @summary Confirm the first TOTP code, enable MFA and issue recovery codes
+ */
+export const useAuthMfaEnable = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaEnable>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authMfaEnable>>,
+        TError,
+        {data: BodyType<MfaTotpCodeInput>},
+        TContext
+      > => {
+      return useMutation(getAuthMfaEnableMutationOptions(options));
+    }
+
+export const getAuthMfaVerifyUrl = () => {
+
+
+
+
+  return `/api/auth/mfa/verify`
+}
+
+/**
+ * Accepts ONLY a pre-MFA session (cookie from login with mfaRequired). Two concurrent verifications of the same step: exactly one succeeds (atomic anti-replay). On success the pending session is revoked and a full session cookie is issued.
+ * @summary Verify the TOTP code during login and promote the pre-MFA session
+ */
+export const authMfaVerify = async (mfaTotpCodeInput: MfaTotpCodeInput, options?: Parameters<typeof customFetch>[1]): Promise<AuthUser> => {
+
+  return customFetch<AuthUser>(getAuthMfaVerifyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mfaTotpCodeInput)
+  }
+);}
+
+
+
+
+
+export const getAuthMfaVerifyMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaVerify>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authMfaVerify>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext> => {
+
+const mutationKey = ['authMfaVerify'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authMfaVerify>>, {data: BodyType<MfaTotpCodeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authMfaVerify(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthMfaVerifyMutationResult = NonNullable<Awaited<ReturnType<typeof authMfaVerify>>>
+    export type AuthMfaVerifyMutationBody = BodyType<MfaTotpCodeInput>
+    export type AuthMfaVerifyMutationError = ErrorType<void>
+
+    /**
+ * @summary Verify the TOTP code during login and promote the pre-MFA session
+ */
+export const useAuthMfaVerify = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaVerify>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authMfaVerify>>,
+        TError,
+        {data: BodyType<MfaTotpCodeInput>},
+        TContext
+      > => {
+      return useMutation(getAuthMfaVerifyMutationOptions(options));
+    }
+
+export const getAuthMfaRecoveryUrl = () => {
+
+
+
+
+  return `/api/auth/mfa/recovery`
+}
+
+/**
+ * Accepts ONLY a pre-MFA session. Consumes the code atomically (double concurrent consumption → exactly one succeeds, other is rejected as already used), then promotes the session to full.
+ * @summary Recover access with a recovery code during login (single-use)
+ */
+export const authMfaRecovery = async (mfaRecoveryInput: MfaRecoveryInput, options?: Parameters<typeof customFetch>[1]): Promise<AuthUser> => {
+
+  return customFetch<AuthUser>(getAuthMfaRecoveryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mfaRecoveryInput)
+  }
+);}
+
+
+
+
+
+export const getAuthMfaRecoveryMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaRecovery>>, TError,{data: BodyType<MfaRecoveryInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authMfaRecovery>>, TError,{data: BodyType<MfaRecoveryInput>}, TContext> => {
+
+const mutationKey = ['authMfaRecovery'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authMfaRecovery>>, {data: BodyType<MfaRecoveryInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authMfaRecovery(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthMfaRecoveryMutationResult = NonNullable<Awaited<ReturnType<typeof authMfaRecovery>>>
+    export type AuthMfaRecoveryMutationBody = BodyType<MfaRecoveryInput>
+    export type AuthMfaRecoveryMutationError = ErrorType<void>
+
+    /**
+ * @summary Recover access with a recovery code during login (single-use)
+ */
+export const useAuthMfaRecovery = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaRecovery>>, TError,{data: BodyType<MfaRecoveryInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authMfaRecovery>>,
+        TError,
+        {data: BodyType<MfaRecoveryInput>},
+        TContext
+      > => {
+      return useMutation(getAuthMfaRecoveryMutationOptions(options));
+    }
+
+export const getAuthMfaDisableUrl = () => {
+
+
+
+
+  return `/api/auth/mfa/disable`
+}
+
+/**
+ * Requires a fully authenticated session. A recovery code is NOT an accepted substitute. Atomically clears the secret, timestamps, anti-replay step and all recovery codes.
+ * @summary Disable MFA (requires the current TOTP code)
+ */
+export const authMfaDisable = async (mfaTotpCodeInput: MfaTotpCodeInput, options?: Parameters<typeof customFetch>[1]): Promise<MfaDisableResponse> => {
+
+  return customFetch<MfaDisableResponse>(getAuthMfaDisableUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mfaTotpCodeInput)
+  }
+);}
+
+
+
+
+
+export const getAuthMfaDisableMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaDisable>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authMfaDisable>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext> => {
+
+const mutationKey = ['authMfaDisable'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authMfaDisable>>, {data: BodyType<MfaTotpCodeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authMfaDisable(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthMfaDisableMutationResult = NonNullable<Awaited<ReturnType<typeof authMfaDisable>>>
+    export type AuthMfaDisableMutationBody = BodyType<MfaTotpCodeInput>
+    export type AuthMfaDisableMutationError = ErrorType<void>
+
+    /**
+ * @summary Disable MFA (requires the current TOTP code)
+ */
+export const useAuthMfaDisable = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaDisable>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authMfaDisable>>,
+        TError,
+        {data: BodyType<MfaTotpCodeInput>},
+        TContext
+      > => {
+      return useMutation(getAuthMfaDisableMutationOptions(options));
+    }
+
+export const getAuthMfaRecoveryRegenerateUrl = () => {
+
+
+
+
+  return `/api/auth/mfa/recovery/regenerate`
+}
+
+/**
+ * Requires a fully authenticated session with MFA enabled. New plaintext codes are delivered only in this response (once); previous codes are invalidated in the same transaction.
+ * @summary Regenerate the 10 recovery codes (requires the current TOTP code)
+ */
+export const authMfaRecoveryRegenerate = async (mfaTotpCodeInput: MfaTotpCodeInput, options?: Parameters<typeof customFetch>[1]): Promise<MfaRecoveryCodesResponse> => {
+
+  return customFetch<MfaRecoveryCodesResponse>(getAuthMfaRecoveryRegenerateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(mfaTotpCodeInput)
+  }
+);}
+
+
+
+
+
+export const getAuthMfaRecoveryRegenerateMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaRecoveryRegenerate>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof authMfaRecoveryRegenerate>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext> => {
+
+const mutationKey = ['authMfaRecoveryRegenerate'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof authMfaRecoveryRegenerate>>, {data: BodyType<MfaTotpCodeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  authMfaRecoveryRegenerate(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AuthMfaRecoveryRegenerateMutationResult = NonNullable<Awaited<ReturnType<typeof authMfaRecoveryRegenerate>>>
+    export type AuthMfaRecoveryRegenerateMutationBody = BodyType<MfaTotpCodeInput>
+    export type AuthMfaRecoveryRegenerateMutationError = ErrorType<void>
+
+    /**
+ * @summary Regenerate the 10 recovery codes (requires the current TOTP code)
+ */
+export const useAuthMfaRecoveryRegenerate = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof authMfaRecoveryRegenerate>>, TError,{data: BodyType<MfaTotpCodeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof authMfaRecoveryRegenerate>>,
+        TError,
+        {data: BodyType<MfaTotpCodeInput>},
+        TContext
+      > => {
+      return useMutation(getAuthMfaRecoveryRegenerateMutationOptions(options));
+    }
 
 export const getListUsersUrl = (params?: ListUsersParams,) => {
   const normalizedParams = new URLSearchParams();

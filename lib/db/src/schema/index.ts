@@ -7,6 +7,7 @@ export * from "./findings";
 export * from "./invitations";
 export * from "./masking-jobs";
 export * from "./memberships";
+export * from "./mfa-recovery-codes";
 export * from "./organizations";
 export * from "./password-reset-tokens";
 export * from "./rate-limit-hits";

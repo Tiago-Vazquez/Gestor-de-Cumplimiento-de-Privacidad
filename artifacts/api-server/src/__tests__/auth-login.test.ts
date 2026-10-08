@@ -44,6 +44,7 @@ function seedSessionFor(token: string) {
     expiresAt: new Date((exp ?? 0) * 1000),
     revokedAt: null,
     lastUsedAt: new Date(),
+    mfaPending: false,
   });
 }
 

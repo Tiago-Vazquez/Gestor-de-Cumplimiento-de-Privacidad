@@ -8,6 +8,7 @@ import * as dashboard from "./dashboard.repo";
 import * as findings from "./findings.repo";
 import * as masking from "./masking.repo";
 import * as memberships from "./memberships.repo";
+import * as mfa from "./mfa.repo";
 import * as invitations from "./invitations.repo";
 import * as organizations from "./organizations.repo";
 import * as passwordReset from "./password-reset.repo";
@@ -30,6 +31,7 @@ export const repos = {
   invitations,
   masking,
   memberships,
+  mfa,
   organizations,
   passwordReset,
   rateLimits,

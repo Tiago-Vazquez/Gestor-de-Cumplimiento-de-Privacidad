@@ -31,7 +31,8 @@ export const AuthLoginBody = zod.object({
 export const AuthLoginResponse = zod.object({
   "sub": zod.string(),
   "email": zod.string().nullish(),
-  "roles": zod.array(zod.string())
+  "roles": zod.array(zod.string()),
+  "mfaPending": zod.boolean().optional().describe('True when the session is pre-MFA (challenge pending); the UI must render the TOTP challenge.')
 })
 
 
@@ -51,7 +52,8 @@ export const AuthRegisterBody = zod.object({
 export const AuthRegisterResponse = zod.object({
   "sub": zod.string(),
   "email": zod.string().nullish(),
-  "roles": zod.array(zod.string())
+  "roles": zod.array(zod.string()),
+  "mfaPending": zod.boolean().optional().describe('True when the session is pre-MFA (challenge pending); the UI must render the TOTP challenge.')
 })
 
 
@@ -169,7 +171,126 @@ export const AuthLogoutAllResponse = zod.object({
 export const AuthMeResponse = zod.object({
   "sub": zod.string(),
   "email": zod.string().nullish(),
-  "roles": zod.array(zod.string())
+  "roles": zod.array(zod.string()),
+  "mfaPending": zod.boolean().optional().describe('True when the session is pre-MFA (challenge pending); the UI must render the TOTP challenge.')
+})
+
+
+/**
+ * Requires a fully authenticated session. Never returns secrets, otpauth URIs, recovery codes or hashes.
+ * @summary Get MFA enrollment status for the UI
+ */
+export const AuthMfaStatusResponse = zod.object({
+  "enabled": zod.boolean(),
+  "pendingEnrollment": zod.boolean()
+})
+
+
+/**
+ * Requires a fully authenticated session and disabled MFA. Returns the otpauth:// URI (contains the TOTP secret by design) for QR rendering. The URI travels only in this HTTPS response — never in logs or audit.
+ * @summary Start MFA enrollment and return the otpauth URI for QR
+ */
+export const AuthMfaSetupResponse = zod.object({
+  "otpauthUrl": zod.string().describe('otpauth:\/\/ URI for QR rendering. Contains the TOTP secret by design; travels only in this HTTPS response, never in logs or audit.')
+})
+
+
+/**
+ * Requires a fully authenticated session and a pending enrollment. Plaintext recovery codes are delivered only in this response (once). Never logged, never audited, never persisted.
+ * @summary Confirm the first TOTP code, enable MFA and issue recovery codes
+ */
+export const authMfaEnableBodyCodeRegExp = new RegExp('^[0-9]{6}$');
+
+
+export const AuthMfaEnableBody = zod.object({
+  "code": zod.string().regex(authMfaEnableBodyCodeRegExp).describe('6-digit TOTP code')
+})
+
+export const authMfaEnableResponseRecoveryCodesMin = 10;
+export const authMfaEnableResponseRecoveryCodesMax = 10;
+
+
+
+export const AuthMfaEnableResponse = zod.object({
+  "enabled": zod.boolean(),
+  "recoveryCodes": zod.array(zod.string()).min(authMfaEnableResponseRecoveryCodesMin).max(authMfaEnableResponseRecoveryCodesMax).describe('10 recovery codes in plaintext, delivered only once in this response. Never logged or persisted.')
+})
+
+
+/**
+ * Accepts ONLY a pre-MFA session (cookie from login with mfaRequired). Two concurrent verifications of the same step: exactly one succeeds (atomic anti-replay). On success the pending session is revoked and a full session cookie is issued.
+ * @summary Verify the TOTP code during login and promote the pre-MFA session
+ */
+export const authMfaVerifyBodyCodeRegExp = new RegExp('^[0-9]{6}$');
+
+
+export const AuthMfaVerifyBody = zod.object({
+  "code": zod.string().regex(authMfaVerifyBodyCodeRegExp).describe('6-digit TOTP code')
+})
+
+export const AuthMfaVerifyResponse = zod.object({
+  "sub": zod.string(),
+  "email": zod.string().nullish(),
+  "roles": zod.array(zod.string()),
+  "mfaPending": zod.boolean().optional().describe('True when the session is pre-MFA (challenge pending); the UI must render the TOTP challenge.')
+})
+
+
+/**
+ * Accepts ONLY a pre-MFA session. Consumes the code atomically (double concurrent consumption → exactly one succeeds, other is rejected as already used), then promotes the session to full.
+ * @summary Recover access with a recovery code during login (single-use)
+ */
+export const authMfaRecoveryBodyCodeMin = 4;
+export const authMfaRecoveryBodyCodeMax = 64;
+
+
+
+export const AuthMfaRecoveryBody = zod.object({
+  "code": zod.string().min(authMfaRecoveryBodyCodeMin).max(authMfaRecoveryBodyCodeMax).describe('Recovery code (dashes\/spaces accepted, normalized server-side)')
+})
+
+export const AuthMfaRecoveryResponse = zod.object({
+  "sub": zod.string(),
+  "email": zod.string().nullish(),
+  "roles": zod.array(zod.string()),
+  "mfaPending": zod.boolean().optional().describe('True when the session is pre-MFA (challenge pending); the UI must render the TOTP challenge.')
+})
+
+
+/**
+ * Requires a fully authenticated session. A recovery code is NOT an accepted substitute. Atomically clears the secret, timestamps, anti-replay step and all recovery codes.
+ * @summary Disable MFA (requires the current TOTP code)
+ */
+export const authMfaDisableBodyCodeRegExp = new RegExp('^[0-9]{6}$');
+
+
+export const AuthMfaDisableBody = zod.object({
+  "code": zod.string().regex(authMfaDisableBodyCodeRegExp).describe('6-digit TOTP code')
+})
+
+export const AuthMfaDisableResponse = zod.object({
+  "enabled": zod.literal(false)
+})
+
+
+/**
+ * Requires a fully authenticated session with MFA enabled. New plaintext codes are delivered only in this response (once); previous codes are invalidated in the same transaction.
+ * @summary Regenerate the 10 recovery codes (requires the current TOTP code)
+ */
+export const authMfaRecoveryRegenerateBodyCodeRegExp = new RegExp('^[0-9]{6}$');
+
+
+export const AuthMfaRecoveryRegenerateBody = zod.object({
+  "code": zod.string().regex(authMfaRecoveryRegenerateBodyCodeRegExp).describe('6-digit TOTP code')
+})
+
+export const authMfaRecoveryRegenerateResponseRecoveryCodesMin = 10;
+export const authMfaRecoveryRegenerateResponseRecoveryCodesMax = 10;
+
+
+
+export const AuthMfaRecoveryRegenerateResponse = zod.object({
+  "recoveryCodes": zod.array(zod.string()).min(authMfaRecoveryRegenerateResponseRecoveryCodesMin).max(authMfaRecoveryRegenerateResponseRecoveryCodesMax).describe('10 new recovery codes in plaintext, delivered only once. Previous codes are invalidated.')
 })
 
 
@@ -289,7 +410,7 @@ export const ListAuditEventsQueryParams = zod.object({
 export const ListAuditEventsResponseItem = zod.object({
   "id": zod.string(),
   "actorUserId": zod.string().nullish().describe('`sub` del actor autenticado que ejecutó la acción; `null` en acciones internas (scheduler de escaneos, recovery de scans huérfanos) donde no hay usuario humano.'),
-  "action": zod.string().describe('Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled.'),
+  "action": zod.string().describe('Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled, mfa_setup_started, mfa_enabled, mfa_disabled, mfa_verification_success, mfa_verification_failure, mfa_recovery_code_used, mfa_recovery_failure, mfa_recovery_codes_regenerated.'),
   "resourceType": zod.string().describe('Tipo de recurso afectado: session, user, source, schedule, scan, report, masking_job o rule.'),
   "resourceId": zod.string().nullish().describe('Identificador del recurso afectado (`null` si no aplica).'),
   "result": zod.enum(['success', 'failure']).describe('Resultado de la acción intentada.'),
@@ -327,7 +448,7 @@ export const ListAuditEventsPlatformQueryParams = zod.object({
 export const ListAuditEventsPlatformResponseItem = zod.object({
   "id": zod.string(),
   "actorUserId": zod.string().nullish().describe('`sub` del actor autenticado que ejecutó la acción; `null` en acciones internas (scheduler de escaneos, recovery de scans huérfanos) donde no hay usuario humano.'),
-  "action": zod.string().describe('Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled.'),
+  "action": zod.string().describe('Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled, mfa_setup_started, mfa_enabled, mfa_disabled, mfa_verification_success, mfa_verification_failure, mfa_recovery_code_used, mfa_recovery_failure, mfa_recovery_codes_regenerated.'),
   "resourceType": zod.string().describe('Tipo de recurso afectado: session, user, source, schedule, scan, report, masking_job o rule.'),
   "resourceId": zod.string().nullish().describe('Identificador del recurso afectado (`null` si no aplica).'),
   "result": zod.enum(['success', 'failure']).describe('Resultado de la acción intentada.'),

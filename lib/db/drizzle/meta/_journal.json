@@ -160,6 +160,13 @@
       "when": 1791283823113,
       "tag": "0022_amusing_bromley",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791324052098,
+      "tag": "0023_puzzling_golden_guardian",
+      "breakpoints": true
     }
   ],
   "version": "7",

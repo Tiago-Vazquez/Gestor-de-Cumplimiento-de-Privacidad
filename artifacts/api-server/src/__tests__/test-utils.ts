@@ -108,6 +108,11 @@ export async function seedProvisionedAdmin(
       createdAt: new Date(),
       updatedAt: new Date(),
       lastLoginAt: null,
+      mfaEnabled: false,
+      mfaSecretEncrypted: null,
+      mfaSecretSetAt: null,
+      mfaEnabledAt: null,
+      mfaLastVerifiedStep: null,
     });
   }
 

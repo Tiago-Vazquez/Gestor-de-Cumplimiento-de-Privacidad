@@ -58,6 +58,11 @@ async function seededUser(email: string, password: string) {
     createdAt: now,
     updatedAt: now,
     lastLoginAt: null,
+    mfaEnabled: false,
+    mfaSecretEncrypted: null,
+    mfaSecretSetAt: null,
+    mfaEnabledAt: null,
+    mfaLastVerifiedStep: null,
   };
   state().users.push(user);
   return user;

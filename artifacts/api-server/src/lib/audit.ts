@@ -67,6 +67,15 @@ export type AuditAction =
   | "invitation_created"
   | "invitation_revoked"
   | "invitation_accepted"
+  // MFA (TOTP) — eventos de segundo factor (Fase 2).
+  | "mfa_setup_started"
+  | "mfa_enabled"
+  | "mfa_disabled"
+  | "mfa_verification_success"
+  | "mfa_verification_failure"
+  | "mfa_recovery_code_used"
+  | "mfa_recovery_failure"
+  | "mfa_recovery_codes_regenerated"
   | "security_violation";
 
 /**

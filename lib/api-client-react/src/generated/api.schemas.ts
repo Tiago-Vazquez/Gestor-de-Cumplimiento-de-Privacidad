@@ -102,6 +102,8 @@ export interface AuthUser {
   /** @nullable */
   email?: string | null;
   roles: string[];
+  /** True when the session is pre-MFA (challenge pending); the UI must render the TOTP challenge. */
+  mfaPending?: boolean;
 }
 
 export type AdminUserRolesItem = typeof AdminUserRolesItem[keyof typeof AdminUserRolesItem];
@@ -124,6 +126,56 @@ export interface AdminUser {
   createdAt: string;
   /** @nullable */
   lastLoginAt?: string | null;
+}
+
+export interface MfaStatusResponse {
+  enabled: boolean;
+  pendingEnrollment: boolean;
+}
+
+export interface MfaSetupResponse {
+  /** otpauth:// URI for QR rendering. Contains the TOTP secret by design; travels only in this HTTPS response, never in logs or audit. */
+  otpauthUrl: string;
+}
+
+export interface MfaTotpCodeInput {
+  /**
+     * 6-digit TOTP code
+     * @pattern ^[0-9]{6}$
+     */
+  code: string;
+}
+
+export interface MfaEnableResponse {
+  enabled: boolean;
+  /**
+     * 10 recovery codes in plaintext, delivered only once in this response. Never logged or persisted.
+     * @minItems 10
+     * @maxItems 10
+     */
+  recoveryCodes: string[];
+}
+
+export interface MfaDisableResponse {
+  enabled: false;
+}
+
+export interface MfaRecoveryInput {
+  /**
+     * Recovery code (dashes/spaces accepted, normalized server-side)
+     * @minLength 4
+     * @maxLength 64
+     */
+  code: string;
+}
+
+export interface MfaRecoveryCodesResponse {
+  /**
+     * 10 new recovery codes in plaintext, delivered only once. Previous codes are invalidated.
+     * @minItems 10
+     * @maxItems 10
+     */
+  recoveryCodes: string[];
 }
 
 /**
@@ -769,7 +821,7 @@ export interface AuditEvent {
      * @nullable
      */
   actorUserId?: string | null;
-  /** Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled. */
+  /** Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled, mfa_setup_started, mfa_enabled, mfa_disabled, mfa_verification_success, mfa_verification_failure, mfa_recovery_code_used, mfa_recovery_failure, mfa_recovery_codes_regenerated. */
   action: string;
   /** Tipo de recurso afectado: session, user, source, schedule, scan, report, masking_job o rule. */
   resourceType: string;

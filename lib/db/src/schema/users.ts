@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -20,6 +20,17 @@ export const usersTable = pgTable("users", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   // Último login exitoso. Null si nunca ha iniciado sesión.
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  // --- MFA (TOTP) ---
+  // Habilitado. El secreto solo es utilizable cuando este flag es true.
+  mfaEnabled: boolean("mfa_enabled").notNull().default(false),
+  // Secreto TOTP cifrado (AES-256-GCM vía secret-manager). Null sin MFA.
+  mfaSecretEncrypted: text("mfa_secret_encrypted"),
+  // Cuándo se fijó el secreto (TTL del enrolamiento pendiente).
+  mfaSecretSetAt: timestamp("mfa_secret_set_at", { withTimezone: true }),
+  // Cuándo se habilitó MFA.
+  mfaEnabledAt: timestamp("mfa_enabled_at", { withTimezone: true }),
+  // Anti-replay TOTP: último time-step verificado (monotónico).
+  mfaLastVerifiedStep: integer("mfa_last_verified_step"),
 });
 
 export const insertUserSchema = createInsertSchema(usersTable).omit({

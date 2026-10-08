@@ -255,6 +255,7 @@ describe("M18 security hardening", () => {
           expiresAt: stale,
           revokedAt: null,
           lastUsedAt: new Date(),
+          mfaPending: false,
         },
         {
           jti: "m18-revoked-stale",
@@ -263,6 +264,7 @@ describe("M18 security hardening", () => {
           expiresAt: new Date(now + 24 * 60 * 60 * 1000),
           revokedAt: stale,
           lastUsedAt: new Date(),
+          mfaPending: false,
         },
         {
           jti: "m18-alive",
@@ -271,6 +273,7 @@ describe("M18 security hardening", () => {
           expiresAt: new Date(now + 60 * 60 * 1000),
           revokedAt: null,
           lastUsedAt: new Date(),
+          mfaPending: false,
         },
       );
       const hits = (s.rateLimitHits ??= []);

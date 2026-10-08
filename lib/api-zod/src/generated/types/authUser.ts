@@ -11,4 +11,6 @@ export interface AuthUser {
   /** @nullable */
   email?: string | null;
   roles: string[];
+  /** True when the session is pre-MFA (challenge pending); the UI must render the TOTP challenge. */
+  mfaPending?: boolean;
 }

@@ -28,6 +28,11 @@ import {
   MAX_MASKING_RECORDS,
 } from "../lib/masking-limits";
 import { computeComplianceScore, type SeverityCounts } from "../repositories/compliance-score";
+import {
+  hashRecoveryCode,
+  MFA_RECOVERY_CODE_COUNT,
+  normalizeRecoveryCode,
+} from "../repositories/mfa.repo";
 import { buildTrendDayKeys, buildTrendPoints } from "../lib/trend-buckets";
 
 /**
@@ -54,6 +59,14 @@ type MockSession = Omit<Session, "activeOrgId"> & { activeOrgId?: string | null 
 
 export type MockState = {
   users: User[];
+  /**
+   * Fase 2 (MFA/TOTP): recovery codes en memoria. Solo el hash persiste
+   * (igual que el repo real: `mfa_recovery_codes`), agrupado por usuario
+   * porque las consultas siempre filtran por `userSub`.
+   */
+  mfaRecoveryHashes: Record<string, { codeHash: string; usedAt: Date | null }[]>;
+  /** Secuencia monotónica para códigos de recuperación deterministas. */
+  mfaRecoverySeq: number;
   /** M30.0: tokens de recuperacion en memoria (solo el hash persiste). */
   passwordResetTokens: Array<{
     id: string;
@@ -84,6 +97,7 @@ export type MockState = {
   /** M21.2: organizaciones, memberships e invitaciones (inicialización perezosa). */
   organizations?: Organization[];
   memberships?: Membership[];
+  // ---- FASE 7.3 (M5.c): espejo in-memory de masking.repo ----
   invitations?: Invitation[];
 };
 
@@ -291,6 +305,8 @@ export function createMockRepos() {
 
   const state: MockState = {
     users: [],
+    mfaRecoveryHashes: {},
+    mfaRecoverySeq: 0,
     passwordResetTokens: [],
     /** Secuencia monotónica de ids (evita colisiones al invalidar). */
     passwordResetSeq: 0,
@@ -1219,6 +1235,11 @@ export function createMockRepos() {
           lastLoginAt: null,
           createdAt: new Date(),
           updatedAt: new Date(),
+          mfaEnabled: false,
+          mfaSecretEncrypted: null,
+          mfaSecretSetAt: null,
+          mfaEnabledAt: null,
+          mfaLastVerifiedStep: null,
         };
         state.users.push(created);
         return { ...created };
@@ -1314,6 +1335,136 @@ export function createMockRepos() {
         return { applied: [...roles], changed: true, revokedSessions };
       },
     },
+    /**
+     * Fase 2 (MFA/TOTP) — espejo in-memory de `mfa.repo`.
+     *
+     * El estado MFA vive en `state.users` (mismas columnas: `mfaEnabled`,
+     * `mfaSecretEncrypted`, `mfaSecretSetAt`, `mfaEnabledAt`,
+     * `mfaLastVerifiedStep`) y en `state.mfaRecoveryHashes` (solo hashes,
+     * igual que la tabla real). `normalizeRecoveryCode`/`hashRecoveryCode`
+     * se reutilizan del repo REAL (funciones puras, sin BD) para que el mock
+     * nunca diverja en la semántica de normalización/hash. Los códigos
+     * planos se generan determinísticamente (secuencia monotónica) — los
+     * tests solo necesitan que sean estables dentro de la suite.
+     */
+    mfa: {
+      async getMfaState(sub: string) {
+        const user = state.users.find((u) => u.sub === sub);
+        if (!user) return null;
+        return {
+          mfaEnabled: user.mfaEnabled,
+          mfaSecretEncrypted: user.mfaSecretEncrypted,
+          mfaSecretSetAt: user.mfaSecretSetAt,
+          mfaEnabledAt: user.mfaEnabledAt,
+          mfaLastVerifiedStep: user.mfaLastVerifiedStep,
+        };
+      },
+      async setSessionMfaPending(jti: string, value: boolean) {
+        const session = state.sessions.find((s) => s.jti === jti);
+        if (session) session.mfaPending = value;
+      },
+      async beginMfaSetup(userSub: string, encryptedSecret: string, now: Date) {
+        const user = state.users.find((u) => u.sub === userSub);
+        if (!user || user.mfaEnabled) return false;
+        user.mfaSecretEncrypted = encryptedSecret;
+        user.mfaSecretSetAt = now;
+        return true;
+      },
+      async enableMfa(userSub: string, now: Date) {
+        const user = state.users.find((u) => u.sub === userSub);
+        if (!user) return false;
+        user.mfaEnabled = true;
+        user.mfaEnabledAt = now;
+        return true;
+      },
+      async regenerateRecoveryCodes(userSub: string) {
+        const plains: string[] = [];
+        const rows: { codeHash: string; usedAt: Date | null }[] = [];
+        for (let i = 0; i < MFA_RECOVERY_CODE_COUNT; i++) {
+          state.mfaRecoverySeq += 1;
+          const plain = `MOCK${String(state.mfaRecoverySeq).padStart(6, "0")}`;
+          plains.push(plain);
+          rows.push({ codeHash: hashRecoveryCode(plain), usedAt: null });
+        }
+        state.mfaRecoveryHashes[userSub] = rows;
+        return plains;
+      },
+      /**
+       * Consumo single-use: primera llamada con el hash → ok; hash
+       * inexistente → not_found; hash ya usado → already_used (igual que el
+       * guard `FOR UPDATE + used_at IS NULL` del repo real).
+       */
+      async consumeRecoveryCode(userSub: string, codeHash: string, now: Date) {
+        const rows = state.mfaRecoveryHashes[userSub];
+        const row = rows?.find((r) => r.codeHash === codeHash);
+        if (!row) return { ok: false as const, reason: "not_found" as const };
+        if (row.usedAt !== null) {
+          return { ok: false as const, reason: "already_used" as const };
+        }
+        row.usedAt = now;
+        return { ok: true as const };
+      },
+      /**
+       * Promoción pre-MFA → completa: anti-replay monotónico sobre
+       * `mfaLastVerifiedStep` (mismo gate que `advanceStep` en la tx real),
+       * roles leídos del estado actual, `buildToken` ejecutado y sesión
+       * pendiente revocada + sesión completa creada.
+       */
+      async promotePendingSession(input: {
+        userSub: string;
+        pendingJti: string;
+        buildToken: (roles: string[]) => Promise<string>;
+        activeOrgId?: string | null;
+        now: Date;
+        advanceStep?: number;
+      }) {
+        if (input.advanceStep !== undefined) {
+          const stateRow = state.users.find((u) => u.sub === input.userSub);
+          if (!stateRow) return { ok: false as const, reason: "replay" as const };
+          const last = stateRow.mfaLastVerifiedStep;
+          if (last !== null && last >= input.advanceStep) {
+            return { ok: false as const, reason: "replay" as const };
+          }
+          stateRow.mfaLastVerifiedStep = input.advanceStep;
+        }
+        const roles = state.userRoles
+          .filter((r) => r.userSub === input.userSub)
+          .map((r) => r.role);
+        const jwt = await input.buildToken(roles);
+        const { jti, exp } = decodeJwt(jwt);
+        if (typeof jti !== "string" || typeof exp !== "number") {
+          throw new Error("JWT without jti/exp; refusing to promote session");
+        }
+        for (const session of state.sessions) {
+          if (session.jti === input.pendingJti && session.userSub === input.userSub) {
+            session.revokedAt = input.now;
+          }
+        }
+        state.sessions.push({
+          jti,
+          userSub: input.userSub,
+          issuedAt: input.now,
+          expiresAt: new Date(exp * 1000),
+          revokedAt: null,
+          lastUsedAt: input.now,
+          activeOrgId: input.activeOrgId ?? null,
+          mfaPending: false,
+        });
+        return { ok: true as const, jwt, roles };
+      },
+      normalizeRecoveryCode,
+      hashRecoveryCode,
+      /** Revierte `enableMfa` (mantiene el secreto como hace el repo real). */
+      async disableMfa(userSub: string) {
+        const user = state.users.find((u) => u.sub === userSub);
+        if (!user) return false;
+        user.mfaEnabled = false;
+        user.mfaEnabledAt = null;
+        user.mfaLastVerifiedStep = null;
+        return true;
+      },
+    },
+
 
     scanSchedules: {
       async upsert(
@@ -1453,6 +1604,7 @@ export function createMockRepos() {
           lastUsedAt: new Date(),
           // M21.2 — contexto de organización inicial (primera membership).
           activeOrgId: activeOrgId ?? null,
+          mfaPending: false,
         };
         state.sessions.push(created);
         return { jwt, roles };

@@ -18,7 +18,7 @@ export interface AuditEvent {
      * @nullable
      */
   actorUserId?: string | null;
-  /** Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled. */
+  /** Acción registrada. Vocabulario: login_success, login_failure, logout, logout_all, session_revoked, password_changed, user_updated, user_roles_updated, source_created, source_updated, source_deleted, schedule_created, schedule_updated, schedule_enabled, schedule_disabled, scan_started, scan_cancelled, scan_failed, report_created, report_downloaded, masking_job_created, dataset_downloaded, rule_enabled, rule_disabled, mfa_setup_started, mfa_enabled, mfa_disabled, mfa_verification_success, mfa_verification_failure, mfa_recovery_code_used, mfa_recovery_failure, mfa_recovery_codes_regenerated. */
   action: string;
   /** Tipo de recurso afectado: session, user, source, schedule, scan, report, masking_job o rule. */
   resourceType: string;

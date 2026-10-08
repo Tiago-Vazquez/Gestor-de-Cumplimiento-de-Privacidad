@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { rateLimit } from "express-rate-limit";
+import { rateLimit, type Store } from "express-rate-limit";
+import { decodeJwt } from "jose";
 import { optionalPersistentStore } from "../lib/rate-limit-store";
 import { logger } from "../lib/logger";
 import { repos } from "../repositories";
 import { signToken, verifyToken } from "../auth/tokens";
-import { requireAuth, type AuthedRequest } from "../auth/middleware";
+import { requireAuth, requireMfaVerified, type AuthedRequest } from "../auth/middleware";
 import { requireCsrf } from "../auth/csrf";
 import {
   extractSessionToken,
@@ -20,6 +21,8 @@ import { sessionIdleSeconds } from "../lib/env";
 import { recordAuditEvent } from "../lib/audit";
 import { deliverResetLink } from "../auth/password-reset-delivery";
 import * as passwordReset from "../repositories/password-reset.repo";
+import { encrypt, decrypt } from "../lib/secret-manager";
+import { generateTotpSecret, verifyTotp, buildOtpauthUrl } from "../lib/totp";
 import { hashPassword, verifyPassword } from "@workspace/auth";
 import {
   isValidName,
@@ -158,6 +161,62 @@ const loginLimiter = rateLimit({
   },
 });
 
+// --- MFA (Fase 2): constantes y rate limiters ---
+const MFA_ISSUER = "Privaris";
+const MFA_PENDING_TTL_SECONDS = 300; // sesión pre-MFA: 5 minutos
+const MFA_SETUP_TTL_MS = 10 * 60 * 1000; // secreto pendiente: 10 minutos
+
+function mfaLimiter(store: Store | undefined, limit: number, detail: string) {
+  return rateLimit({
+    store,
+    windowMs: 15 * 60 * 1000,
+    limit,
+    standardHeaders: true,
+    legacyHeaders: false,
+    handler: (_req, res) => {
+      sendProblemJson(res, {
+        type: "about:blank",
+        title: "Too Many Requests",
+        status: 429,
+        detail,
+      });
+    },
+    // Clave IP + sub: no se permite evadir el límite cambiando parámetros del
+    // body (la identidad proviene de la sesión verificada, no del cliente).
+    keyGenerator: (req) => {
+      const ip = req.ip ?? "unknown";
+      const sub = (req as AuthedRequest).user?.sub ?? "anonymous";
+      return `${ip}:${sub}`;
+    },
+  });
+}
+
+const mfaVerifyLimiter = mfaLimiter(
+  optionalPersistentStore("mfa-verify"),
+  5,
+  "Too many MFA verification attempts, please try again later.",
+);
+const mfaRecoveryLimiter = mfaLimiter(
+  optionalPersistentStore("mfa-recovery"),
+  5,
+  "Too many MFA recovery attempts, please try again later.",
+);
+const mfaSetupLimiter = mfaLimiter(
+  optionalPersistentStore("mfa-setup"),
+  10,
+  "Too many MFA setup attempts, please try again later.",
+);
+const mfaDisableLimiter = mfaLimiter(
+  optionalPersistentStore("mfa-disable"),
+  5,
+  "Too many MFA disable attempts, please try again later.",
+);
+const mfaRegenerateLimiter = mfaLimiter(
+  optionalPersistentStore("mfa-regenerate"),
+  5,
+  "Too many MFA recovery code regeneration attempts, please try again later.",
+);
+
 /**
  * POST /api/auth/login
  *
@@ -250,6 +309,55 @@ async function handleLocalLogin(
   // M21.2 - el contexto de organizacion inicial de la sesion es la primera
   // membership del usuario (orden de ingreso); null si no tiene ninguna.
   const activeOrgId = await repos.memberships.getFirstOrgForUser(user.sub);
+
+  // --- Fase 2 MFA: contraseña correcta + MFA habilitado → sesión pre-MFA ---
+  // Misma respuesta uniforme que la rama sin MFA (sin enumeración). NO se
+  // crean roles ni sesión completa todavía: el frontend debe pedir el TOTP.
+  const mfaState = await repos.mfa.getMfaState(user.sub);
+  if (mfaState?.mfaEnabled) {
+    const { jwt } = await repos.sessions.createSessionForUser(
+      user.sub,
+      async (roles) =>
+        signToken(
+          {
+            sub: user.sub,
+            email: user.email,
+            name: user.name,
+            roles,
+            csrf: generateCsrfToken(),
+          },
+          { expiresInSeconds: MFA_PENDING_TTL_SECONDS },
+        ),
+      activeOrgId,
+    );
+    const pendingDecoded = decodeJwt(jwt);
+    if (typeof pendingDecoded.jti !== "string") {
+      // Nunca debería ocurrir; sin cookie emitida → 401 uniforme.
+      throw unauthorized("Invalid credentials");
+    }
+    await repos.mfa.setSessionMfaPending(pendingDecoded.jti, true);
+    res.cookie(sessionCookieName(), jwt, sessionCookieOptions());
+
+    // Auditoría: password correcta + desafío MFA pendiente (sin secretos).
+    await recordAuditEvent({
+      req,
+      actorUserId: user.sub,
+      action: "login_success",
+      resourceType: "session",
+      result: "success",
+      metadata: { method: "local", mfaRequired: true },
+    });
+    logger.info(
+      { sub: user.sub, event: "login", method: "local", mfaRequired: true },
+      "MFA challenge issued",
+    );
+
+    // Respuesta mínima: SIN roles, SIN secretos.
+    res.status(200).json({ mfaRequired: true, sub: user.sub, email: user.email });
+    return;
+  }
+  // --- fin Fase 2 MFA ---
+
   // [6.3B.12] Login transaccional: lock de users(sub) FOR UPDATE + lectura
   // de roles + firma + alta de sesion en UNA tx (cierra U3: carrera login +
   // role-change que podia emitir un JWT con roles stale y sesion activa).
@@ -413,6 +521,7 @@ const passwordChangeLimiter = rateLimit({
 router.post(
   "/password/change",
   requireAuth(),
+  requireMfaVerified(),
   passwordChangeLimiter,
   requireCsrf(),
   async (req, res) => {
@@ -535,7 +644,7 @@ const sessionManagementLimiter = rateLimit({
  * fila (jti, fechas); NUNCA el claim csrf (vive en el JWT), tokens ni hashes.
  * `current: true` marca la sesión que realiza la petición (por jti).
  */
-router.get("/sessions", requireAuth(), sessionManagementLimiter, async (req, res) => {
+router.get("/sessions", requireAuth(), requireMfaVerified(), sessionManagementLimiter, async (req, res) => {
   const authed = (req as AuthedRequest).user;
   if (!authed?.sub) throw unauthorized("Missing or invalid session");
 
@@ -565,6 +674,7 @@ router.get("/sessions", requireAuth(), sessionManagementLimiter, async (req, res
 router.delete(
   "/sessions/:jti",
   requireAuth(),
+  requireMfaVerified(),
   sessionManagementLimiter,
   requireCsrf(),
   async (req, res) => {
@@ -683,10 +793,13 @@ router.post("/logout", async (req, res) => {
  */
 router.get("/me", requireAuth(), (req, res) => {
   const user = (req as AuthedRequest).user;
+  const authed = req as AuthedRequest;
   res.status(200).json({
     sub: user?.sub ?? null,
     email: user?.email ?? null,
     roles: user?.roles ?? [],
+    // Fase 2 MFA: permite al frontend detectar el estado pre-MFA al recargar.
+    mfaPending: authed.mfaPending === true,
   });
 });
 
@@ -812,5 +925,437 @@ router.post("/password/reset", resetLimiter, async (req, res) => {
     message: "Password updated. All sessions have been revoked.",
   });
 });
+
+// =============================================================================
+// MFA (Fase 2) — endpoints /auth/mfa/*
+//
+// Excepciones pre-MFA: /auth/mfa/verify y /auth/mfa/recovery se permiten con
+// sesión mfa_pending (requireAuth). El resto exigen sesión completa
+// (requireMfaVerified). Ningún endpoint devuelve ni registra el secreto TOTP,
+// el otpauth:// ni los recovery codes: los plaintext viajan SOLO en la
+// respuesta de enable / regenerate (una vez).
+// =============================================================================
+
+/** Body de código TOTP de 6 dígitos. */
+const TotpCodeBody = z.object({
+  code: z.string().regex(/^\d{6}$/, "code must be a 6-digit TOTP code"),
+});
+
+/** Body de recovery code (10 chars base32, agrupados o no). */
+const RecoveryCodeBody = z.object({
+  code: z.string().min(4).max(64),
+});
+
+/**
+ * GET /api/auth/mfa/status — estado MFA para la UI. Sesión completa.
+ * Nunca devuelve secreto, otpauth, recovery codes ni hashes.
+ */
+router.get("/mfa/status", requireAuth(), requireMfaVerified(), async (req, res) => {
+  const user = (req as AuthedRequest).user;
+  if (!user?.sub) throw unauthorized("Missing or invalid session");
+  const state = await repos.mfa.getMfaState(user.sub);
+  const enabled = state?.mfaEnabled ?? false;
+  const pendingEnrollment = !enabled && state?.mfaSecretEncrypted != null;
+  res.status(200).json({ enabled, pendingEnrollment });
+});
+
+/**
+ * POST /api/auth/mfa/setup — genera un secreto PENDIENTE y devuelve el
+ * otpauth:// para el QR. Sesión completa + MFA deshabilitado + CSRF + limit.
+ * El otpauth:// contiene el secreto por diseño: viaja SOLO en la respuesta
+ * HTTPS, jamás en logs ni auditoría.
+ */
+router.post(
+  "/mfa/setup",
+  requireAuth(),
+  requireMfaVerified(),
+  mfaSetupLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    if (!user?.sub) throw unauthorized("Missing or invalid session");
+
+    const state = await repos.mfa.getMfaState(user.sub);
+    if (state?.mfaEnabled) throw conflict("MFA is already enabled");
+
+    const secret = generateTotpSecret();
+    const now = new Date();
+    const ok = await repos.mfa.beginMfaSetup(user.sub, encrypt(secret), now);
+    if (!ok) throw conflict("MFA is already enabled");
+
+    const otpauthUrl = buildOtpauthUrl({
+      issuer: MFA_ISSUER,
+      account: user.email ?? user.sub,
+      secretBase32: secret,
+    });
+
+    await recordAuditEvent({
+      req,
+      actorUserId: user.sub,
+      action: "mfa_setup_started",
+      resourceType: "user",
+      resourceId: user.sub,
+      result: "success",
+      metadata: { method: "totp" },
+    });
+
+    // El otpauth:// (con secreto) solo viaja aquí; NUNCA se registra.
+    res.status(200).json({ otpauthUrl });
+  },
+);
+
+/**
+ * POST /api/auth/mfa/enable — confirma el primer TOTP, activa MFA y genera
+ * exactamente 10 recovery codes. Los plaintext viajan SOLO en esta respuesta.
+ */
+router.post(
+  "/mfa/enable",
+  requireAuth(),
+  requireMfaVerified(),
+  mfaSetupLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    if (!user?.sub) throw unauthorized("Missing or invalid session");
+
+    const parsed = TotpCodeBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw badRequest("code must be a 6-digit TOTP code");
+
+    const state = await repos.mfa.getMfaState(user.sub);
+    if (state?.mfaEnabled) throw conflict("MFA is already enabled");
+    if (!state?.mfaSecretEncrypted || !state.mfaSecretSetAt) {
+      throw badRequest("MFA setup has not been started");
+    }
+    if (Date.now() - state.mfaSecretSetAt.getTime() > MFA_SETUP_TTL_MS) {
+      throw badRequest("MFA setup has expired; start again");
+    }
+
+    const now = new Date();
+    let step: number | null = null;
+    try {
+      step = verifyTotp(decrypt(state.mfaSecretEncrypted), parsed.data.code, now.getTime());
+    } catch {
+      step = null;
+    }
+    if (step === null) {
+      await recordAuditEvent({
+        req,
+        actorUserId: user.sub,
+        action: "mfa_verification_failure",
+        resourceType: "user",
+        resourceId: user.sub,
+        result: "failure",
+        metadata: { method: "totp", context: "enable" },
+      });
+      throw badRequest("Invalid or expired TOTP code");
+    }
+
+    await repos.mfa.enableMfa(user.sub, now);
+    const recoveryCodes = await repos.mfa.regenerateRecoveryCodes(user.sub);
+
+    await recordAuditEvent({
+      req,
+      actorUserId: user.sub,
+      action: "mfa_enabled",
+      resourceType: "user",
+      resourceId: user.sub,
+      result: "success",
+      metadata: { method: "totp", recoveryCodes: recoveryCodes.length },
+    });
+
+    // Códigos plaintext SOLO en esta respuesta (una vez). Nunca en logs.
+    res.status(200).json({ enabled: true, recoveryCodes });
+  },
+);
+
+/**
+ * POST /api/auth/mfa/verify — confirma el TOTP durante el login y promueve la
+ * sesión pre-MFA → completa en UNA transacción (anti-replay atómico: dos
+ * verificaciones concurrentes del mismo step → solo una gana).
+ * Acepta SOLO sesión mfa_pending.
+ */
+router.post(
+  "/mfa/verify",
+  requireAuth(),
+  mfaVerifyLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const authed = req as AuthedRequest;
+    const user = authed.user;
+    if (!user?.sub || !user.jti) throw unauthorized("Missing or invalid session");
+    if (authed.mfaPending !== true) {
+      throw badRequest("Session is not awaiting MFA verification");
+    }
+
+    const parsed = TotpCodeBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw badRequest("code must be a 6-digit TOTP code");
+
+    const state = await repos.mfa.getMfaState(user.sub);
+    if (!state?.mfaEnabled || !state.mfaSecretEncrypted) {
+      throw unauthorized("Invalid credentials");
+    }
+
+    const now = new Date();
+    let step: number | null = null;
+    try {
+      step = verifyTotp(decrypt(state.mfaSecretEncrypted), parsed.data.code, now.getTime());
+    } catch {
+      step = null;
+    }
+    if (step === null) {
+      await recordAuditEvent({
+        req,
+        actorUserId: user.sub,
+        action: "mfa_verification_failure",
+        resourceType: "session",
+        resourceId: user.jti,
+        result: "failure",
+        metadata: { method: "totp", context: "login" },
+      });
+      throw unauthorized("Invalid or expired TOTP code");
+    }
+
+    const activeOrgId = await repos.memberships.getFirstOrgForUser(user.sub);
+    const result = await repos.mfa.promotePendingSession({
+      userSub: user.sub,
+      pendingJti: user.jti,
+      buildToken: (roles) =>
+        signToken({
+          sub: user.sub,
+          email: user.email,
+          name: user.name,
+          roles,
+          csrf: generateCsrfToken(),
+        }),
+      activeOrgId,
+      now,
+      advanceStep: step,
+    });
+
+    if (!result.ok) {
+      await recordAuditEvent({
+        req,
+        actorUserId: user.sub,
+        action: "mfa_verification_failure",
+        resourceType: "session",
+        resourceId: user.jti,
+        result: "failure",
+        metadata: { method: "totp", context: "login", reason: "replay" },
+      });
+      throw unauthorized("Invalid or expired TOTP code");
+    }
+
+    res.cookie(sessionCookieName(), result.jwt, sessionCookieOptions());
+    await repos.users.updateLastLogin(user.sub);
+
+    await recordAuditEvent({
+      req,
+      actorUserId: user.sub,
+      action: "mfa_verification_success",
+      resourceType: "session",
+      resourceId: user.jti,
+      result: "success",
+      metadata: { method: "totp" },
+    });
+
+    res.status(200).json({ sub: user.sub, email: user.email, roles: result.roles });
+  },
+);
+
+/**
+ * POST /api/auth/mfa/recovery — recupera el acceso con un recovery code
+ * durante el login (single-use). Acepta SOLO sesión mfa_pending.
+ * Consume el código atómicamente y promueve la sesión (revoca pendiente).
+ */
+router.post(
+  "/mfa/recovery",
+  requireAuth(),
+  mfaRecoveryLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const authed = req as AuthedRequest;
+    const user = authed.user;
+    if (!user?.sub || !user.jti) throw unauthorized("Missing or invalid session");
+    if (authed.mfaPending !== true) {
+      throw badRequest("Session is not awaiting MFA verification");
+    }
+
+    const parsed = RecoveryCodeBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw badRequest("A recovery code is required");
+
+    const normalized = repos.mfa.normalizeRecoveryCode(parsed.data.code);
+    if (normalized.length === 0) throw badRequest("A recovery code is required");
+
+    const now = new Date();
+    const codeHash = repos.mfa.hashRecoveryCode(normalized);
+    const consumed = await repos.mfa.consumeRecoveryCode(user.sub, codeHash, now);
+    if (!consumed.ok) {
+      await recordAuditEvent({
+        req,
+        actorUserId: user.sub,
+        action: "mfa_recovery_failure",
+        resourceType: "session",
+        resourceId: user.jti,
+        result: "failure",
+        metadata: { method: "recovery", reason: consumed.reason },
+      });
+      // Nunca devuelve ni registra el código ni su hash.
+      throw unauthorized("Invalid or already used recovery code");
+    }
+
+    const activeOrgId = await repos.memberships.getFirstOrgForUser(user.sub);
+    const result = await repos.mfa.promotePendingSession({
+      userSub: user.sub,
+      pendingJti: user.jti,
+      buildToken: (roles) =>
+        signToken({
+          sub: user.sub,
+          email: user.email,
+          name: user.name,
+          roles,
+          csrf: generateCsrfToken(),
+        }),
+      activeOrgId,
+      now,
+    });
+
+    if (!result.ok) {
+      throw unauthorized("Invalid or already used recovery code");
+    }
+
+    res.cookie(sessionCookieName(), result.jwt, sessionCookieOptions());
+    await repos.users.updateLastLogin(user.sub);
+
+    await recordAuditEvent({
+      req,
+      actorUserId: user.sub,
+      action: "mfa_recovery_code_used",
+      resourceType: "session",
+      resourceId: user.jti,
+      result: "success",
+      metadata: { method: "recovery" },
+    });
+
+    res.status(200).json({ sub: user.sub, email: user.email, roles: result.roles });
+  },
+);
+
+/**
+ * POST /api/auth/mfa/disable — deshabilita MFA. Exige el TOTP actual (NO
+ * acepta recovery code como sustituto). Sesión completa + CSRF + limit.
+ * Limpia secreto/timestamps/step y elimina los recovery codes (atómico).
+ */
+router.post(
+  "/mfa/disable",
+  requireAuth(),
+  requireMfaVerified(),
+  mfaDisableLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    if (!user?.sub) throw unauthorized("Missing or invalid session");
+
+    const parsed = TotpCodeBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw badRequest("code must be a 6-digit TOTP code");
+
+    const state = await repos.mfa.getMfaState(user.sub);
+    if (!state?.mfaEnabled || !state.mfaSecretEncrypted) {
+      throw conflict("MFA is not enabled");
+    }
+
+    const now = new Date();
+    let step: number | null = null;
+    try {
+      step = verifyTotp(decrypt(state.mfaSecretEncrypted), parsed.data.code, now.getTime());
+    } catch {
+      step = null;
+    }
+    if (step === null) {
+      await recordAuditEvent({
+        req,
+        actorUserId: user.sub,
+        action: "mfa_verification_failure",
+        resourceType: "user",
+        resourceId: user.sub,
+        result: "failure",
+        metadata: { method: "totp", context: "disable" },
+      });
+      throw badRequest("Invalid or expired TOTP code");
+    }
+
+    await repos.mfa.disableMfa(user.sub);
+
+    await recordAuditEvent({
+      req,
+      actorUserId: user.sub,
+      action: "mfa_disabled",
+      resourceType: "user",
+      resourceId: user.sub,
+      result: "success",
+      metadata: { method: "totp" },
+    });
+
+    res.status(200).json({ enabled: false });
+  },
+);
+
+/**
+ * POST /api/auth/mfa/recovery/regenerate — regenera los recovery codes.
+ * Exige MFA habilitado + TOTP actual. Los 10 nuevos plaintext solo en esta
+ * respuesta; los anteriores se eliminan (una transacción).
+ */
+router.post(
+  "/mfa/recovery/regenerate",
+  requireAuth(),
+  requireMfaVerified(),
+  mfaRegenerateLimiter,
+  requireCsrf(),
+  async (req, res) => {
+    const user = (req as AuthedRequest).user;
+    if (!user?.sub) throw unauthorized("Missing or invalid session");
+
+    const parsed = TotpCodeBody.safeParse(req.body ?? {});
+    if (!parsed.success) throw badRequest("code must be a 6-digit TOTP code");
+
+    const state = await repos.mfa.getMfaState(user.sub);
+    if (!state?.mfaEnabled || !state.mfaSecretEncrypted) {
+      throw conflict("MFA is not enabled");
+    }
+
+    const now = new Date();
+    let step: number | null = null;
+    try {
+      step = verifyTotp(decrypt(state.mfaSecretEncrypted), parsed.data.code, now.getTime());
+    } catch {
+      step = null;
+    }
+    if (step === null) {
+      await recordAuditEvent({
+        req,
+        actorUserId: user.sub,
+        action: "mfa_verification_failure",
+        resourceType: "user",
+        resourceId: user.sub,
+        result: "failure",
+        metadata: { method: "totp", context: "regenerate" },
+      });
+      throw badRequest("Invalid or expired TOTP code");
+    }
+
+    const recoveryCodes = await repos.mfa.regenerateRecoveryCodes(user.sub);
+
+    await recordAuditEvent({
+      req,
+      actorUserId: user.sub,
+      action: "mfa_recovery_codes_regenerated",
+      resourceType: "user",
+      resourceId: user.sub,
+      result: "success",
+      metadata: { method: "totp", count: recoveryCodes.length },
+    });
+
+    res.status(200).json({ recoveryCodes });
+  },
+);
 
 export default router;
