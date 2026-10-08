@@ -144,7 +144,7 @@ para verificación explícita.
 - [ ] **5. Levantar DB:** `db` healthy (`pg_isready`).
 - [ ] **6. Ejecutar migraciones:** job `migrate` termina `completed_successfully`
   (`db:migrate && db:provision-roles`); verificar `drizzle.__drizzle_migrations`
-  con 22 entradas (0000–0021).
+  con 24 entradas (0000–0023).
 - [ ] **7. Verificar roles/RLS:** `app_role` (NOBYPASSRLS) y `bg_role` (BYPASSRLS)
   provisionados; RLS `ENABLE`+`FORCE` en las 7 tablas de la migración 0018.
 - [ ] **8. Levantar API:** `api` healthy (user no-root), `/api/livez` 200.
@@ -236,7 +236,7 @@ frontend/API, healthchecks, password recovery (flujo token+reset).
 - [ ] HTTPS funciona (certificado válido, sin errores de certificado).
 - [ ] API y web funcionan por HTTPS (login y navegación reales).
 - [ ] DB `healthy` y `readyz` 200.
-- [ ] Migraciones correctas (22 entradas; sin divergencia).
+- [ ] Migraciones correctas (24 entradas; sin divergencia).
 - [ ] RLS verificado (7 tablas; `app_role` NOBYPASSRLS, `bg_role` BYPASSRLS).
 - [ ] Login funciona.
 - [ ] Autorización por organización funciona (aislamiento tenant).

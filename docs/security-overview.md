@@ -190,7 +190,8 @@ Workflow con `permissions: contents: read` y actions fijadas por SHA.
 
 **Implementado**: aislamiento multi-tenant, RLS, separacion de roles, sesiones
 revocables, CSRF, CORS fail-closed, cifrado de credenciales, auditoria,
-rate limiting, backup/restore verificado.
+rate limiting, backup/restore verificado, MFA (TOTP RFC 6238) con enrollment,
+verificacion en login, recuperacion por codigos single-use y auditoria de eventos.
 
 **Parcial**:
 - Alertas de backup: el seam generico `ALERT_CMD` esta **implementado y probado** (R9c). El
@@ -204,7 +205,6 @@ rate limiting, backup/restore verificado.
   que hoy se ejecuta **manualmente**.
 
 **Pendiente**:
-- **MFA**: no implementado. Login solo por email + contrasena.
 - **TLS / reverse proxy / dominio**: no incluidos en el repositorio.
 - **Recuperacion de contrasena**: **implementada y probada** (M30.0) en cuanto al
   modelo, los endpoints, la UI y los tests. M31.0 incorpora la entrega real vía
