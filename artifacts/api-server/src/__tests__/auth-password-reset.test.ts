@@ -20,6 +20,8 @@ import type { Server } from "http";
 import { hashPassword } from "@workspace/auth";
 import app from "../app";
 import { deliverResetLink } from "../auth/password-reset-delivery";
+import { repos } from "../repositories";
+import * as passwordResetRepo from "../repositories/password-reset.repo";
 import { logger } from "../lib/logger";
 import type { MockState } from "./mock-repos";
 import type { User } from "@workspace/db";
@@ -37,9 +39,46 @@ vi.mock("../repositories", async () => {
   return { repos: created.repos };
 });
 
-// El adapter Resend se prueba con `fetch` mockeado (ver describe M31.0). En los
-// tests de `/forgot` la configuración de Resend está ausente, así que la
-// entrega devuelve `false` sin llamar a la red.
+// El generador real se envuelve en un espía OBSERVABLE: sigue delegando en la
+// implementación real (los tests que necesitan un token lo obtienen), pero los
+// tests pueden comprobar si el handler llegó a invocarlo.
+vi.mock("../repositories/password-reset.repo", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../repositories/password-reset.repo")>();
+  return {
+    ...actual,
+    generatePasswordResetToken: vi.fn(() => actual.generatePasswordResetToken()),
+  };
+});
+
+// Contrato público de la respuesta de recuperación (idéntico exista o no la cuenta).
+const GENERIC_BODY = {
+  status: "accepted",
+  message: "If the account exists, a reset link has been sent.",
+};
+
+// Configuración COMPLETA de entrega: base HTTPS válida + credenciales Resend.
+const DELIVERY_CONFIG = {
+  base: "https://app.example.com",
+  apiKey: "test-resend-api-key",
+  from: "Privaris <no-reply@example.com>",
+};
+
+// `fetch` se mockea siempre: ningún test debe salir a la red.
+const fetchMock = vi.fn();
+
+function enableDeliveryConfig(): void {
+  process.env.PASSWORD_RESET_BASE_URL = DELIVERY_CONFIG.base;
+  process.env.RESEND_API_KEY = DELIVERY_CONFIG.apiKey;
+  process.env.PASSWORD_RESET_FROM = DELIVERY_CONFIG.from;
+}
+
+function disableDeliveryConfig(): void {
+  delete process.env.PASSWORD_RESET_BASE_URL;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.PASSWORD_RESET_FROM;
+}
+
 let server: Server;
 
 function state(): MockState {
@@ -78,16 +117,32 @@ async function reset(token: string, newPassword: string) {
     .send({ token, newPassword });
 }
 
-beforeAll(async () => {
-  // En los tests de flujo no debe haber entrega real: sin configuración de
-  // Resend, deliverResetLink devuelve false sin tocar la red.
-  delete process.env.RESEND_API_KEY;
-  delete process.env.PASSWORD_RESET_FROM;
+// Espías observables: generador de tokens (módulo mockeado) y persistencia.
+const generateTokenSpy = vi.mocked(passwordResetRepo.generatePasswordResetToken);
+const createTokenSpy = vi.spyOn(repos.passwordReset, "create");
+
+beforeAll(() => {
   server = app.listen(0);
 });
 
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  fetchMock.mockResolvedValue({ ok: true, status: 200 } as Response);
+  vi.stubGlobal("fetch", fetchMock);
+  vi.clearAllMocks();
+  // Por defecto el flujo está COMPLETAMENTE configurado; los tests de
+  // "configuración ausente" la desactivan explícitamente.
+  enableDeliveryConfig();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  // Restaurar SIEMPRE las variables de entorno, incluso si el test falla.
+  disableDeliveryConfig();
 });
 
 describe("M30.0 POST /api/auth/password/forgot", () => {
@@ -303,5 +358,92 @@ describe("M30.0 POST /api/auth/password/reset", () => {
     // Todas las sesiones del usuario quedan revocadas.
     const sessions = state().sessions.filter((s) => s.userSub === user.sub);
     for (const s of sessions) expect(s.revokedAt).not.toBeNull();
+  });
+});
+
+describe("M31.0 configuración ausente: no se generan ni persisten tokens", () => {
+  it("sin PASSWORD_RESET_BASE_URL: 202 genérico, sin token y sin fetch", async () => {
+    await seededUser("sin-base@example.com", "contrasena-larga-123");
+    delete process.env.PASSWORD_RESET_BASE_URL;
+    const before = state().passwordResetTokens.length;
+
+    const res = await forgot("sin-base@example.com");
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual(GENERIC_BODY);
+    expect(generateTokenSpy).not.toHaveBeenCalled();
+    expect(createTokenSpy).not.toHaveBeenCalled();
+    expect(state().passwordResetTokens.length).toBe(before);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sin RESEND_API_KEY: 202 genérico, sin token y sin fetch", async () => {
+    await seededUser("sin-key@example.com", "contrasena-larga-123");
+    delete process.env.RESEND_API_KEY;
+    const before = state().passwordResetTokens.length;
+
+    const res = await forgot("sin-key@example.com");
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual(GENERIC_BODY);
+    expect(generateTokenSpy).not.toHaveBeenCalled();
+    expect(createTokenSpy).not.toHaveBeenCalled();
+    expect(state().passwordResetTokens.length).toBe(before);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sin PASSWORD_RESET_FROM: 202 genérico, sin token y sin fetch", async () => {
+    await seededUser("sin-from@example.com", "contrasena-larga-123");
+    delete process.env.PASSWORD_RESET_FROM;
+    const before = state().passwordResetTokens.length;
+
+    const res = await forgot("sin-from@example.com");
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual(GENERIC_BODY);
+    expect(generateTokenSpy).not.toHaveBeenCalled();
+    expect(createTokenSpy).not.toHaveBeenCalled();
+    expect(state().passwordResetTokens.length).toBe(before);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sin ninguna configuración: 202 genérico, sin token y sin fetch", async () => {
+    await seededUser("sin-todo@example.com", "contrasena-larga-123");
+    disableDeliveryConfig();
+    const before = state().passwordResetTokens.length;
+
+    const res = await forgot("sin-todo@example.com");
+
+    expect(res.status).toBe(202);
+    expect(res.body).toEqual(GENERIC_BODY);
+    expect(generateTokenSpy).not.toHaveBeenCalled();
+    expect(createTokenSpy).not.toHaveBeenCalled();
+    expect(state().passwordResetTokens.length).toBe(before);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("cuenta inexistente: mismo 202 genérico (no permite enumerar)", async () => {
+    await seededUser("enum-existe@example.com", "contrasena-larga-123");
+    const exists = await forgot("enum-existe@example.com");
+    const missing = await forgot("enum-noexiste@example.com");
+
+    expect(exists.status).toBe(202);
+    expect(missing.status).toBe(202);
+    expect(exists.body).toEqual(GENERIC_BODY);
+    expect(missing.body).toEqual(GENERIC_BODY);
+  });
+
+  it("con configuración completa sí emite y persiste el token (control positivo)", async () => {
+    await seededUser("con-todo@example.com", "contrasena-larga-123");
+    enableDeliveryConfig();
+    const before = state().passwordResetTokens.length;
+
+    const res = await forgot("con-todo@example.com");
+
+    expect(res.status).toBe(202);
+    expect(generateTokenSpy).toHaveBeenCalledTimes(1);
+    expect(createTokenSpy).toHaveBeenCalledTimes(1);
+    expect(state().passwordResetTokens.length).toBe(before + 1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

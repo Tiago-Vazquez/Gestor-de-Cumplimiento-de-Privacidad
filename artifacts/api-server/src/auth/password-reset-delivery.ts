@@ -27,12 +27,28 @@ import { logger } from "../lib/logger";
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 
+/** Timeout explícito de la llamada HTTP a Resend (ms). */
+const DELIVERY_TIMEOUT_MS = 10_000;
+
 /** Configuración de Resend leída en tiempo de llamada (nunca en la imagen). */
 function resendDeliveryConfig(): { apiKey: string; from: string } {
   return {
     apiKey: process.env.RESEND_API_KEY ?? "",
     from: process.env.PASSWORD_RESET_FROM ?? "",
   };
+}
+
+/**
+ * Indica si hay configuración suficiente para INTENTAR una entrega vía Resend.
+ *
+ * Fuente única de verdad compartida por el handler de `/forgot` y por
+ * `deliverResetLink`: ambos consultan esta misma función, de modo que no pueden
+ * discrepar sobre si el servicio está listo. No valida
+ * `PASSWORD_RESET_BASE_URL`; esa validación (HTTPS) la realiza `resetLinkBase`.
+ */
+export function isPasswordResetDeliveryConfigured(): boolean {
+  const { apiKey, from } = resendDeliveryConfig();
+  return apiKey !== "" && from !== "";
 }
 
 /**
@@ -46,8 +62,9 @@ export async function deliverResetLink(input: {
   resetUrl: string;
   expiresAt: Date;
 }): Promise<boolean> {
+  if (!isPasswordResetDeliveryConfigured()) return false;
+
   const { apiKey, from } = resendDeliveryConfig();
-  if (apiKey === "" || from === "") return false;
 
   const body = JSON.stringify({
     from,
@@ -63,6 +80,12 @@ export async function deliverResetLink(input: {
       `Si no la solicitaste, ignora este correo.`,
   });
 
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(
+    () => abortController.abort(),
+    DELIVERY_TIMEOUT_MS,
+  );
+
   try {
     const response = await fetch(RESEND_API_URL, {
       method: "POST",
@@ -71,6 +94,7 @@ export async function deliverResetLink(input: {
         "Content-Type": "application/json",
       },
       body,
+      signal: abortController.signal,
     });
 
     if (response.ok) return true;
@@ -81,7 +105,15 @@ export async function deliverResetLink(input: {
     );
     return false;
   } catch {
+    // Timeout (AbortError) y errores de red comparten contrato: `false`. Nunca
+    // se propagan excepciones y nunca se registran credenciales, tokens ni el
+    // enlace de recuperación.
     logger.error({ email: input.email }, "password reset: email delivery failed");
     return false;
+  } finally {
+    // Limpieza incondicional: ninguna ruta (éxito, no-2xx, timeout o error de
+    // red) debe dejar pendiente el temporizador de 10 s.
+    clearTimeout(timeoutId);
+    abortController.abort();
   }
 }

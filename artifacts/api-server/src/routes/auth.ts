@@ -19,7 +19,10 @@ import { sendProblemJson } from "../lib/problem-json";
 import { generateCsrfToken } from "../auth/csrf";
 import { sessionIdleSeconds } from "../lib/env";
 import { recordAuditEvent } from "../lib/audit";
-import { deliverResetLink } from "../auth/password-reset-delivery";
+import {
+  deliverResetLink,
+  isPasswordResetDeliveryConfigured,
+} from "../auth/password-reset-delivery";
 import * as passwordReset from "../repositories/password-reset.repo";
 import { encrypt, decrypt } from "../lib/secret-manager";
 import { generateTotpSecret, verifyTotp, buildOtpauthUrl } from "../lib/totp";
@@ -817,11 +820,17 @@ router.get("/me", requireAuth(), (req, res) => {
  * confiança, un host cabecero falsificado construiría un enlace que nadie
  * recibe. El token es la credencial; el host solo decide dónde se llega.
  */
-function resetLinkBase(req: { protocol: string; get(name: string): string | undefined }): string {
+export function resetLinkBase(req: { protocol: string; get(name: string): string | undefined }): string | null {
   const configured = process.env.PASSWORD_RESET_BASE_URL;
-  if (configured && configured.trim() !== "") return configured.trim().replace(/\/+$/, "");
-  const host = req.get("host") ?? "localhost:8080";
-  return `${req.protocol}://${host}`;
+  if (!configured || configured.trim() === "") return null;
+  const trimmed = configured.trim().replace(/\/+$/, "");
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:") return null;
+    return trimmed;
+  } catch {
+    return null;
+  }
 }
 
 const ForgotBody = z.object({
@@ -845,8 +854,17 @@ router.post("/password/forgot", forgotLimiter, async (req, res) => {
   const email = normalizeEmail(parsed.data.email);
   const account = email ? await repos.users.getByEmail(email) : null;
 
-  // Existe: se emite el token y se entrega el enlace por el seam.
-  if (account && account.passwordHash) {
+  // Configuración previa: solo se emite un token si hay base HTTPS válida
+  // (`resetLinkBase`) y credenciales de Resend (`isPasswordResetDeliveryConfigured`).
+  // Sin configuración suficiente NO se genera ni se persiste un token huérfano,
+  // no se intenta enviar correo y la respuesta sigue siendo el 202 genérico.
+  const base = resetLinkBase(req);
+  if (
+    account &&
+    account.passwordHash &&
+    base !== null &&
+    isPasswordResetDeliveryConfigured()
+  ) {
     const token = passwordReset.generatePasswordResetToken();
     const expiresAt = new Date(Date.now() + passwordReset.PASSWORD_RESET_TTL_MS);
     await repos.passwordReset.create({
@@ -855,9 +873,12 @@ router.post("/password/forgot", forgotLimiter, async (req, res) => {
       expiresAt,
       requestedIp: req.ip ?? null,
     });
+
+    const resetUrl = `${base}/reset-password?token=${encodeURIComponent(token)}`;
+
     await deliverResetLink({
       email: account.email,
-      resetUrl: `${resetLinkBase(req)}/reset-password?token=${encodeURIComponent(token)}`,
+      resetUrl,
       expiresAt,
     });
     await recordAuditEvent({
@@ -870,7 +891,8 @@ router.post("/password/forgot", forgotLimiter, async (req, res) => {
     });
   }
 
-  // No existe: no se crea nada, pero la respuesta es indistinguible.
+  // No existe (o no hay configuración): no se crea nada, pero la respuesta es
+  // indistinguible.
   res.status(202).json({
     status: "accepted",
     message: "If the account exists, a reset link has been sent.",
