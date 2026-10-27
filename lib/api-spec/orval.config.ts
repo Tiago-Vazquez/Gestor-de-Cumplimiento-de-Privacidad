@@ -57,6 +57,9 @@ export default defineConfig({
       prettier: true,
       override: {
         zod: {
+          // Zod 4 explícito (M31.1-Z4): no depender de la detección automática,
+          // que infiere la versión del proyecto destino ("catalog:") y es ambigua.
+          version: 4,
           coerce: {
             query: ['boolean', 'number', 'string'],
             param: ['boolean', 'number', 'string'],

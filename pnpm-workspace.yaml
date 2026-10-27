@@ -62,9 +62,11 @@ catalog:
   tailwind-merge: ^3.3.1
   tailwindcss: ^4.1.14
   tsx: ^4.21.0
-  vite: ^7.3.2
+  # GHSA-587h-7wmj-h5pm: vite 7.0.0-7.3.6 (que empaqueta launch-editor) es
+  # vulnerable en Windows; 7.3.7 es la version parcheada de la linea 7.x.
+  vite: ^7.3.7
   wouter: ^3.3.5
-  zod: ^3.25.76
+  zod: ^4.6.7
 
 autoInstallPeers: false
 
@@ -89,7 +91,26 @@ overrides:
   "brace-expansion": "5.0.12"
   "js-yaml": "4.3.2"
   "nanoid": "3.3.18"
-  "@scalar/json-magic>undici": "7.29.1"
+  # GHSA-27r3-jxmh-p828: body-parser 2.0.0-2.3.x termina el proceso con bytes
+  # sobrantes tras un cuerpo comprimido. express@5 declara ^2.2.1, asi que 2.4.0
+  # entra sin cambio de version mayor.
+  "body-parser": "2.4.0"
+  # GHSA-gfr2-rv44-r23c: markdown-it 14.1.0-14.3.2 renderiza en tiempo cuadratico.
+  # Llega transitivo via orval>typedoc, que declara ^14.3.0.
+  "markdown-it": "14.3.3"
+  # GHSA-xjj6-f33q-929c: undici 8.0.0-8.12.1 muere por exceso de content-encodings.
+  # Llega transitivo via jsdom, que declara ^8.9.0. El override va ACOTADO a jsdom
+  # para no alterar la instancia independiente de @scalar/json-magic (ver abajo).
+  "jsdom>undici": "8.12.2"
+  # GHSA-xjj6-f33q-929c: la instancia 7.x de @scalar/json-magic tambien esta en el
+  # rango vulnerable (7.18.0-7.30.0); se sube a la parcheada para que una futura
+  # materializacion no reintroduzca el aviso.
+  "@scalar/json-magic>undici": "7.30.1"
+  # GHSA-587h-7wmj-h5pm: vitest declara vite ^6||^7||^8 (dependencia directa y
+  # peer opcional de @vitest/mocker) y pnpm conservaba la resolucion ya
+  # bloqueada 7.3.6. El catalogo no alcanza esa ruta porque artifacts/api-server
+  # no declara vite; se fija el borde vitest>vite a la version parcheada.
+  "vitest>vite": "7.3.7"
 
   # qs llega transitivo via supertest>superagent, cuyo rango ^6.14.1 ya admite
   # 6.16.0; el override solo sube a la version parcheada (GHSA-x5fp-wj9c-mxmx).
