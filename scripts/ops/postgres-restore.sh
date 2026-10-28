@@ -26,6 +26,321 @@ EOF
 fail() { echo "restore: $*" >&2; exit 1; }
 # Keep container-local POSIX paths intact when invoked from Git Bash/MSYS.
 docker_exec() { MSYS_NO_PATHCONV=1 docker exec "$@"; }
+# ---------------------------------------------------------------------------
+# F-P4 -- offline PITR branch (ADR-005). OFFLINE ONLY.
+#
+# Verifies a WAL segment chain against a published physical set and emits an
+# isolated-trial recovery config. It NEVER touches Docker, PostgreSQL, the
+# network, or production state, and it NEVER declares PITR operational:
+# success here proves chain INTEGRITY only (the F-P5 real trial still has to
+# prove replay, pg_verifybackup and the time->LSN mapping).
+#
+# Reachable ONLY via `--pitr` (dispatched below, before any Docke
+# prerequisite is evaluated). The logical restore path below is unchanged.
+# Fail-closed: any doubt (gap, .partial, label mismatch, unexpected file,
+# oversized range) exits non-zero and NEVER prints the pitr=ok signal.
+# ---------------------------------------------------------------------------
+PITR_SEGSIZE_DEFAULT=16777216
+PITR_MAX_SEGMENTS=1024
+PITR_BASE=""; PITR_WALDIR=""; PITR_UNTIL=""; PITR_UNTIL_LSN=""; PITR_OUT=""; PITR_SEGSIZE=""
+PITR_MANIFEST=""
+pitr_fail() { echo "restore-pitr: $*" >&2; exit 1; }
+pitr_usage() {
+  cat <<'EOF'
+Usage: bash scripts/ops/postgres-restore.sh --pitr --base SET.pmanifest --wal-dir DIR --until 2026-01-02T03:04:05Z --until-lsn 0/3000000 --out DIR [--wal-segsize BYTES]
+EOF
+}
+pitr_mget() {
+  printf '%s' "$PITR_MANIFEST" | awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/,""); print; exit}'
+}
+pitr_val() { strip_cr "$(pitr_mget "$1")"; }
+# Print the decimal value of an LSN, or fail closed. Guards the bash int64
+# range (8 hex digits per half could overflow it) so arithmetic below is safe.
+pitr_parse_lsn() {
+  local lsn="$1" hi lo hiv lov
+  if [[ "$lsn" =~ ^[0-9A-Fa-f]{1,8}/[0-9A-Fa-f]{1,8}$ ]]; then :; else
+    pitr_fail "invalid LSN '$lsn' (expected HEX/HEX, up to 8 digits each)"
+  fi
+  hi="${lsn%%/*}"; lo="${lsn##*/}"
+  hiv=$((16#$hi)); lov=$((16#$lo))
+  if (( hiv > 0x7FFFFFFF )); then pitr_fail "LSN '$lsn' exceeds the offline int64 range"; fi
+  printf '%s' "$(( hiv * 4294967296 + lov ))"
+}
+# Canonical PG16 segment name: %08X%08X%08X of (timeline, logid, segno).
+pitr_seg_name() { printf '%08X%08X%08X' "$1" "$2" "$3"; }
+pitr_parse_args() {
+  while (($#)); do
+    case "$1" in
+      --pitr) shift ;;
+      --base) if (($# >= 2)); then PITR_BASE="$2"; shift 2; else pitr_fail "--base needs a file"; fi ;;
+      --wal-dir) if (($# >= 2)); then PITR_WALDIR="$2"; shift 2; else pitr_fail "--wal-dir needs a directory"; fi ;;
+      --until) if (($# >= 2)); then PITR_UNTIL="$2"; shift 2; else pitr_fail "--until needs a UTC timestamp"; fi ;;
+      --until-lsn) if (($# >= 2)); then PITR_UNTIL_LSN="$2"; shift 2; else pitr_fail "--until-lsn needs an LSN"; fi ;;
+      --out) if (($# >= 2)); then PITR_OUT="$2"; shift 2; else pitr_fail "--out needs a directory"; fi ;;
+      --wal-segsize) if (($# >= 2)); then PITR_SEGSIZE="$2"; shift 2; else pitr_fail "--wal-segsize needs a byte count"; fi ;;
+      -h|--help) pitr_usage; exit 0 ;;
+      *) pitr_usage >&2; pitr_fail "unknown --pitr argument: $1" ;;
+    esac
+  done
+  if [[ -z "$PITR_BASE" ]]; then pitr_fail "--base is required"; fi
+  if [[ -z "$PITR_WALDIR" ]]; then pitr_fail "--wal-dir is required"; fi
+  if [[ -z "$PITR_UNTIL" ]]; then pitr_fail "--until is required"; fi
+  if [[ -z "$PITR_UNTIL_LSN" ]]; then pitr_fail "--until-lsn is required"; fi
+  if [[ -z "$PITR_OUT" ]]; then pitr_fail "--out is required"; fi
+}
+pitr_run() {
+  local man set_id status fmt base_lsn base_tl segsz
+  local base_dec until_dec segno0 segno1 logid0 logid1 i span
+  local wd_abs out_abs f expected seg tl_hex
+  local cnt=0 names=""
+  local label label_lsn label_tl base_file base_path
+  local per_seg log actual_bytes actual_sha
+  local targets=""
+  local seg_log_hex="" seg_seg_hex="" seg_log=0 seg_seg=0
+  # ---------------------------------------------------------------------------
+  # OFFLINE PURITY: the --pitr path must never consult Docker, the network,
+  # PostgreSQL, or any secret. Checked structurally by test-ops-pitr-branch.sh.
+  # ---------------------------------------------------------------------------
+  pitr_parse_args "$@"
+  # Sourcing common.sh provides sha256_of / strip_cr / is_sha256 / is_positive_int.
+  # shellcheck source=scripts/ops/common.sh
+  source "$ROOT_DIR/scripts/ops/common.sh"
+  [[ -f "$PITR_BASE" ]] || pitr_fail "--base manifest not found: $PITR_BASE"
+  [[ ! -L "$PITR_BASE" ]] || pitr_fail "--base manifest is a symlink; refusing: $PITR_BASE"
+  PITR_MANIFEST="$(cat "$PITR_BASE")"
+  man="$PITR_BASE"
+  # (a) Reuse --verify: the set must be a consumable complete set first.
+  bash "$ROOT_DIR/scripts/ops/postgres-physbackup.sh" --verify "$man" >/dev/null 2>&1 \
+    || pitr_fail "--verify rejected the base set; refusing PITR"
+  # (b) Single supported offline format.
+  fmt="$(pitr_val format)"
+  [[ "$fmt" == "pg-base-tar-set" ]] \
+    || pitr_fail "unsupported base format '$fmt' (offline supports only pg-base-tar-set)"
+  set_id="$(pitr_val set_id)"
+  status="$(pitr_val status)"
+  # (c) Cross-check backup_label inside base.tar: START WAL LOCATION / START
+  # TIMELINE must equal the manifest's base_lsn / base_timeline. Read to
+  # stdout only (never to disk), mirroring the publisher.
+  base_lsn="$(pitr_val base_lsn)"
+  base_tl="$(pitr_val base_timeline)"
+  base_file="$(pitr_val base_tar_file)"
+  [[ "$base_file" == "${set_id}.base.tar" ]] \
+    || pitr_fail "base_tar_file '$base_file' is not the expected set member '${set_id}.base.tar'"
+  base_path="$(cd "$(dirname "$man")" && pwd -P)/${base_file}"
+  [[ -f "$base_path" && ! -L "$base_path" ]] \
+    || pitr_fail "base member missing or is a symlink: $base_file"
+  label="$(tar -xOf "$base_path" backup_label 2>/dev/null || true)"
+  [[ -n "$label" ]] || pitr_fail "base.tar has no backup_label; cannot establish base_lsn/base_timeline"
+  label_lsn="$(printf '%s\n' "$label" | awk '/^START WAL LOCATION:/ {print $4; exit}')"
+  label_tl="$(printf '%s\n' "$label" | awk '/^START TIMELINE:/ {print $3; exit}')"
+  [[ "$label_lsn" == "$base_lsn" ]] \
+    || pitr_fail "backup_label START WAL LOCATION '$label_lsn' != manifest base_lsn '$base_lsn'"
+  [[ "$label_tl" == "$base_tl" ]] \
+    || pitr_fail "backup_label START TIMELINE '$label_tl' != manifest base_timeline '$base_tl'"
+  # (d) wal-segsize S: explicit --wal-segsize wins; else the manifest's
+  # wal_segsize when present and sane; else the PG default 16MiB. Anything
+  # non-positive fails closed (a wrong S silently shifts every segment name).
+  if [[ -n "$PITR_SEGSIZE" ]]; then
+    segsz="$PITR_SEGSIZE"
+  else
+    segsz="$(pitr_val wal_segsize)"
+    if [[ -z "$segsz" ]]; then segsz="$PITR_SEGSIZE_DEFAULT"; fi
+  fi
+  is_positive_int "$segsz" \
+    || pitr_fail "wal segment size is not a positive integer (got '${segsz:-<empty>}')"
+  # (e) Verified LSN math. PG16: segno = LSN / S (XLByteToSeg), and
+  # XLogSegmentsPerXLogId = 0x100000000 / S gives segments per logid.
+  # XLogFileName = %08X%08X%08X(TLI, logid, segno-within-log). The offline
+  # branch covers the common case only: the [base_lsn, until_lsn] range must
+  # stay inside ONE logid (no wraparound); anything else fails closed.
+  base_dec="$(pitr_parse_lsn "$base_lsn")"
+  until_dec="$(pitr_parse_lsn "$PITR_UNTIL_LSN")"
+  (( until_dec >= base_dec )) \
+    || pitr_fail "--until-lsn $PITR_UNTIL_LSN is before base_lsn $base_lsn"
+  per_seg=$(( 4294967296 / segsz ))
+  (( 4294967296 % segsz == 0 )) \
+    || pitr_fail "wal segment size $segsz does not divide 4GiB; refusing offline math"
+  logid0=$(( base_dec / 4294967296 ))
+  logid1=$(( until_dec / 4294967296 ))
+  (( logid0 == logid1 )) \
+    || pitr_fail "LSN range crosses a logid boundary (offline supports one logid only)"
+  log="$logid0"
+  segno0=$(( (base_dec % 4294967296) / segsz ))
+  segno1=$(( (until_dec % 4294967296) / segsz ))
+  span=$(( segno1 - segno0 + 1 ))
+  (( span >= 1 && span <= PITR_MAX_SEGMENTS )) \
+    || pitr_fail "WAL span $span segments exceeds the offline cap ($PITR_MAX_SEGMENTS)"
+  # (f2) Read and validate WAL-Ranges from the manifest. Declared ranges must
+  #      sit on the base timeline (offline timeline='current' does not support
+  #      timeline switching), and the recovery window [base_lsn, until_lsn]
+  #      must be fully covered by the union of declared ranges.
+  wal_range_count="$(strip_cr "$(pitr_mget wal_range_count)")"
+  [[ -n "$wal_range_count" ]] || pitr_fail "manifest is missing wal_range_count"
+  [[ "$wal_range_count" =~ ^[0-9]+$ ]] || pitr_fail "manifest wal_range_count is not a non-negative integer (got '$wal_range_count')"
+  [[ "$wal_range_count" -gt 0 ]] || pitr_fail "manifest wal_range_count is 0; PITR requires WAL-Ranges to validate recovery coverage"
+  n=0
+  local -a range_starts=()
+  local -a range_ends=()
+  while true; do
+    n=$((n + 1))
+    wl_tl="$(strip_cr "$(pitr_mget "wal_range_${n}_timeline")")"
+    wl_st="$(strip_cr "$(pitr_mget "wal_range_${n}_start_lsn")")"
+    wl_en="$(strip_cr "$(pitr_mget "wal_range_${n}_end_lsn")")"
+    if [[ -z "$wl_tl" && -z "$wl_st" && -z "$wl_en" ]]; then
+      break
+    fi
+    if (( n > wal_range_count )); then
+      pitr_fail "manifest has wal_range_${n}_* but wal_range_count=$wal_range_count"
+    fi
+    [[ -n "$wl_tl" && -n "$wl_st" && -n "$wl_en" ]] || pitr_fail "manifest wal_range_${n}_* is incomplete"
+    [[ "$wl_tl" =~ ^[0-9]+$ ]] || pitr_fail "manifest wal_range_${n}_timeline is not a positive integer (got '$wl_tl')"
+    [[ "$wl_tl" -gt 0 ]] || pitr_fail "manifest wal_range_${n}_timeline must be positive (got '$wl_tl')"
+    [[ "$wl_tl" == "$base_tl" ]] || pitr_fail "manifest wal_range_${n}_timeline $wl_tl != base_timeline $base_tl (offline timeline='current' does not support timeline switching)"
+    [[ "$wl_st" =~ ^[0-9A-Fa-f]{1,8}/[0-9A-Fa-f]{1,8}$ ]] || pitr_fail "manifest wal_range_${n}_start_lsn is not HEX/HEX (got '$wl_st')"
+    [[ "$wl_en" =~ ^[0-9A-Fa-f]{1,8}/[0-9A-Fa-f]{1,8}$ ]] || pitr_fail "manifest wal_range_${n}_end_lsn is not HEX/HEX (got '$wl_en')"
+    wl_st_dec="$(pitr_parse_lsn "$wl_st")"
+    wl_en_dec="$(pitr_parse_lsn "$wl_en")"
+    if (( wl_st_dec > wl_en_dec )); then
+      pitr_fail "manifest wal_range_${n} Start-LSN $wl_st > End-LSN $wl_en"
+    fi
+    range_starts+=("$wl_st_dec")
+    range_ends+=("$wl_en_dec")
+  done
+  [[ ${#range_starts[@]} -eq $wal_range_count ]] || pitr_fail "manifest wal_range_count=$wal_range_count but found ${#range_starts[@]} range entries"
+  # Coverage walk: starting from base_dec, extend through overlapping/contiguous
+  # declared ranges until reaching or exceeding until_dec. Any gap fails closed.
+  cursor="$base_dec"
+  end_reached=0
+  for (( pass=0; pass < wal_range_count; pass++ )); do
+    best_end="$cursor"
+    for (( r=0; r < wal_range_count; r++ )); do
+      if [[ ${range_starts[$r]} -le $cursor && ${range_ends[$r]} -ge $cursor ]]; then
+        if [[ ${range_ends[$r]} -gt $best_end ]]; then
+          best_end="${range_ends[$r]}"
+        fi
+      fi
+    done
+    if [[ $best_end -eq $cursor ]]; then
+      break
+    fi
+    cursor=$(( best_end + 1 ))
+    if [[ $cursor -gt $until_dec ]]; then
+      end_reached=1
+      break
+    fi
+  done
+  [[ $end_reached -eq 1 ]] || pitr_fail "recovery window [$base_lsn..$PITR_UNTIL_LSN] is not fully covered by the declared WAL-Ranges"
+  # (f) Fail-closed directory scan. Every REQUIRED name must exist as a
+  # regular non-symlink file; .partial is rejected outright; timeline check is
+  # scoped to the replay set (foreign-timeline strays outside it are listed,
+  # never consumed); gaps, dups, wrong sizes and unknown strays all fail.
+  [[ -d "$PITR_WALDIR" ]] || pitr_fail "--wal-dir is not a directory: $PITR_WALDIR"
+  wd_abs="$(cd "$PITR_WALDIR" && pwd -P)"
+  [[ -n "$PITR_OUT" ]] || pitr_fail "--out is required"
+  mkdir -p "$PITR_OUT" || pitr_fail "cannot create --out directory: $PITR_OUT"
+  out_abs="$(cd "$PITR_OUT" && pwd -P)"
+  [[ "$out_abs" != "$wd_abs" ]] || pitr_fail "--out must differ from --wal-dir"
+  tl_hex="$(printf '%08X' "$base_tl")"
+  for (( i = segno0; i <= segno1; i++ )); do
+    expected="$(pitr_seg_name "$base_tl" "$log" "$i")"
+    [[ -e "$wd_abs/$expected" ]] || pitr_fail "missing required WAL segment: $expected"
+    [[ ! -L "$wd_abs/$expected" ]] || pitr_fail "WAL segment is a symlink; refusing: $expected"
+    [[ -f "$wd_abs/$expected" ]] || pitr_fail "WAL segment is not a regular file: $expected"
+    actual_bytes="$(wc -c < "$wd_abs/$expected" | tr -d ' \r\n')"
+    [[ "$actual_bytes" == "$segsz" ]] \
+      || pitr_fail "WAL segment $expected has size $actual_bytes, expected $segsz"
+    actual_sha="$(sha256_of "$wd_abs/$expected")"
+    is_sha256 "$actual_sha" \
+      || pitr_fail "could not compute a valid SHA-256 for $expected"
+    echo "restore-pitr: verified segment $expected (sha256=$actual_sha)" >&2
+    names="${names}${expected}
+"
+    cnt=$((cnt + 1))
+  done
+  # Replay-scoped timeline check + stray classification. Canonical 24-uppercase-
+  # hex files whose (log,segno) falls inside the replay window but carry a
+  # DIFFERENT timeline make the replay source ambiguous -> fail. Canonical
+  # files outside the window are listed (warning) and never consumed.
+  # *.history files are listed and ignored (timeline history, not WAL data).
+  # Anything else (including *.partial, caught first) fails closed.
+  for f in "$wd_abs"/*; do
+    [[ -e "$f" ]] || continue
+    seg="$(basename "$f")"
+    case "$seg" in
+      *.partial) pitr_fail "partial WAL file present; refusing: $seg" ;;
+      *.history)
+        echo "restore-pitr: note timeline history file ignored (never replayed): $seg" >&2
+        continue
+        ;;
+    esac
+    if [[ "$seg" =~ ^[0-9A-F]{24}$ ]]; then
+      seg_log_hex="${seg:8:8}"; seg_seg_hex="${seg:16:8}"
+      seg_log=$((16#$seg_log_hex)); seg_seg=$((16#$seg_seg_hex))
+      # Bash treats the arithmetic above as decimal-safe: hex digits carry no
+      # leading-zero octal trap under the 16# prefix.
+      if (( seg_log == log && seg_seg >= segno0 && seg_seg <= segno1 )); then
+        [[ "${seg:0:8}" == "$tl_hex" ]] \
+          || pitr_fail "ambiguous replay source in window: $seg (expected timeline $tl_hex)"
+      else
+        echo "restore-pitr: note out-of-window segment listed, not consumed: $seg" >&2
+      fi
+      continue
+    fi
+    pitr_fail "unexpected file in --wal-dir; refusing: $seg"
+  done
+  # (g) Emit the isolated-trial recovery config. Exactly ONE primary target
+  # (F-P4 single-target criterion): recovery_target_time + inclusive=on +
+  # action=promote (isolated trial ONLY) + timeline=current. No
+  # recovery_target_{lsn,xid,name} line may exist alongside it.
+  #
+  # recovery_target_timeline = 'current' se elige porque el escenario F-P4 es
+  # recuperación en la MISMA timeline del backup físico (PITR isolado sin
+  # cambio de bifurcación). 'latest' implicaría seguir .history a través de
+  # bifurcaciones de timeline (requiere análisis de archivos de histórico no
+  # implementado en esta fase); un ID concreto apuntaría a una bifurcación
+  # específica. Ninguna de esas dos alternativas aplica al escenario de este
+  # trial aislado; se documenta aquí para que cualquier cambio a 'latest' o a
+  # un ID requiera justificación de escenario antes de tocar este valor.
+  [[ "$PITR_UNTIL" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+    || pitr_fail "--until must be UTC 'YYYY-MM-DDTHH:MM:SSZ' (got '$PITR_UNTIL')"
+  {
+    printf '# F-P4 offline PITR proposal for an ISOLATED trial (ADR-005).\n'
+    printf '# NOT production config. Single recovery target by construction.\n'
+    printf 'restore_command = %s\n' "'cp \"$wd_abs/%f\" \"%p\"'"
+    printf 'recovery_target_time = %s\n' "'$PITR_UNTIL'"
+    printf 'recovery_target_inclusive = on\n'
+    printf 'recovery_target_timeline = %s\n' "'current'"
+    printf 'recovery_target_action = promote\n'
+  } > "$out_abs/postgresql.pitr.conf"
+  : > "$out_abs/recovery.signal"
+  printf '%s' "$names" > "$out_abs/segment-list.txt"
+  targets="$(grep -cE '^recovery_target_(time|lsn|xid|name) =' "$out_abs/postgresql.pitr.conf")"
+  (( targets == 1 )) || pitr_fail "emitted config must hold exactly one primary target (found $targets)"
+  echo "restore-pitr: base=$set_id segments=$cnt window=[$(pitr_seg_name "$base_tl" "$log" "$segno0")..$(pitr_seg_name "$base_tl" "$log" "$segno1")] (offline; integrity only)" >&2
+  echo "restore-pitr: recovery config written to $out_abs (isolated trial proposal; PITR NOT operational)" >&2
+  echo "pitr=ok base=$set_id segments=$cnt until=$PITR_UNTIL until_lsn=$PITR_UNTIL_LSN out=$out_abs"
+}
+##F-P4-REST##
+# --pitr dispatch: scanned BEFORE any Docker prerequisite so the offline branch
+# stays reachable (and provably offline) on hosts without a daemon. The scan
+# is literal: only an exact `--pitr` token dispatches; nothing is executed yet.
+# Mixed with logical flags (--backup/--roles/--manifest) it refuses: the two
+# restore modes never share one invocation.
+for _a in "$@"; do
+  if [[ "$_a" == "--pitr" ]]; then
+    for _b in "$@"; do
+      case "$_b" in
+        --backup|--roles|--manifest)
+          pitr_usage >&2
+          pitr_fail "--pitr cannot be combined with $_b (logical and PITR modes are exclusive)"
+          ;;
+      esac
+    done
+    unset _b
+    pitr_run "$@"; exit $?
+  fi
+done
+unset _a
 command -v docker >/dev/null 2>&1 || fail "docker is required"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
 while (($#)); do
@@ -55,7 +370,7 @@ BACKUP_FILE="$(cd "$(dirname "$BACKUP_FILE")" && pwd -P)/$(basename "$BACKUP_FIL
 # is an object key component and an absolute path would escape the credential's
 # namePrefix. Here the expansion is only used to reach sibling files, so an
 # absolute sibling path was always correct. It is normalised anyway so the same
-# variable means the same thing in both scripts, and so a caller that later
+# variable means the same thing in both scripts, and so a caller that late
 # reuses `base` for anything other than a local path does not inherit a
 # surprise. Deriving the siblings from the captured directory keeps them
 # absolute and identical to the previous behaviour.
@@ -296,18 +611,83 @@ actual_migrations="$(docker_exec "$db_id" psql -U "$TARGET_USER" -d "$TARGET_DB"
 # y `pg` resoluble (`pg` solo resuelve desde /repo/lib/db). La clave se inyecta
 # solo en ese `run` one-shot con `-e`, sin tocar docker-compose.restore.yml, y el
 # script se pasa por stdin para no dejar ficheros en la imagen.
+# The key_check one-shot needs the real SOURCE_ENCRYPTION_KEY, but that
+# value must never appear in host argv (ps / /proc/*/cmdline), the same
+# class fixed for PGPASSWORD in run_real_basebackup (M-2). The private
+# env-file below is the equivalent mechanism for `docker compose run`,
+# which reads container env from --env-from-file (NOT the interpolation
+# --env-file). Only the file PATH reaches argv; the two VALUES travel
+# inside the file, are consumed client-side by Compose, and the file is
+# removed on success, on error and through the EXIT trap on signals.
+# This narrows exposure to local argv/process inspection; it does NOT
+# protect against a host administrator, privileged host inspection, any
+# process able to read our 600-mode temp files, or anything able to read
+# the Docker API traffic or the resulting in-container environment.
+RESTORE_KEY_FILE=""
+cleanup_restore_keyfile() {
+  if [[ -n "${RESTORE_KEY_FILE:-}" && -f "$RESTORE_KEY_FILE" && ! -L "$RESTORE_KEY_FILE" ]]; then
+    rm -f "$RESTORE_KEY_FILE" 2>/dev/null || true
+  fi
+}
+# The EXIT trap must ALSO run the original `cleanup` (compose down + in-containe
+# temp removal) that line 135 installed; replacing it here would leave the
+# isolated project/volume orphaned on exit. Both functions are defined by the
+# time this fires. Keyfile first (shortest secret lifetime), then teardown.
+trap 'cleanup_restore_keyfile; cleanup' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# is_single_line_value <value>: accept only values the Compose env-file
+# format can carry on one KEY=VALUE line. The value is split on the FIRST
+# '=' so embedded '=' (base64 padding) is preserved, but a newline, CR o
+# NUL would corrupt the file or leak across lines, so they are refused
+# closed (fail) before anything is written.
+is_single_line_value() {
+  local v="$1"
+  [[ -n "$v" ]] || return 1
+  [[ "$v" != *$'\n'* && "$v" != *$'\r'* ]] || return 1
+  return 0
+}
+
 key_check() {
   local check_file="$ROOT_DIR/scripts/ops/verify-source-key.cjs"
-  local expected_fp status=0 output=""
+  local expected_fp status=0 output="" keyfile keydir keypath
   expected_fp="$(manifest_value source_key_fingerprint)"
   [[ -f "$check_file" ]] || fail "missing $check_file"
+  is_single_line_value "${RESTORE_SOURCE_ENCRYPTION_KEY:?RESTORE_SOURCE_ENCRYPTION_KEY is required}" \
+    || fail "RESTORE_SOURCE_ENCRYPTION_KEY contains characters incompatible with the private env-file (must be a single line)"
+  is_single_line_value "$expected_fp" \
+    || fail "source_key_fingerprint contains characters incompatible with the private env-file (must be a single line)"
   echo "restore: verifying SOURCE_ENCRYPTION_KEY against the restored database"
+  # Private key file. mktemp creates it empty; tighten to 600 BEFORE any
+  # secret is written. RESTORE_KEY_FILE is set here so the EXIT trap
+  # removes it if a signal or an early fail() lands while the one-shot is
+  # still running.
+  keyfile="$(mktemp)" || fail "could not create a private key file"
+  chmod 600 "$keyfile"
+  RESTORE_KEY_FILE="$keyfile"
+  # Explicit mapping RESTORE_* -> names consumed by the in-container check.
+  # Exactly these two lines, written verbatim; nothing else is stored here.
+  printf 'SOURCE_ENCRYPTION_KEY=%s\n' "$RESTORE_SOURCE_ENCRYPTION_KEY" > "$keyfile"
+  printf 'EXPECTED_KEY_FINGERPRINT=%s\n' "$expected_fp" >> "$keyfile"
+  # Resolve the path for the native Docker CLIENT process. Compose reads
+  # --env-from-file host-side, and under Git Bash it is docker.exe, so the
+  # POSIX /tmp/... path must be translated with pwd -W (unavailable on
+  # Linux, where the POSIX path is correct). The explicit
+  # { pwd -W || pwd } grouping yields EXACTLY ONE path on both platforms
+  # (a bare `a && b || c && d` chain would emit two lines under Git Bash).
+  keydir="$(cd "$(dirname "$keyfile")" && { pwd -W 2>/dev/null || pwd; })"
+  keypath="$keydir/$(basename "$keyfile")"
   output="$(restore_compose run --rm -T \
-      -e SOURCE_ENCRYPTION_KEY="$RESTORE_SOURCE_ENCRYPTION_KEY" \
-      -e EXPECTED_KEY_FINGERPRINT="$expected_fp" \
+      --env-from-file "$keypath" \
       --entrypoint sh migrate \
       -c "cat > /repo/lib/db/m25-key-check.cjs && cd /repo/lib/db && node m25-key-check.cjs" \
       < "$check_file" 2>&1)" || status=$?
+  # Remove the key file on BOTH success and failure immediately after the
+  # client returns, so the secret is not left on disk until process exit.
+  # The EXIT trap stays as the safety net for signals and early failures.
+  rm -f "$keyfile" 2>/dev/null || true
+  RESTORE_KEY_FILE=""
   printf '%s\n' "$output" | grep -E '^key_check_' || true
   case "$status" in
     0) return 0 ;;
