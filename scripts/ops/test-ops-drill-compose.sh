@@ -106,7 +106,7 @@ SERVICES="$(declared_services)"
 # que existir: `db` es la base, `migrate` crea el esquema, `seed` inserta las filas
 # y `api` es de donde el backup saca la huella de la clave.
 for svc in db migrate seed api; do
-  if printf '%s\n' "$SERVICES" | grep -qx "$svc"; then
+  if grep -qx "$svc" <<<"$SERVICES"; then
     ok "el compose declara el servicio $svc"
   else
     no "el compose NO declara el servicio $svc"

@@ -76,7 +76,13 @@ done
 # drift away from them. Anchoring the two known sources keeps the contract honest.
 ENV_EXAMPLE="$ROOT_DIR/.env.example"
 if [[ -f "$ENV_EXAMPLE" ]]; then
-  if grep -q '^BACKUP_RETENTION_DAYS=3$' "$ENV_EXAMPLE"; then
+  # CRLF-tolerant: strip a trailing CR before the anchored match so a
+  # Windows-checked-out .env.example still validates the exact name=value.
+  # No pipe here on purpose: `grep -q` exits on the first match, which closes the
+  # pipe while tr is still writing. tr then dies with SIGPIPE (141) and, under
+  # `set -o pipefail`, a MATCH would be reported as a failure. A here-string has
+  # no producer process to signal, so the result is deterministic.
+  if grep -qx 'BACKUP_RETENTION_DAYS=3' <<<"$(tr -d '\r' < "$ENV_EXAMPLE")"; then
     ok ".env.example declara el buffer local en 3 dias (no es la autoridad)"
   else
     no ".env.example no declara BACKUP_RETENTION_DAYS=3"

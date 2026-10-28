@@ -76,14 +76,14 @@ RUN_OUT="$(cd "$EXTRACT" && bash scripts/ops/postgres-restore.sh --help 2>&1)"; 
 # bundle, which is what a checkout-less host would actually produce.
 if [[ "$help_rc" == 0 ]]; then
   ok "postgres-restore.sh --help funciona desde el bundle"
-elif printf '%s' "$RUN_OUT" | grep -qi 'docker\|compose'; then
+elif grep -qi 'docker\|compose' <<<"$RUN_OUT"; then
   ok "el restore arranca desde el bundle y reporta una prequisito con nombre"
 else
   no "--help fallo por una causa distinta de la prequisito: $RUN_OUT"
 fi
 RUN_OUT="$(cd "$EXTRACT" && bash scripts/ops/postgres-restore.sh --backup /nonexistent.dump 2>&1)"; run_rc=$?
 check "el restore rechaza un dump inexistente con 1" "$run_rc" "1"
-if printf '%s' "$RUN_OUT" | grep -qi 'not found\|No such file'; then
+if grep -qi 'not found\|No such file' <<<"$RUN_OUT"; then
   no "el restore fallo por un helper ausente y no por sus propias guardas"
 else
   ok "el restore fallo por sus propias guardas, no por un helper ausente"
@@ -132,7 +132,7 @@ done
 # --- 6. las imagenes deben ir por digest, nunca por tag ---------------------
 out2="$(BUNDLE_OUT_DIR="$OUT" RESTORE_API_IMAGE=privaris-api:latest bash "$BUILDER" 2>&1)"; rc2=$?
 check "una imagen por tag se RECHAZA (salida 1)" "$rc2" "1"
-if printf '%s' "$out2" | grep -qi 'digest'; then
+if grep -qi 'digest' <<<"$out2"; then
   ok "el error de tag menciona el digest"
 else
   no "el error de tag no explica que se requiere un digest"
@@ -157,7 +157,7 @@ else
 fi
 # Without digests the builder must warn that the bundle is not reproducible.
 out4="$(BUNDLE_OUT_DIR="$OUT" bash "$BUILDER" --commit nodigest 2>&1)"
-if printf '%s' "$out4" | grep -qi 'WARNING'; then
+if grep -qi 'WARNING' <<<"$out4"; then
   ok "sin digests el builder advierte que no es reproducible"
 else
   no "sin digests el builder no advierte <-- pasaria por reproducible sin serlo"

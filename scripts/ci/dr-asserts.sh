@@ -43,7 +43,7 @@ assert_manifest() {
 # checks here and only proving that two implementations agree with each other.
 assert_restore_output() {
   expect_line() {
-    printf '%s\n' "$RESTORE_OUT" | grep -qE "$1" && ok "$2" || no "$2"
+    grep -qE "$1" <<<"$RESTORE_OUT" && ok "$2" || no "$2"
   }
   expect_line '^restore=ok ' 'restore reported restore=ok'
   expect_line '^verified organizations=[0-9]+$' 'restore verified the organizations count'
@@ -67,7 +67,7 @@ assert_restore_output() {
   local bad
   for bad in 'fingerprint mismatch' 'decryption failed' 'row-count mismatch' \
              'checksum mismatch' 'migration journal mismatch'; do
-    printf '%s\n' "$RESTORE_OUT" | grep -qF "$bad" \
+    grep -qF "$bad" <<<"$RESTORE_OUT" \
       && no "restore output contains a failure: $bad" \
       || ok "restore output free of: $bad"
   done
