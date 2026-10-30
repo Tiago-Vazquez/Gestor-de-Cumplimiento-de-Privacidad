@@ -11,7 +11,7 @@
     "typecheck:sandbox": "pnpm --filter @workspace/mockup-sandbox run typecheck",
     "typecheck": "pnpm run typecheck:product",
     "test:product": "pnpm --filter @workspace/api-server run test && pnpm --filter @workspace/privacy-compliance-manager run test",
-    "test:ops": "bash scripts/ops/test-ops-common.sh && bash scripts/ops/test-ops-offhost.sh && bash scripts/ops/test-ops-bundle.sh && bash scripts/ops/test-ops-lifecycle.sh && bash scripts/ops/test-ops-drill-compose.sh && bash scripts/ops/test-ops-backup-schedule.sh && bash scripts/ops/test-ops-wal-archive.sh && bash scripts/ops/test-ops-physbackup.sh && bash scripts/ops/test-ops-restore-key-env.sh && bash scripts/ops/test-ops-pitr-branch.sh",
+    "test:ops": "bash scripts/ops/test-ops-common.sh && bash scripts/ops/test-ops-offhost.sh && bash scripts/ops/test-ops-bundle.sh && bash scripts/ops/test-ops-lifecycle.sh && bash scripts/ops/test-ops-drill-compose.sh && bash scripts/ops/test-ops-backup-schedule.sh && bash scripts/ops/test-ops-wal-archive.sh && bash scripts/ops/test-ops-physbackup.sh && bash scripts/ops/test-ops-restore-key-env.sh && bash scripts/ops/test-ops-pitr-branch.sh && bash scripts/ops/test-ops-wal-chain.sh",
     "test:ops:pitr-branch": "bash scripts/ops/test-ops-pitr-branch.sh",
     "ops:backup": "bash scripts/ops/postgres-backup.sh",
     "ops:backup-schedule": "bash scripts/ops/backup-schedule.sh",

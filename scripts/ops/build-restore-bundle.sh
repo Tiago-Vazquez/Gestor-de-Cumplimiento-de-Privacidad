@@ -3,10 +3,17 @@
 #
 # postgres-restore.sh resolves its own helpers from the repository, so a
 # disaster recovery on a host with no checkout fails before it ever reaches the
-# database: the script, common.sh, verify-source-key.cjs, restore-roles.sql and
-# docker-compose.restore.yml are all required and all come from the tree. This
-# packages exactly those, plus the migration journal, into one tarball that can
-# be unpacked anywhere.
+# database: the script, common.sh, verify-source-key.cjs, restore-roles.sql,
+# docker-compose.restore.yml, postgres-physbackup.sh and wal-chain-manifest.sh are
+# all required and all come from the tree. This packages exactly those, plus the
+# migration journal, into one tarball that can be unpacked anywhere.
+#
+# The two PITR helpers (M31.21) are not optional: the `--pitr` path executes
+# postgres-physbackup.sh --verify on the base set FIRST (postgres-restore.sh L129)
+# and then wal-chain-manifest.sh --verify on the chain (L207), so a bundle without
+# them dies on a missing helper before its own guards run. Both are offline and
+# need nothing beyond common.sh. The offline PITR path is still NOT operational
+# (gate F-P5 pending).
 #
 # What the bundle deliberately does NOT contain:
 #   - images: it references them by digest, never by tag. A tag can be moved
@@ -60,6 +67,12 @@ required=(
   "scripts/ops/verify-source-key.cjs"
   "scripts/ops/restore-roles.sql"
   "scripts/ops/docker-compose.restore.yml"
+  # M31.21: the `--pitr` path executes these two from $ROOT_DIR — the base-set
+  # verification first (postgres-restore.sh L129) and the WAL chain verification
+  # after it (L207). Without them a bundle dies on a missing helper before its own
+  # guards run. Both are offline and need only common.sh.
+  "scripts/ops/postgres-physbackup.sh"
+  "scripts/ops/wal-chain-manifest.sh"
 )
 for rel in "${required[@]}"; do
   [[ -f "$ROOT_DIR/$rel" ]] || fail "required file missing: $rel"
@@ -108,6 +121,8 @@ cp "$ROOT_DIR/scripts/ops/postgres-restore.sh" \
    "$ROOT_DIR/scripts/ops/verify-source-key.cjs" \
    "$ROOT_DIR/scripts/ops/restore-roles.sql" \
    "$ROOT_DIR/scripts/ops/docker-compose.restore.yml" \
+   "$ROOT_DIR/scripts/ops/postgres-physbackup.sh" \
+   "$ROOT_DIR/scripts/ops/wal-chain-manifest.sh" \
    "$STAGE/scripts/ops/"
 cp -R "$MIGRATIONS_DIR" "$STAGE/lib/db/drizzle"
 
@@ -167,6 +182,13 @@ NO contiene: imagenes (referenciadas por digest en `MANIFEST.bundle`), backups
 
 `restore=ok` solo aparece si checksums, conteos, RLS, roles, migraciones y la
 verificacion de la clave han pasado.
+
+Nota (M31.21): el bundle incluye las dos herramientas que el camino PITR ejecuta
+desde `$ROOT_DIR` — `postgres-physbackup.sh` (verificacion del set base) y
+`wal-chain-manifest.sh` (verificacion de la cadena WAL) — para que
+`postgres-restore.sh --pitr --wal-chain` funcione sin el repositorio. PITR NO esta
+operativo: el ensayo real (gate F-P5) sigue pendiente y estas herramientas no
+sustituyen ese gate.
 DOC
 
 # M28.0: reject a Windows-style path before `cd` can mangle it.

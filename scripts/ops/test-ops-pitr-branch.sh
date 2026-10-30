@@ -59,7 +59,7 @@ WAL1="$WORK/wal1"; make_wal "$WAL1" 2 2
 OUT1="$WORK/pitr-out1"
 run_pitr happy "$MAN1" "$WAL1" 0/3000000 "$OUT1"
 check "1 happy exits 0" "$RC" "0"
-check "1 happy prints pitr=ok" "$(grep -c '^pitr=ok ' "$OUT" || true)" "1"
+check "1 happy prints pitr=prepared" "$(grep -c '^pitr=prepared ' "$OUT" || true)" "1"
 check "1 emits postgresql.pitr.conf" "$([ -f "$OUT1/postgresql.pitr.conf" ] && echo yes || echo no)" "yes"
 check "1 emits recovery.signal" "$([ -f "$OUT1/recovery.signal" ] && echo yes || echo no)" "yes"
 check "1 segment-list has 2 lines" "$(wc -l < "$OUT1/segment-list.txt" | tr -d ' ')" "2"
@@ -68,39 +68,39 @@ WAL2="$WORK/wal2"; make_wal "$WAL2" 15 17
 OUT2="$WORK/pitr-out2"
 run_pitr carry "$MAN2" "$WAL2" 0/1FFFFFF0 "$OUT2"
 check "2 carry exits 0" "$RC" "0"
-check "2 carry prints 17 segments" "$(grep -c '^pitr=ok base=s2 segments=17 ' "$OUT" || true)" "1"
+check "2 carry prints 17 segments" "$(grep -c '^pitr=prepared base=s2 segments=17 ' "$OUT" || true)" "1"
 SET3="$WORK/set3"; MAN3="$(make_set "$SET3" s3 0/4000000 1 0/4000000 0/5FFFFFF)"
 WAL3="$WORK/wal3"; mkdir -p "$WAL3"; truncate -s 33554432 "$WAL3/000000010000000000000002"
 OUT3="$WORK/pitr-out3"
 run_pitr segsize "$MAN3" "$WAL3" 0/5FFFFFF "$OUT3" --wal-segsize 33554432
 check "3 segsize exits 0" "$RC" "0"
-check "3 segsize prints 1 segment" "$(grep -c '^pitr=ok base=s3 segments=1 ' "$OUT" || true)" "1"
+check "3 segsize prints 1 segment" "$(grep -c '^pitr=prepared base=s3 segments=1 ' "$OUT" || true)" "1"
 OUT3B="$WORK/pitr-out3b"
 run_pitr segsize-wrong "$MAN3" "$WAL3" 0/5FFFFFF "$OUT3B"
 check "3 wrong-S refuses" "$([ "$RC" != "0" ] && echo nonzero || echo zero)" "nonzero"
-check "3 wrong-S no pitr=ok" "$(grep -c '^pitr=ok ' "$OUT" || true)" "0"
+check "3 wrong-S no pitr=prepared" "$(grep -c '^pitr=prepared ' "$OUT" || true)" "0"
 OUT4="$WORK/pitr-out4"
 run_pitr badlsn "$MAN1" "$WAL1" "not-an-lsn" "$OUT4"
 check "4 bad LSN refuses" "$([ "$RC" != "0" ] && echo nonzero || echo zero)" "nonzero"
 check "4 bad LSN names problem" "$(grep -c 'invalid LSN' "$OUT" || true)" "1"
-check "4 bad LSN no pitr=ok" "$(grep -c '^pitr=ok ' "$OUT" || true)" "0"
+check "4 bad LSN no pitr=prepared" "$(grep -c '^pitr=prepared ' "$OUT" || true)" "0"
 WAL5="$WORK/wal5"; make_wal "$WAL5" 2 2
 cp "$WAL5/000000010000000000000002" "$WAL5/000000010000000000000002.partial"
 OUT5="$WORK/pitr-out5"
 run_pitr partial "$MAN1" "$WAL5" 0/3000000 "$OUT5"
 check "5 partial refuses" "$([ "$RC" != "0" ] && echo nonzero || echo zero)" "nonzero"
-check "5 partial no pitr=ok" "$(grep -c '^pitr=ok ' "$OUT" || true)" "0"
+check "5 partial no pitr=prepared" "$(grep -c '^pitr=prepared ' "$OUT" || true)" "0"
 WAL6="$WORK/wal6"; make_wal "$WAL6" 2 1
 OUT6="$WORK/pitr-out6"
 run_pitr gap "$MAN1" "$WAL6" 0/3000000 "$OUT6"
 check "6 gap refuses" "$([ "$RC" != "0" ] && echo nonzero || echo zero)" "nonzero"
 check "6 gap names segment 3" "$(grep -c 'missing required WAL segment: 000000010000000000000003' "$OUT" || true)" "1"
-check "6 gap no pitr=ok" "$(grep -c '^pitr=ok ' "$OUT" || true)" "0"
+check "6 gap no pitr=prepared" "$(grep -c '^pitr=prepared ' "$OUT" || true)" "0"
 rm -f "$SET1/s1.base.tar"
 OUT7="$WORK/pitr-out7"
 run_pitr tampered "$MAN1" "$WAL1" 0/3000000 "$OUT7"
 check "7 tampered set refuses" "$([ "$RC" != "0" ] && echo nonzero || echo zero)" "nonzero"
-check "7 tampered no pitr=ok" "$(grep -c '^pitr=ok ' "$OUT" || true)" "0"
+check "7 tampered no pitr=prepared" "$(grep -c '^pitr=prepared ' "$OUT" || true)" "0"
 MAN1="$(make_set "$SET1" s1 0/2000000 1 0/2000000 0/3000000)"
 SET8="$WORK/set8"; MAN8="$(make_set "$SET8" s8 0/2000000 1 0/2000000 0/3000000)"
 sed -i 's#^base_lsn=.*#base_lsn=0/9999999#' "$SET8/s8.pmanifest"
@@ -109,7 +109,7 @@ OUT8="$WORK/pitr-out8"
 run_pitr label "$MAN8" "$WAL8" 0/3000000 "$OUT8"
 check "8 label mismatch refuses" "$([ "$RC" != "0" ] && echo nonzero || echo zero)" "nonzero"
 check "8 mismatch names WAL LOCATION" "$(grep -c 'START WAL LOCATION' "$OUT" || true)" "1"
-check "8 label no pitr=ok" "$(grep -c '^pitr=ok ' "$OUT" || true)" "0"
+check "8 label no pitr=prepared" "$(grep -c '^pitr=prepared ' "$OUT" || true)" "0"
 WAL9="$WORK/wal9"; make_wal "$WAL9" 2 2
 truncate -s "$SEGSZ" "$WAL9/000000020000000000000099"
 truncate -s "$SEGSZ" "$WAL9/000000010000000000000099.history"
@@ -151,11 +151,11 @@ check "11 dispatch before docker check" "$([ "$(grep -n -- '--pitr.*dispatch' "$
 BAD_OK=0
 for f in "$WORK"/out.happy "$WORK"/out.carry "$WORK"/out.segsize "$WORK"/out.scope; do
   [ -f "$f" ] || { BAD_OK=$((BAD_OK + 1)); continue; }
-  grep -q '^pitr=ok ' "$f" || BAD_OK=$((BAD_OK + 1))
+  grep -q '^pitr=prepared ' "$f" || BAD_OK=$((BAD_OK + 1))
 done
 for f in "$WORK"/out.badlsn "$WORK"/out.partial "$WORK"/out.gap "$WORK"/out.tampered "$WORK"/out.label "$WORK"/out.scope-in "$WORK"/out.segsize-wrong; do
   [ -f "$f" ] || continue
-  if grep -q '^pitr=ok ' "$f"; then BAD_OK=$((BAD_OK + 1)); fi
+  if grep -q '^pitr=prepared ' "$f"; then BAD_OK=$((BAD_OK + 1)); fi
 done
 check "12 ok-signal only on success" "$BAD_OK" "0"
 
@@ -169,7 +169,7 @@ WAL13="$WORK/wal13"; make_wal "$WAL13" 2 2
 OUT13="$WORK/pitr-out13"
 run_pitr nowalranges "$MAN13" "$WAL13" 0/3000000 "$OUT13"
 check "13 wal_range_count=0 refuses" "$([ "$RC" != "0" ] && echo nonzero || echo zero)" "nonzero"
-check "13 no pitr=ok" "$(grep -c '^pitr=ok ' "$OUT" || true)" "0"
+check "13 no pitr=prepared" "$(grep -c '^pitr=prepared ' "$OUT" || true)" "0"
 
 # ===========================================================================
 # 14) WAL-Ranges: rango declarado no cubre until_lsn (coverage falla).

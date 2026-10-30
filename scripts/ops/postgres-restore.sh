@@ -38,22 +38,37 @@ docker_exec() { MSYS_NO_PATHCONV=1 docker exec "$@"; }
 # Reachable ONLY via `--pitr` (dispatched below, before any Docke
 # prerequisite is evaluated). The logical restore path below is unchanged.
 # Fail-closed: any doubt (gap, .partial, label mismatch, unexpected file,
-# oversized range) exits non-zero and NEVER prints the pitr=ok signal.
+# oversized range) exits non-zero and NEVER prints a success signal. The emitted
+# signal is 'pitr=prepared … target=unverified' (H-02, M31.6): reaching a temporal
+# goal is NOT proven offline, only the WAL window by LSN is.
 # ---------------------------------------------------------------------------
 PITR_SEGSIZE_DEFAULT=16777216
 PITR_MAX_SEGMENTS=1024
-PITR_BASE=""; PITR_WALDIR=""; PITR_UNTIL=""; PITR_UNTIL_LSN=""; PITR_OUT=""; PITR_SEGSIZE=""
+PITR_BASE=""; PITR_WALDIR=""; PITR_UNTIL=""; PITR_UNTIL_LSN=""; PITR_OUT=""; PITR_SEGSIZE=""; PITR_WALCHAIN=""
 PITR_MANIFEST=""
 pitr_fail() { echo "restore-pitr: $*" >&2; exit 1; }
 pitr_usage() {
   cat <<'EOF'
-Usage: bash scripts/ops/postgres-restore.sh --pitr --base SET.pmanifest --wal-dir DIR --until 2026-01-02T03:04:05Z --until-lsn 0/3000000 --out DIR [--wal-segsize BYTES]
+Usage: bash scripts/ops/postgres-restore.sh --pitr --base SET.pmanifest --wal-dir DIR --until 2026-01-02T03:04:05Z --until-lsn 0/3000000 --out DIR [--wal-segsize BYTES] [--wal-chain FILE]
+  --wal-chain FILE  complementary WAL chain manifest (M31.4 / F-P6). When omitted,
+                    <base>.walchain is used if it exists. It authorises a target
+                    beyond the base's own WAL-Ranges using the VERIFIED archived
+                    chain, and is always re-verified against --wal-dir first.
+  --until-lsn LSN   upper bound of the WAL window that is verified (required). It
+                    is an OPERATOR ASSERTION that this LSN corresponds to --until:
+                    the emitter cannot prove that relation offline, so it never
+                    reports a temporal target as validated (H-02, M31.6).
 EOF
 }
 pitr_mget() {
   printf '%s' "$PITR_MANIFEST" | awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/,""); print; exit}'
 }
 pitr_val() { strip_cr "$(pitr_mget "$1")"; }
+# M31.4/F-P6: same getter for the complementary chain manifest, which is read
+# from a file instead of from PITR_MANIFEST.
+pitr_chain_get() {
+  printf '%s' "$2" | awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/,""); print; exit}'
+}
 # Print the decimal value of an LSN, or fail closed. Guards the bash int64
 # range (8 hex digits per half could overflow it) so arithmetic below is safe.
 pitr_parse_lsn() {
@@ -78,6 +93,7 @@ pitr_parse_args() {
       --until-lsn) if (($# >= 2)); then PITR_UNTIL_LSN="$2"; shift 2; else pitr_fail "--until-lsn needs an LSN"; fi ;;
       --out) if (($# >= 2)); then PITR_OUT="$2"; shift 2; else pitr_fail "--out needs a directory"; fi ;;
       --wal-segsize) if (($# >= 2)); then PITR_SEGSIZE="$2"; shift 2; else pitr_fail "--wal-segsize needs a byte count"; fi ;;
+      --wal-chain) if (($# >= 2)); then PITR_WALCHAIN="$2"; shift 2; else pitr_fail "--wal-chain needs a file"; fi ;;
       -h|--help) pitr_usage; exit 0 ;;
       *) pitr_usage >&2; pitr_fail "unknown --pitr argument: $1" ;;
     esac
@@ -170,10 +186,52 @@ pitr_run() {
   span=$(( segno1 - segno0 + 1 ))
   (( span >= 1 && span <= PITR_MAX_SEGMENTS )) \
     || pitr_fail "WAL span $span segments exceeds the offline cap ($PITR_MAX_SEGMENTS)"
-  # (f2) Read and validate WAL-Ranges from the manifest. Declared ranges must
-  #      sit on the base timeline (offline timeline='current' does not support
-  #      timeline switching), and the recovery window [base_lsn, until_lsn]
-  #      must be fully covered by the union of declared ranges.
+  # (f1) Coverage authorisation. Two mutually exclusive sources:
+  #   * the COMPLEMENTARY WAL chain manifest (M31.4 / F-P6), when supplied with
+  #     --wal-chain or found as <base>.walchain: it is re-verified against
+  #     --wal-dir (presence, size, SHA-256 and contiguity from the segment that
+  #     contains base_lsn) and authorises any target inside the coverage the
+  #     artefacts can actually prove. This fixes defect R1: the .pmanifest alone
+  #     declares only the ranges pg_basebackup itself streamed, so a target
+  #     beyond them was refused even when the archived chain covered it.
+  #   * otherwise, the legacy WAL-Ranges walk below, unchanged.
+  local chain_file chain_used=0
+  chain_file="$PITR_WALCHAIN"
+  if [[ -z "$chain_file" ]]; then
+    chain_file="${PITR_BASE%.pmanifest}.walchain"
+    [[ -f "$chain_file" ]] || chain_file=""
+  fi
+  if [[ -n "$chain_file" ]]; then
+    [[ -f "$chain_file" ]] || pitr_fail "--wal-chain not found: $chain_file"
+    [[ ! -L "$chain_file" ]] || pitr_fail "--wal-chain is a symlink; refusing: $chain_file"
+    bash "$ROOT_DIR/scripts/ops/wal-chain-manifest.sh" --verify --chain "$chain_file" \
+      --wal-dir "$PITR_WALDIR" --set-dir "$(dirname "$PITR_BASE")" >/dev/null 2>&1 \
+      || pitr_fail "the WAL chain manifest does not verify against --wal-dir and the physical set: $chain_file"
+    local cman c_set c_lsn c_tl c_start c_end
+    cman="$(cat "$chain_file")"
+    c_set="$(strip_cr "$(pitr_chain_get base_set "$cman")")"
+    [[ "$c_set" == "$set_id" ]] || pitr_fail "chain base_set '$c_set' does not match base set_id '$set_id'"
+    c_lsn="$(strip_cr "$(pitr_chain_get base_lsn "$cman")")"
+    [[ "$(pitr_parse_lsn "$c_lsn")" == "$base_dec" ]] \
+      || pitr_fail "chain base_lsn '$c_lsn' does not match the base manifest base_lsn '$base_lsn'"
+    c_tl="$(strip_cr "$(pitr_chain_get base_timeline "$cman")")"
+    [[ "$c_tl" == "$base_tl" ]] || pitr_fail "chain base_timeline '$c_tl' does not match base_timeline '$base_tl'"
+    c_start="$(strip_cr "$(pitr_chain_get coverage_start_lsn "$cman")")"
+    c_end="$(strip_cr "$(pitr_chain_get coverage_end_lsn "$cman")")"
+    [[ "$(pitr_parse_lsn "$c_start")" -le "$base_dec" ]] \
+      || pitr_fail "chain coverage does not start at or before base_lsn ($c_start > $base_lsn)"
+    [[ "$until_dec" -le "$(pitr_parse_lsn "$c_end")" ]] \
+      || pitr_fail "recovery window [$base_lsn..$PITR_UNTIL_LSN] is not covered by the verified WAL chain (coverage ends at $c_end)"
+    chain_used=1
+    echo "restore-pitr: coverage authorised by the verified WAL chain ($chain_file; coverage $c_start..$c_end)" >&2
+  fi
+
+  # (f2) Legacy coverage: read and validate WAL-Ranges from the base manifest.
+  #      Declared ranges must sit on the base timeline (offline timeline='current'
+  #      does not support timeline switching), and the recovery window
+  #      [base_lsn, until_lsn] must be fully covered by their union. Skipped
+  #      entirely when the verified chain above already authorised the window.
+  if (( chain_used == 0 )); then
   wal_range_count="$(strip_cr "$(pitr_mget wal_range_count)")"
   [[ -n "$wal_range_count" ]] || pitr_fail "manifest is missing wal_range_count"
   [[ "$wal_range_count" =~ ^[0-9]+$ ]] || pitr_fail "manifest wal_range_count is not a non-negative integer (got '$wal_range_count')"
@@ -230,6 +288,7 @@ pitr_run() {
     fi
   done
   [[ $end_reached -eq 1 ]] || pitr_fail "recovery window [$base_lsn..$PITR_UNTIL_LSN] is not fully covered by the declared WAL-Ranges"
+  fi
   # (f) Fail-closed directory scan. Every REQUIRED name must exist as a
   # regular non-symlink file; .partial is rejected outright; timeline check is
   # scoped to the replay set (foreign-timeline strays outside it are listed,
@@ -262,6 +321,9 @@ pitr_run() {
   # DIFFERENT timeline make the replay source ambiguous -> fail. Canonical
   # files outside the window are listed (warning) and never consumed.
   # *.history files are listed and ignored (timeline history, not WAL data).
+  # *.backup files (<segment>.<tli>.backup, left in the source pg_wal by
+  # pg_basebackup) are likewise archived by PostgreSQL but are NOT replayable WAL
+  # data; refusing them aborted the documented PITR flow end-to-end (M31.3).
   # Anything else (including *.partial, caught first) fails closed.
   for f in "$wd_abs"/*; do
     [[ -e "$f" ]] || continue
@@ -270,6 +332,10 @@ pitr_run() {
       *.partial) pitr_fail "partial WAL file present; refusing: $seg" ;;
       *.history)
         echo "restore-pitr: note timeline history file ignored (never replayed): $seg" >&2
+        continue
+        ;;
+      *.backup)
+        echo "restore-pitr: note backup history file ignored (never replayed): $seg" >&2
         continue
         ;;
     esac
@@ -306,8 +372,15 @@ pitr_run() {
   {
     printf '# F-P4 offline PITR proposal for an ISOLATED trial (ADR-005).\n'
     printf '# NOT production config. Single recovery target by construction.\n'
+    printf '# recovery_target_time is a TEMPORAL GOAL: this script proves the WAL window\n'
+    printf '# by LSN, but reaching the requested instant is NOT proven offline (H-02).\n'
     printf 'restore_command = %s\n' "'cp \"$wd_abs/%f\" \"%p\"'"
-    printf 'recovery_target_time = %s\n' "'$PITR_UNTIL'"
+    # PG16 rejects the ISO 'Z' suffix for this GUC value (verified on 16.15:
+    # LOG "invalid value for parameter \"recovery_target_time\": \"...Z\"" followed
+    # by FATAL "configuration file contains errors"), so the SAME instant is emitted
+    # with an explicit +00 UTC offset, which PostgreSQL accepts. The CLI contract is
+    # unchanged: --until still requires strict 'YYYY-MM-DDTHH:MM:SSZ'.
+    printf 'recovery_target_time = %s\n' "'${PITR_UNTIL%Z}+00'"
     printf 'recovery_target_inclusive = on\n'
     printf 'recovery_target_timeline = %s\n' "'current'"
     printf 'recovery_target_action = promote\n'
@@ -318,7 +391,13 @@ pitr_run() {
   (( targets == 1 )) || pitr_fail "emitted config must hold exactly one primary target (found $targets)"
   echo "restore-pitr: base=$set_id segments=$cnt window=[$(pitr_seg_name "$base_tl" "$log" "$segno0")..$(pitr_seg_name "$base_tl" "$log" "$segno1")] (offline; integrity only)" >&2
   echo "restore-pitr: recovery config written to $out_abs (isolated trial proposal; PITR NOT operational)" >&2
-  echo "pitr=ok base=$set_id segments=$cnt until=$PITR_UNTIL until_lsn=$PITR_UNTIL_LSN out=$out_abs"
+  # H-02 (M31.6): the WAL WINDOW is verified by LSN, but the time->LSN relation is
+  # an OPERATOR ASSERTION that cannot be proven offline (no timestamp-to-LSN map
+  # exists in the artefacts, and a pg_current_wal_lsn() read at some other moment
+  # is not proof). The signal is therefore 'prepared', never a success: PostgreSQL
+  # confirms the target during recovery (that is the F-P5 gate).
+  echo "restore-pitr: NOTE --until=$PITR_UNTIL is a temporal GOAL, not a verified target; the time->LSN relation is an external assertion" >&2
+  echo "pitr=prepared base=$set_id segments=$cnt until=$PITR_UNTIL until_lsn=$PITR_UNTIL_LSN chain=$chain_used target=unverified out=$out_abs"
 }
 ##F-P4-REST##
 # --pitr dispatch: scanned BEFORE any Docker prerequisite so the offline branch

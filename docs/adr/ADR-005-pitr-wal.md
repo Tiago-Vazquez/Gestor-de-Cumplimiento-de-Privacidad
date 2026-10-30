@@ -510,7 +510,7 @@ Este ADR **no crea** bucket, VM, almacén de secretos ni modifica topología.
 | **F-P3** | Base física + manifiesto con `base_lsn`/`timeline`. **Estado (2026-10-28): implementada en `scripts/ops/postgres-physbackup.sh` (publicado y probado offline); la ruta real `pg_basebackup` y sus prerrequisitos (`REPLICATION`, `wal_level=replica`, `max_wal_senders`) siguen sin verificarse** | Local | Base extraíble, digest válido, campos presentes |
 | **F-P4** | Verificación de cadena WAL + rama PITR en `postgres-restore.sh` **y en `scripts/ops/docker-compose.restore.yml`** (montaje del WAL, `restore_command`, objetivo de recuperación). **Estado (2026-10-28): la rama PITR offline está publicada y probada como contrato; la compatibilidad de `docker-compose.restore.yml` y el ensayo real siguen pendientes** | Local | Cadena verificada; WAL corrupto ⇒ fallo explícito. **La compatibilidad actual de `docker-compose.restore.yml` con la reproducción de WAL NO está comprobada**: deberá verificarse con la implementación y el ensayo de F-P4 |
 | **F-P5** | **Drill PITR automatizado** (`test-ops-pitr.sh`) en CI, a instante T. **Estado (2026-10-28): pendiente. `scripts/ops/test-ops-pitr-branch.sh` prueba el contrato offline de la rama y NO sustituye este gate** | Local | Todos los criterios medibles de §"Gate F-P5" (FP5-1…FP5-10) cumplidos con evidencia |
-| **F-P6** | Integración con `offhost-upload.sh` y bundle, y eventos de alerta. **Estado (2026-10-28): pendiente; el archivador no está integrado en `offhost-upload.sh` ni en el bundle** | Local (contrato) | `76` preservado, manifest al final, `test:ops` verde |
+| **F-P6** | Integración con `offhost-upload.sh` y bundle, y eventos de alerta. **Estado (2026-10-28, M31.4): implementado** — manifiesto complementario de cadena WAL (`wal-chain-manifest.sh`), autorización de objetivos por cadena verificada (`postgres-restore.sh --wal-chain`) y publicación off-host del set físico + segmentos (cadena como commit record) | Local (contrato) | `76` preservado, manifest al final, `test:ops` verde |
 | **F-P7** | Destino B2 real, Object Lock/lifecycle del WAL, canal `ALERT_CMD` | **Externo** | Ensayo con B2 real |
 | **F-P8** | Medición de RPO/RTO reales + runbook PITR + pérdida total del host | **Externo** | RPO/RTO **medidos**; recuperación de host demostrada |
 
@@ -537,10 +537,12 @@ restauración que ya contuviera los datos o que omitiera WAL relevante.
   acción elegida** (`recovery_target_action`), con **evidencia verificable** de que el
   replay se detuvo en `t1` — **no** se infiere únicamente de que el proceso terminó ni
   de que emitió una marca. **Aclaración**: `restore=ok` identifica la **ruta lógica**
-  (`postgres-restore.sh:705`) y `pitr=ok` identifica el resultado de la **rama offline**
-  (`postgres-restore.sh:321`: integridad de la cadena WAL y emisión de configuración);
-  **ninguna de las dos señales, por sí sola, acredita una recuperación PITR real a un
-  instante T**. **F-P4 deberá definir la señal de éxito del ensayo real** (o especificar
+  (`postgres-restore.sh:705`) y la rama offline emite `pitr=prepared … target=unverified`
+  (`postgres-restore.sh:400`: integridad de la cadena WAL, ventana por LSN y emisión de
+  configuración; **no** acredita el objetivo temporal — ver §"Endurecimiento tras la
+  auditoría adversarial M31.5"); **ninguna de las dos señales, por sí sola, acredita una
+  recuperación PITR real a un instante T**. **F-P4 deberá definir la señal de éxito del
+  ensayo real** (o especificar
   explícitamente cómo se reutiliza una existente), incluyendo
   comprobaciones **independientes** de (a) que se alcanzó el objetivo y (b) que los
   datos posteriores a T no están presentes.
@@ -710,6 +712,226 @@ criptográficos, el diseño de B2, la configuración del VPS ni los criterios de
     restauración activo (solo comentarios): la compatibilidad con la reproducción de WAL
     sigue **sin comprobar**.
 
+## F-P6 — integración de la cadena WAL (2026-10-28, M31.4)
+
+**Problema resuelto (defecto R1).** El `.pmanifest` declara únicamente los
+`wal_range_*` que `pg_basebackup` transmitió (`base_lsn` → `stop_lsn`). Ese rango
+no describe la cadena archivada, por lo que el emisor offline rechazaba
+cualquier objetivo posterior a él aunque los segmentos archivados lo cubrieran.
+
+### Contrato del manifiesto complementario `<set_id>.walchain`
+
+Producido por `scripts/ops/wal-chain-manifest.sh --emit --base SET.pmanifest
+--wal-dir DIR --out FILE` (y re-verificable con `--verify`). Campos:
+
+- **Enlace**: `base_set`, `base_lsn`, `base_timeline`, `base_manifest_file`,
+  `base_manifest_sha256` (el SHA-256 del manifiesto de PostgreSQL se arrastra; el
+  manifiesto original **no se reinterpreta** ni se le atribuye información que no
+  contiene).
+- **Segmentos**: `segment_count` y, por cada uno, `name` (24 hex mayúsculas),
+  `timeline`, `bytes`, `sha256`.
+- **Auxiliares**: `aux_count` con `kind=backup|<seg>.<tli>.backup` o
+  `kind=history|<tli>.history`, más `bytes`/`sha256`.
+- **Otras líneas de tiempo**: `foreign_segment_count` (solo aceptadas si existe su
+  `<tli>.history`; nunca extienden la cobertura).
+- **Cobertura**: `coverage_timeline`, `coverage_start_lsn`, `coverage_end_lsn`,
+  `gap_free`, `wal_segsize`, `status=complete`.
+
+**Criterio de cobertura (conservador y demostrable).** `coverage_end_lsn` es el
+**LSN de inicio del último segmento contiguo**, porque un segmento archivado por
+`archive_timeout` puede estar parcialmente lleno y su LSN final no puede
+deducirse offline. Consecuencia operativa: un objetivo situado **dentro** del
+último segmento archivado exige archivar un segmento más antes de restaurar
+(disciplina FP5-3). No se deduce contigüidad del nombre: se recorre la cadena
+desde el segmento que contiene `base_lsn`, con el salto real 255 → siguiente
+logid. Un hueco **no** se publica como cadena completa.
+
+**Idempotencia y divergencia.** Re-emitir sobre el mismo conjunto es idempotente
+(`created_at` se excluye de la comparación). Se acepta y **se informa** una
+actualización solo si es una **extensión monótona** del mismo set (mismo enlace,
+prefijo de segmentos idéntico, cobertura que no decrece); cualquier otra
+diferencia se rechaza sin sobrescribir.
+
+### Autorización del objetivo por cadena verificada
+
+`postgres-restore.sh --pitr` acepta `--wal-chain FILE` (o descubre
+`<base>.walchain`). Antes de autorizar nada, re-verifica la cadena contra
+`--wal-dir` (presencia, tamaño, SHA-256, contigüidad) y exige que el enlace
+coincida con el manifiesto base. Si la cadena autoriza el objetivo, la
+comprobación heredada de `wal_range_*` se omite; sin cadena, el comportamiento
+anterior se mantiene **intacto** (compatibilidad). La señal emitida es
+`pitr=prepared … chain=0|1 target=unverified` (M31.6: ver §"Endurecimiento tras la
+auditoría adversarial M31.5").
+
+### Integración off-host
+
+`offhost-upload.sh` acepta `--physical-set SET.pmanifest --wal-dir DIR`. El set
+lógico no cambia. Se publican, bajo `backups/<PREFIX>/physical/<set_id>/`:
+miembros (`base.tar`, `pg_wal.tar`, `backup_manifest`, `.pmanifest`), auxiliares
+y segmentos en `wal/`, y **por último** el manifiesto de cadena como *commit
+record*. Todo se valida **antes** de la primera subida (fallo temprano sin dejar
+un prefijo físico colgado), las ausencias/corrupción se rechazan, los fallos de
+transferencia conservan el código 76 y **no** se borra nada local.
+
+### Evidencia
+
+- Offline: `scripts/ops/test-ops-wal-chain.sh` — **90 aserciones, 0 fallos**,
+  determinista en 4 ejecuciones consecutivas (incluye ausencias, corrupción,
+  tamaño divergente, huecos, timelines, cobertura no demostrable, esquemas no
+  soportados, symlinks, nombres inválidos, transporte simulado, reintento,
+  idempotencia y compatibilidad del flujo lógico).
+- PostgreSQL real (entorno aislado, M31.4): objetivo **más allá** del rango
+  declarado (`0/16000808` vs `0/9000138`): la ruta heredada **rechaza** (rc=1) y
+  la autorizada por cadena **acepta** (`pitr=prepared … chain=1` con
+  `target=unverified` desde M31.6), recuperación real con
+  marcadores anteriores presentes, posteriores ausentes, promoción a timeline 2 y
+  nuevas transacciones; transporte off-host de 24 objetos con **0 discrepancias**
+  de hash y la cadena como último objeto. Resultado: **10/10**.
+
+### Lo que sigue abierto
+
+- **F-P7**: durabilidad remota real (B2), Object Lock/lifecycle y canal de
+  alertas. El transporte probado aquí es un doble local, **no** durabilidad.
+- La divergencia remota (objeto preexistente distinto) solo puede comprobarse con
+  un transporte capaz de `head`/`get`; el seam actual no lo ofrece.
+- **F-P8**: RPO/RTO medidos y runbook (el runbook no se modificó en M31.4 porque
+  contiene cambios locales preexistentes).
+
+### Endurecimiento tras la auditoría adversarial M31.5 (2026-10-28)
+
+- **H-01 — enlace al manifiesto PostgreSQL.** `wal-chain-manifest.sh --verify`
+  ahora **exige `--set-dir`** y comprueba que `<set_id>.pmanifest` existe allí, que
+  concuerda con la cadena (`base_set`, `base_lsn`, `base_timeline`) y que el
+  manifiesto de PostgreSQL referenciado existe con el SHA-256 registrado. Sin
+  `--set-dir` la verificación **falla**; no se informa de una cadena verificada que
+  no pueda vincularse a su set. `--emit` aplica la misma comprobación antes de
+  publicar, y los dos consumidores (`postgres-restore.sh --pitr` y
+  `offhost-upload.sh`) pasan el directorio del set.
+- **H-02 — significado preciso de los estados PITR.** La emisión offline **ya no
+  imprime `pitr=ok`**: imprime `pitr=prepared … target=unverified`, porque lo que se
+  verifica es la **ventana WAL por LSN**, y la relación **tiempo→LSN es una
+  afirmación del operador** que no puede probarse offline (no existe un mapa
+  timestamp→LSN en los artefactos). El config emitido lo advierte en su cabecera y
+  `--until-lsn` está documentado como aserción externa. Que PostgreSQL alcance el
+  objetivo lo confirma la recuperación real (gate F-P5): **`pitr=prepared` no
+  significa recuperación completada**.
+- **H-03 — aritmética de LSN.** `lsn_dec` valida sintaxis, longitud y **rango**
+  (mitad alta ≤ `7FFFFFFF`) antes de cualquier operación, y las comparaciones que
+  deciden una extensión monótona parsean ambos LSN en variables: un valor inválido
+  aborta con su propio diagnóstico en vez de ser absorbido por la comparación.
+- **H-04 — tamaño de segmento.** Solo se admite `WAL_CHAIN_SEGSIZE=16777216`
+  (16 MiB). Cualquier otro valor se rechaza **antes** de emitir o verificar, porque
+  las fórmulas de logid/segno del contrato asumen ese tamaño; no se aceptan
+  configuraciones no soportadas en silencio.
+- **H-05/H-06 — semántica off-host.** La señal pasa a
+  `offhost=uploaded … remote_verified=no`: indica que el transporte **aceptó las
+  subidas**, no que los objetos remotos se hayan leído, revalidado o confirmado. La
+  suite ejercita además la rama de divergencia del doble local (objeto remoto
+  preexistente con contenido distinto ⇒ fallo de transferencia `76` y cadena **no**
+  publicada) y se documenta expresamente que eso demuestra el comportamiento **del
+  doble**, no una capacidad del transporte AWS actual.
+
+**Evidencia M31.6**: suite F-P6 ampliada a **127 aserciones / 0 fallos**
+(determinista en ejecuciones repetidas), `test:ops` con **606 aserciones / 0 fallos**
+(11 suites) y `git diff --check` limpio. **No se repitió ninguna recuperación
+PostgreSQL real en esta fase**: la evidencia de recuperación a T sigue siendo la de
+M31.3/M31.4.
+
+### Verificación off-host y protección contra divergencias (M31.8)
+
+Implementado en `scripts/ops/offhost-upload.sh` y probado offline contra dobles
+locales. **No se ejecutó ninguna operación contra B2, ni se aplicó ninguna política
+de retención.**
+
+- **C1 — validación local antes del primer PUT.** Los campos `dump_sha256` y
+  `roles_sha256` del manifiesto se comparan con los ficheros que se van a publicar,
+  con los mismos lectores tolerantes que usa la restauración (`strip_cr`,
+  `strip_sha_prefix`). Un desajuste o un digest malformado devuelve **exit 1**, no
+  76: 76 significa «el backup local está bien y falló la subida», y aquí el conjunto
+  local no es fiable. No se publica nada y no se usa ninguna credencial.
+- **C2 — lectura de retorno de todos los objetos.** Tras publicar, cada objeto
+  esperado se verifica con **HEAD** (existencia y tamaño) y **GET + SHA-256** contra
+  el fichero local. Las discrepancias se **acumulan** (un fallo no impide inspeccionar
+  el resto). `remote_verified=yes` solo se emite si pasan todos; cualquier fallo
+  produce **76**, alerta `partial_upload_failed` y un resumen con `remote_verified=no`
+  y `verified=<n>/<m>`. El **ETag nunca se usa como digest** (en multipart ni es un
+  MD5 del objeto completo). Objeto ausente, tamaño distinto, descarga imposible,
+  digest distinto y respuesta inválida son todos fallos de verificación. Una sonda de
+  existencia **indeterminada** no se interpreta como «ausente»: se rechaza.
+- **C3 — guarda de divergencia.** Todo objeto ya almacenado se **lee antes de
+  escribir**: si el tamaño o el contenido difieren, el cliente **se niega** (76), no
+  sobrescribe y **no publica el commit record**. Si el contenido es idéntico, se
+  republica: la sobreescritura es un no-op de contenido y mantiene la idempotencia sin
+  que el registro de ejecución dependa del estado remoto.
+  **Limitación explícita y medida por prueba**: la guarda es un *read-then-write*, **no**
+  una escritura condicional. El cliente no envía `If-None-Match`/`If-Match` y no hay
+  evidencia de que el endpoint los honre, así que la ventana entre la lectura y el PUT
+  **existe**; solo F-P7 puede cerrarla con evidencia. Además, la lectura de retorno
+  demuestra que **nuestros** bytes están almacenados, que no es lo mismo que probar que
+  no se pisó otro objeto.
+- **C4 — metadatos y checksums.** `--metadata sha256=<digest>` queda **opt-in**
+  (`OFFHOST_UPLOAD_METADATA_SHA256=1`, por defecto 0) porque `x-amz-meta-*` es superficie
+  estándar de la API S3 pero **no está verificado contra B2**, y un valor por defecto no
+  verificado convertiría la primera subida de F-P7 en una prueba de la opción. Los
+  metadatos **no** se aceptan como evidencia: la referencia es la descarga con SHA-256.
+  Los checksums nativos (`--checksum-algorithm SHA256`) **no** se implementan por el
+  mismo motivo. El digest viaja como 4.º argumento del seam de transporte (aditivo: los
+  dobles existentes que ignoran argumentos extra siguen funcionando) y `retain_until`
+  sigue reservado y vacío.
+- **C5 — retenciones: nada aplicado.** La ruta de Object Lock por objeto sigue siendo
+  código muerto (ningún llamante pasa `retain_until`). Decisiones pendientes **antes de
+  activar nada**: (a) si el prefijo WAL necesita una retención por objeto distinta de los
+  30 días del bucket ⇒ bucket separado o envío explícito de `--object-lock-*`; (b) la
+  duración numérica de la retención WAL (decisión 3, «sin cifras»); (c) confirmar
+  `30 < 90` en el bucket real; (d) `bypassGovernance` nunca en la credencial del VPS.
+- **C6/C7 — doble y cobertura.** El doble pasa a tres scripts (**PUT/HEAD/GET**) con
+  registro discriminado (`PUT|`/`HEAD|`/`GET|`), modos de fallo de lectura (ausente,
+  tamaño erróneo, contenido corrupto del mismo tamaño, error de lectura, sonda «ciega») y
+  un **`aws` falso en PATH** que ejercita la construcción real de argumentos de
+  `aws_transport` (región, endpoint, `--metadata`), que los seams no pueden observar.
+  Cobertura: **130** aserciones en la suite off-host, **145** en la de cadena WAL,
+  **694/0** en `test:ops`. Los códigos `0`/`1`/`76` y el orden de publicación
+  (`dump → roles.sql → manifest`, cadena al final) **no cambian**; `--dry-run` mantiene
+  `remote_verified=no`.
+- **Defecto encontrado y corregido**: `rc` sin inicializar en `aws_head`/`aws_get` bajo
+  `set -u`, que solo se manifiesta en la ruta AWS real (la de F-P7) y no con los seams.
+  Lo detectó la prueba con `aws` falso.
+
+### Cierre de los hallazgos de la auditoría M31.9 (M31.10)
+
+Correcciones locales en `scripts/ops/offhost-upload.sh`, con pruebas en las dos suites
+off-host. Sin cambios en los códigos `0`/`1`/`76` ni en el orden de publicación.
+
+- **H-2 — registro vacío.** `verify_remote()` comprueba explícitamente que haya objetos
+  esperados y, si no los hay, **falla** con diagnóstico propio en vez de devolver éxito
+  por el bucle vacío. La comprobación es explícita a propósito: depender de que `set -u`
+  aborte una expansión de array vacío es dependiente de la versión, y un éxito silencioso
+  es peor que un fallo duro. Hoy el caso es inalcanzable (`UPLOAD_ORDER` es constante y
+  siempre registra tres objetos), pero la señal de integridad ya no depende de que el
+  bucle se haya ejecutado.
+- **H-3 — la referencia es un par capturado, no una relectura.** El **tamaño** se captura
+  junto al **digest** en el momento de registrar el objeto, antes del PUT, y es ese par el
+  que usa la lectura de retorno. Releer el tamaño al verificar comparaba el objeto
+  almacenado contra una referencia ensamblada con dos momentos distintos: un fichero local
+  modificado después de publicar (incluso conservando el tamaño) podía producir un
+  desajuste que no existía, y digest y tamaño podían dejar de describir los mismos bytes.
+  Consecuencia explícita del contrato: `remote_verified=yes` afirma que **el remoto
+  contiene los bytes publicados**; si el fichero local cambia después, eso lo detecta C1 en
+  la siguiente ejecución, no esta.
+- **H-4 — dependencias antes del primer PUT.** `check_dependencies()` resuelve transporte,
+  HEAD, GET y herramienta de SHA-256 **antes** de publicar nada, de modo que `1` sigue
+  significando «no se publicó nada». Un fallo de lectura o de hashing ocurrido **durante o
+  después** de la publicación devuelve **76** con su propio diagnóstico y nunca se disfraza
+  de divergencia (el resultado vacío de una sustitución fallida no es evidencia de que los
+  bytes difieran). `--dry-run` no cambia: no publica nada y no exige dependencias.
+- **H-6 — «publicado» no es «verificado».** La verificación es posterior a todas las
+  subidas, así que el commit record (manifiesto lógico y cadena) puede existir mientras la
+  ejecución termina con **76** y `remote_verified=no`. Está fijado por prueba: encontrar la
+  cadena prueba el **orden de publicación**, no la integridad del conjunto.
+- **Evidencia M31.10**: suite off-host **171 aserciones / 0 fallos** (+37), suite de cadena
+  WAL **155 / 0** (+10), `test:ops` **745 / 0** (12 suites). Los cuatro archivos protegidos
+  conservan su hash y el runbook sigue sin modificarse.
+
 ## Referencias
 
 - `docs/adr/ADR-002-m25-0-backup-and-dr-architecture.md` (D1, D3, D4, D5 — PITR
@@ -718,7 +940,7 @@ criptográficos, el diseño de B2, la configuración del VPS ni los criterios de
 - PostgreSQL 16, §26.3 *Continuous Archiving and Point-in-Time Recovery*
 - `scripts/ops/postgres-backup.sh` (`:167-168`, `:204-221`, `:226-241`)
 - `scripts/ops/postgres-restore.sh` (`:407-415`, `:466`, `:705`; rama PITR offline desde
-  `:30` y señal `pitr=ok` en `:321`)
+  `:30` y señal `pitr=prepared` —antes `pitr=ok`— en `:400`)
 - `scripts/ops/offhost-upload.sh` (`:69`, `:37`)
 - `scripts/ops/lib/alert.sh` (`emit_alert`)
 - `docker-compose.yml` (servicio `db`, `:4-20` — sin configuración WAL)

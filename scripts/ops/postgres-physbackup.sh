@@ -334,7 +334,7 @@ run_real_basebackup() {
   MSYS_NO_PATHCONV=1 docker run --rm \
     --network "$net" \
     --env-file "$pwp" \
-    -v "$(cd "$stage" && pwd -W 2>/dev/null || cd "$stage" && pwd):/out" \
+    -v "$(cd "$stage" && { pwd -W 2>/dev/null || pwd; }):/out" \
     postgres:16-alpine \
     pg_basebackup -h db -U "${POSTGRES_USER:-privacy}" -D /out -Ft -X stream -P \
     || rc=$?
@@ -412,6 +412,13 @@ bytes_man="$(wc -c <  "$STAGE/backup_manifest"  | tr -d ' \r\n')"
 wal_range_count=0
 wal_ranges_lines=""
 if [[ -f "$STAGE/backup_manifest" ]]; then
+  # A1 (M31.3): distinguish "no usable python3" from "invalid JSON". The original
+  # message claimed the manifest was not valid JSON even when the interpreter was
+  # simply absent or unusable (e.g. the Windows Store alias stub under Git Bash),
+  # which is misleading. Both cases stay fail-closed: the set is never published.
+  if ! python3 -c 'pass' >/dev/null 2>&1; then
+    fail "python3 is required to validate backup_manifest JSON but is not usable on this host; refusing set"
+  fi
   # Reject non-JSON manifests fail-closed before extracting ranges.
   if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$STAGE/backup_manifest" 2>/dev/null; then
     fail "backup_manifest is not valid JSON; refusing set"

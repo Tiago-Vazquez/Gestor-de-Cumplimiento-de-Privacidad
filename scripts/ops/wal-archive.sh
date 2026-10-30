@@ -85,10 +85,23 @@ if [[ $# -ne 2 ]]; then config_fail "se esperaban 2 argumentos (%p %f), got $#";
 SRC="$1"   # %p
 WAL_F="$2" # %f
 
-# Validacion estricta del segmento: EXACTAMENTE 24 hex en MAYUSCULAS. Rechaza
-# "../", minusculas, longitudes distintas y cualquier "/" -> la clave remota no
-# puede ser manipulada.
-[[ "$WAL_F" =~ ^[0-9A-F]{24}$ ]] || config_fail "segmento WAL invalido (se requiere 24 hex mayusculas): got '$WAL_F'"
+# Validacion estricta del nombre entregado a archive_command. PostgreSQL archiva
+# TRES formas canonicas, y las tres deben aceptarse: rechazar las dos ultimas
+# bloquea la cola de archivado (defecto M31.3: pg_basebackup deja
+# <seg>.<tli>.backup en pg_wal y, al devolver CONFIG/78, PostgreSQL reintenta ese
+# fichero indefinidamente y los segmentos siguientes nunca se archivan -> la
+# cadena WAL se corta y PITR resulta imposible). Todas las formas aceptadas usan
+# solo hex MAYUSCULAS y ".", por lo que siguen sin permitir "/", ".." ni rutas.
+#   - segmento WAL:        24 hex mayusculas
+#   - fichero de backup:   <24 hex>.<8 hex>.backup
+#   - historia de timeline: <8 hex>.history
+WAL_F_OK=0
+if [[ "$WAL_F" =~ ^[0-9A-F]{24}$ ]] \
+  || [[ "$WAL_F" =~ ^[0-9A-F]{24}\.[0-9A-F]{8}\.backup$ ]] \
+  || [[ "$WAL_F" =~ ^[0-9A-F]{8}\.history$ ]]; then
+  WAL_F_OK=1
+fi
+(( WAL_F_OK == 1 )) || config_fail "nombre de archivado invalido (se requiere segmento de 24 hex mayusculas, <seg>.<tli>.backup o <tli>.history): got '$WAL_F'"
 
 [[ -f "$SRC" ]] || fail "la fuente %p no es fichero regular: '$SRC'"
 [[ -r "$SRC" ]] || fail "la fuente %p no es legible: '$SRC'"
